@@ -5,17 +5,21 @@ from pydantic import BaseModel, ValidationError
 
 from typing import List, Optional, Dict, Any # Added Dict, Any
 
-class LLMConfig(BaseModel):
-    name: str
+class LLMDefinition(BaseModel): # Renamed from LLMConfig, serves as the single LLM definition
+    name: str # Unique identifier for this LLM definition
     model: str
     api_key_env: str
-    params: Optional[Dict[str, Any]] = None # Added optional params field
+    params: Optional[Dict[str, Any]] = None
 
-class ConcludingLLMConfig(BaseModel):
+class PromptDefinition(BaseModel):
     name: str
-    model: str
-    api_key_env: str
-    params: Optional[Dict[str, Any]] = None # Added optional params field
+    content: str
+
+class ModelConfig(BaseModel):
+    name: str
+    llms_to_query: List[str]
+    concluding_llm: str
+    concluding_prompt: Optional[str] = None  # Name of the PromptDefinition to use
 
 class ServiceConfig(BaseModel):
     timeout_seconds: int = 30
@@ -26,10 +30,10 @@ class LangfuseConfig(BaseModel):
     host_env: str
 
 class MoMConfig(BaseModel):
-    llms_to_query: List[LLMConfig]
-    concluding_llm: ConcludingLLMConfig
+    llm_definitions: List[LLMDefinition]
+    prompt_definitions: Optional[List[PromptDefinition]] = None
+    models: List[ModelConfig]
     service: ServiceConfig
-    concluding_llm_user_prompt: Optional[str] = None # Renamed from consolidation_system_prompt
     langfuse: Optional[LangfuseConfig] = None
 
 def load_config(config_path: str = None) -> MoMConfig:

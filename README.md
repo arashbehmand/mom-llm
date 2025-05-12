@@ -69,9 +69,10 @@ Refer to `config.yaml_template` for a list of LLM-specific API key environment v
 Run the FastAPI application using Uvicorn:
 
 ```bash
-uvicorn mom_service.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn mom_service.main:app --host 0.0.0.0 --port 8000 --reload --reload-include "config.yaml"
 ```
 
+This command includes `--reload-include "config.yaml"` which tells Uvicorn to specifically watch `config.yaml` for changes and reload the application.
 The service will be available at `http://localhost:8000`.
 
 ## Configuration (`config.yaml`)

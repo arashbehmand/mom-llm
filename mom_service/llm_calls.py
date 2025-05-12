@@ -5,11 +5,11 @@ from typing import List, Dict, Any, Optional
 
 import litellm
 # No type imports from langfuse; use Any for trace/generation
-from .config import LLMConfig
+from .config import LLMDefinition
 logger = logging.getLogger(__name__)
 
 async def _call_lite_llm(
-    llm_cfg: LLMConfig,
+    llm_cfg: LLMDefinition,
     messages: List[Dict[str, Any]],
     timeout_val: int,
     call_type: str = "Fan-out",

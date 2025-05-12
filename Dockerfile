@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code into the container at /app
 COPY ./mom_service ./mom_service
+COPY config.yaml .
 
 # Make port 8000 available to the world outside this container
 EXPOSE 8000
@@ -20,4 +21,6 @@ EXPOSE 8000
 ENV PYTHONPATH=/app
 
 # Run main.py when the container launches
-CMD ["uvicorn", "mom_service.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Includes --reload and --reload-include to watch config.yaml for changes.
+# This is useful for development; for production, you might remove these flags.
+CMD ["uvicorn", "mom_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-include", "config.yaml"]

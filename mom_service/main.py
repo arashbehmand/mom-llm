@@ -68,7 +68,6 @@ except Exception as e:
     langfuse_client = None
     logger.error(f"--- mom_service.main.py: Error during Langfuse initialization: {e}. Langfuse disabled. ---")
 
-
 app = FastAPI()
 logger.info("--- mom_service.main.py: FastAPI app initialized ---")
 
@@ -172,32 +171,59 @@ class ChatCompletionResponse(BaseModel):
 
 @app.get("/v1/models")
 def get_models():
-    # Placeholder: mimic OpenAI API /v1/models response
-    # See: https://platform.openai.com/docs/api-reference/models/list
+    logger.info("--- /v1/models endpoint HIT ---")
+    # Ensure config is loaded inside the function scope
+    from .config import load_config
+    config = load_config()
+    model_data = []
+    for model_conf in config.models:
+        model_data.append({
+            "id": model_conf.name,
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": "MoM-Service",
+            "permission": [],
+            "root": model_conf.name,
+            "parent": None
+        })
+    if not model_data:
+        logger.warning("No models configured in config.yaml for /v1/models endpoint.")
     return {
         "object": "list",
-        "data": [
-            {
-                "id": "MoM",
-                "object": "model",
-                "created": 1747010130,
-                "owned_by": "MoM",
-                "permission": [],
-                "root": "MoM",
-                "parent": None
-            }
-        ]
+        "data": model_data
     }
 
 @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 async def chat_completions(request_data: ChatCompletionRequest, request: Request):
-    logger.info("--- chat_completions endpoint HIT ---") # Added test log
+    logger.info("--- chat_completions endpoint HIT ---")
     logger.info(f"Received request for model: {request_data.model}")
     check_token(request)
-    # Config is already loaded for Langfuse initialization, re-use it.
-    # config = load_config() # No need to load again
+    # config is loaded globally at startup
     timeout = config.service.timeout_seconds
+
+    # --- Find the requested model configuration ---
+    target_model_name = request_data.model
+    model_config_to_use: Optional[config.ModelConfig] = None # Type hint from .config
+    for mc in config.models:
+        if mc.name == target_model_name:
+            model_config_to_use = mc
+            break
     
+    if model_config_to_use is None:
+        logger.error(f"Model '{target_model_name}' not found in configuration.")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": f"The model `{target_model_name}` does not exist. Please check the available models at /v1/models.",
+                "type": "invalid_request_error",
+                "param": "model"
+            }
+        )
+    logger.info(f"Using model configuration: {model_config_to_use.name}")
+
+    # --- Create a mapping of LLMDefinition names to their objects for easy lookup ---
+    llm_definitions_map = {llm_def.name: llm_def for llm_def in config.llm_definitions}
+
     trace = None
     if langfuse_client:
         trace_name = f"MoM Request - {request_data.model} - {str(uuid.uuid4())[:8]}"
@@ -208,100 +234,130 @@ async def chat_completions(request_data: ChatCompletionRequest, request: Request
                 "model_requested": request_data.model,
                 "num_messages": len(request_data.messages),
             },
-            tags=["mom-service", "phase3"]
+            tags=["mom-service", "phase3"],
+            input=request_data.dict() # Set input for the main trace
         )
-        # Log initial user messages as input to the trace
-        trace.generation( 
-            name="User Input",
-            input=request_data.dict(),
-            output=None, # No output for user input
-            model="user-provided",
-            usage=litellm.utils.Usage(prompt_tokens=litellm.token_counter(messages=[msg.dict() for msg in request_data.messages]), completion_tokens=0)
-        )
-
 
     # _call_lite_llm function has been moved to llm_calls.py
 
     # --- Step 1: Asynchronous Fan-out to Multiple LLMs ---
-    # Query all LLMs defined in the `llms_to_query` section of the config.
-    logger.info(f"Starting fan-out to {len(config.llms_to_query)} LLMs.")
+    # Query LLMs specified in the chosen model_config_to_use.
+    fanout_llm_names = model_config_to_use.llms_to_query
+    logger.info(f"Starting fan-out to {len(fanout_llm_names)} LLMs for model '{model_config_to_use.name}'.")
     fanout_tasks = []
-    for i, llm_cfg in enumerate(config.llms_to_query):
-        # Pass trace and an ID for the fanout generation if langfuse is active
-        langfuse_generation_id = f"fanout-{i}-{llm_cfg.name}" if trace else None
+    actual_fanout_llms_configs = []
+
+    for i, llm_name in enumerate(fanout_llm_names):
+        llm_def = llm_definitions_map.get(llm_name)
+        if not llm_def:
+            logger.error(f"LLMDefinition '{llm_name}' (for fan-out in model '{model_config_to_use.name}') not found in llm_definitions. Skipping.")
+            # Optionally, could raise an error here if a defined LLM is critical
+            continue 
+        actual_fanout_llms_configs.append(llm_def)
+        langfuse_generation_id = f"fanout-{i}-{llm_def.name}" if trace else None
         fanout_tasks.append(
             _call_lite_llm(
-                llm_cfg, 
-                [m.dict() for m in request_data.messages], 
-                timeout, 
+                llm_def, # Use the looked-up LLMDefinition
+                [m.dict() for m in request_data.messages],
+                timeout,
                 call_type="Fan-out",
-                trace=trace, # Pass trace object
-                generation_name=langfuse_generation_id # Pass unique name for this generation
+                trace=trace,
+                generation_name=langfuse_generation_id
             )
         )
-    fanout_response_objects = await asyncio.gather(*fanout_tasks) # Now a list of ModelResponse objects or None
+    
+    if not fanout_tasks: # If all specified fanout LLMs were not found or none were specified
+        logger.error(f"No valid fan-out LLMs to query for model '{model_config_to_use.name}'.")
+        if trace:
+            trace.update(level="ERROR", status_message=f"No valid fan-out LLMs for model {model_config_to_use.name}.")
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "message": f"Configuration error: No valid fan-out LLMs found for model '{model_config_to_use.name}'.",
+                "type": "internal_server_error"
+            }
+        )
+
+    fanout_response_objects = await asyncio.gather(*fanout_tasks)
     
     successful_intermediate_answers = []
-    # The _call_lite_llm function will now handle creating the Langfuse generation for each fan-out call.
-    # We just need to collect the results.
     for res_obj in fanout_response_objects:
         if res_obj and hasattr(res_obj, 'choices') and res_obj.choices and \
            hasattr(res_obj.choices[0], 'message') and res_obj.choices[0].message and \
            hasattr(res_obj.choices[0].message, 'content'):
             successful_intermediate_answers.append(res_obj.choices[0].message.content)
 
-    logger.info(f"Fan-out complete. Received {len(successful_intermediate_answers)} successful responses out of {len(config.llms_to_query)}.")
+    logger.info(f"Fan-out for model '{model_config_to_use.name}' complete. Received {len(successful_intermediate_answers)} successful responses out of {len(actual_fanout_llms_configs)} attempted.")
 
     if not successful_intermediate_answers:
-        logger.error("All fan-out LLM calls failed.")
+        logger.error(f"All fan-out LLM calls failed for model '{model_config_to_use.name}'.")
         if trace:
-            trace.update(level="ERROR", status_message="All fan-out LLM calls failed.")
+            trace.update(level="ERROR", status_message=f"All fan-out LLM calls failed for model '{model_config_to_use.name}'.")
         raise HTTPException(
-            status_code=503, 
+            status_code=503,
             detail={
-                "message": "All fan-out LLM calls failed. The service could not get a response from any of the intermediary models.",
+                "message": f"All fan-out LLM calls for model '{model_config_to_use.name}' failed. The service could not get a response from any of the intermediary models.",
                 "type": "service_unavailable_error"
             }
         )
 
     # --- Step 2: Prepare Messages for the Concluding LLM ---
-    # Aggregate successful intermediate answers and prepare the input for the concluding LLM.
-    logger.info("Preparing messages for Concluding LLM.")
-    concluding_messages = [m.dict() for m in request_data.messages] # Start with original user messages
+    logger.info(f"Preparing messages for Concluding LLM for model '{model_config_to_use.name}'.")
+    concluding_messages = [m.dict() for m in request_data.messages]
+
+    concluding_messages.append({"role": "user", "content": "<<<<<<>>>>>>"})
+    logger.info("Appended separator message for expert responses.")
 
     for answer in successful_intermediate_answers:
         concluding_messages.append({"role": "assistant", "content": answer})
 
-    # Add concluding_llm_user_prompt as a user message at the end, if configured
-    if config.concluding_llm_user_prompt:
-        prompt_content = config.concluding_llm_user_prompt
+    # Look up the prompt content by name if defined
+    prompt_content = None
+    if hasattr(config, "prompt_definitions") and config.prompt_definitions and model_config_to_use.concluding_prompt:
+        for prompt_def in config.prompt_definitions:
+            if prompt_def.name == model_config_to_use.concluding_prompt:
+                prompt_content = prompt_def.content
+                break
+    if prompt_content:
         concluding_messages.append({"role": "user", "content": prompt_content})
-        logger.info(f"Appended concluding_llm_user_prompt as user message.")
+        logger.info(f"Appended concluding_prompt '{model_config_to_use.concluding_prompt}' from prompt_definitions for model '{model_config_to_use.name}'.")
 
     # --- Step 3: Call the Concluding LLM ---
-    # Use the aggregated responses to get a final answer from the concluding LLM.
-    concluding_cfg = config.concluding_llm
-    logger.info(f"Calling Concluding LLM: {concluding_cfg.name} (Model: {concluding_cfg.model})")
+    concluding_llm_name = model_config_to_use.concluding_llm
+    concluding_llm_def = llm_definitions_map.get(concluding_llm_name)
+
+    if not concluding_llm_def:
+        logger.error(f"Concluding LLMDefinition '{concluding_llm_name}' (for model '{model_config_to_use.name}') not found in llm_definitions.")
+        if trace:
+            trace.update(level="ERROR", status_message=f"Concluding LLMDefinition '{concluding_llm_name}' not found.")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": f"Configuration error: Concluding LLM '{concluding_llm_name}' for model '{model_config_to_use.name}' not defined.",
+                "type": "internal_server_error"
+            }
+        )
     
-    # Use _call_lite_llm for the concluding call as well
-    concluding_generation_name = f"concluding-{concluding_cfg.name}" if trace else None
+    logger.info(f"Calling Concluding LLM: {concluding_llm_def.name} (Model: {concluding_llm_def.model}) for model '{model_config_to_use.name}'.")
+    
+    concluding_generation_name = f"concluding-{concluding_llm_def.name}" if trace else None
     concluding_llm_response_obj = await _call_lite_llm(
-        concluding_cfg, 
-        concluding_messages, 
-        timeout, 
+        concluding_llm_def,
+        concluding_messages,
+        timeout,
         call_type="Concluding",
-        trace=trace, # Pass trace object
-        generation_name=concluding_generation_name # Pass unique name for this generation
+        trace=trace,
+        generation_name=concluding_generation_name
     )
 
-    if concluding_llm_response_obj is None: # Check if the call failed
-        logger.error(f"Concluding LLM call failed for {concluding_cfg.name} (model={concluding_cfg.model}).")
+    if concluding_llm_response_obj is None:
+        logger.error(f"Concluding LLM call failed for {concluding_llm_def.name} (model={concluding_llm_def.model}) on model '{model_config_to_use.name}'.")
         if trace:
-            trace.update(level="ERROR", status_message=f"Concluding LLM call failed for {concluding_cfg.name}")
+            trace.update(level="ERROR", status_message=f"Concluding LLM call failed for {concluding_llm_def.name} on model '{model_config_to_use.name}'.")
         raise HTTPException(
             status_code=502,
             detail={
-                "message": f"The concluding LLM ({concluding_cfg.name}) call failed. Unable to generate a final response.",
+                "message": f"The concluding LLM ({concluding_llm_def.name}) call failed for model '{model_config_to_use.name}'. Unable to generate a final response.",
                 "type": "bad_gateway_error"
             }
         )
@@ -312,18 +368,18 @@ async def chat_completions(request_data: ChatCompletionRequest, request: Request
        hasattr(concluding_llm_response_obj.choices[0].message, 'content'):
         final_content = concluding_llm_response_obj.choices[0].message.content
     else:
-        logger.error(f"Concluding LLM response object for {concluding_cfg.name} did not have expected structure for content.")
+        logger.error(f"Concluding LLM response object for {concluding_llm_def.name} (model '{model_config_to_use.name}') did not have expected structure.")
         if trace:
-            trace.update(level="ERROR", status_message=f"Concluding LLM response for {concluding_cfg.name} was malformed.")
+            trace.update(level="ERROR", status_message=f"Concluding LLM response for {concluding_llm_def.name} (model '{model_config_to_use.name}') was malformed.")
         raise HTTPException(
             status_code=502,
             detail={
-                "message": f"The concluding LLM ({concluding_cfg.name}) response was malformed. Unable to extract final content.",
+                "message": f"The concluding LLM ({concluding_llm_def.name}) response for model '{model_config_to_use.name}' was malformed.",
                 "type": "bad_gateway_error"
             }
         )
         
-    usage_info = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0) # Default
+    usage_info = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
     if hasattr(concluding_llm_response_obj, "usage") and concluding_llm_response_obj.usage is not None:
         usage_data = concluding_llm_response_obj.usage
         usage_info = UsageInfo(
@@ -331,18 +387,18 @@ async def chat_completions(request_data: ChatCompletionRequest, request: Request
             completion_tokens=getattr(usage_data, "completion_tokens", 0),
             total_tokens=getattr(usage_data, "total_tokens", 0)
         )
-        logger.info(f"Concluding LLM usage: {usage_info.dict()}")
+        logger.info(f"Concluding LLM usage for model '{model_config_to_use.name}': {usage_info.dict()}")
     else:
-        logger.warning(f"Could not retrieve usage information from Concluding LLM response object for {concluding_cfg.name}.")
+        logger.warning(f"Could not retrieve usage information from Concluding LLM response for {concluding_llm_def.name} (model '{model_config_to_use.name}').")
 
     # --- Step 4: Format and Return OpenAI-Compatible Response ---
-    response_id = "mom-phase3-" + str(uuid.uuid4()) # Generate a unique ID for the response
-    current_time = int(time.time()) # Get current timestamp
+    response_id = f"mom-{model_config_to_use.name}-" + str(uuid.uuid4())
+    current_time = int(time.time())
     
     response_payload = ChatCompletionResponse(
         id=response_id,
         created=current_time,
-        model="mom-service-phase3", # Updated model name
+        model=model_config_to_use.name, # Use the requested model name in the response
         choices=[
             ChatCompletionResponseChoice(
                 index=0,
@@ -355,15 +411,9 @@ async def chat_completions(request_data: ChatCompletionRequest, request: Request
     logger.info(f"Sending final response. ID: {response_id}")
 
     if trace:
-        # Log the final output to the trace
-        trace.generation(
-            name="Final Output",
-            input=concluding_messages, # Input to the concluding LLM
-            output=response_payload.dict(),
-            model=concluding_cfg.model, # Model used for final output
-            usage=litellm.utils.Usage(prompt_tokens=usage_info.prompt_tokens, completion_tokens=usage_info.completion_tokens) if usage_info else None,
-            metadata={"response_id": response_id}
-        )
+        # Log the final output to the trace (This trace.generation call is kept as per original logic for "Final Output")
+        # Set the output for the main trace
+        trace.update(output=response_payload.dict(), usage=litellm.utils.Usage(prompt_tokens=usage_info.prompt_tokens, completion_tokens=usage_info.completion_tokens) if usage_info else None)
         trace.update(level="DEFAULT", status_message="Successfully processed request.") # Mark trace as successful
         # Ensure Langfuse client flushes data before returning response
         # This might be blocking, consider background task if performance critical
@@ -374,6 +424,5 @@ async def chat_completions(request_data: ChatCompletionRequest, request: Request
                 logger.info("--- mom_service.main.py: Langfuse data flushed. ---")
             except Exception as e:
                 logger.error(f"--- mom_service.main.py: Error flushing Langfuse data: {e} ---")
-
 
     return response_payload

@@ -1,40 +1,75 @@
-llms_to_query:
-  - name: "fo_4.1"
+llm_definitions:
+  - name: "oai-g4.1"
     model: "openai/gpt-4.1"
     api_key_env: "OPENAI_API_KEY"
-  - name: "fo_o3m"
+    params:
+      temperature: 0.7
+  - name: "oai-o3m"
     model: "openai/o3-mini"
     api_key_env: "OPENAI_API_KEY"
-  - name: "fo_gemini25flash"
+  - name: "g25f"
     model: "gemini/gemini-2.5-flash-preview-04-17"
     api_key_env: "GOOGLE_API_KEY"
+  - name: "ministral3b"
+    model: "openrouter/mistralai/ministral-3b"
+    api_key_env: "OPENROUTER_API_KEY"
 
-concluding_llm:
-  name: "concluder_llm"
-  model: "gemini/gemini-2.5-flash-preview-04-17"
-  api_key_env: "GOOGLE_API_KEY"
+prompt_definitions:
+  - name: "synth_default"
+    content: |
+      Please review all llm replies found above, specifically after the `<<<<<<>>>>>>` separator, which appear after the final user message. These replies come from different LLM providers (e.g., OpenAI, Google, Anthropic, OpenModels) in response to the last user's input. Then proceed with the following:
+
+      1. Identify each response’s key insight(s) and any conflicting points.
+        - Note that not all experts are equally reliable.
+        - If zero responses are provided after the separator, state that no expert responses were available.
+        - If only one response is provided, summarize its key insight.
+        - If a response appears irrelevant to the original question, note this and exclude it from synthesis, or if all are irrelevant, state that.
+      2. Synthesize a single, cohesive answer that:
+        - Maintains the big picture and context of the original question.
+        - Considers the perspectives provided by each relevant response.
+        - Combines the key insights from all relevant responses.
+        - Integrates the strongest, most accurate insights.
+        - Resolves or clearly explains any disagreements between responses.
+        - Fills in missing information as needed, based on the provided insights.
+        - If no relevant insights are available from the expert responses, indicate this in your answer or, if appropriate, attempt to answer the original user query based on the prior conversation context.
+      Only output the final synthesized answer—omit your private analysis.
+      Avoid mentioning that this answer is consolidated; it should look like a single, direct response to the user.
+
+  - name: "synth_count"
+    content: |
+      Please review all expert replies above, then:
+
+      1. Count how many distinct expert responses you see.
+      2. Identify each response’s key insight(s) and any conflicting points.
+      3. Synthesize a single, cohesive answer that:
+        - Integrates the strongest, most accurate insights
+        - Resolves or explains any disagreements
+        - Fills in missing information as needed
+      4. At the end, write:
+        Responses processed: <number>
+      Only output the final answer and the processed count—omit your private analysis.
+
+models:
+  - name: "mom"
+    llms_to_query:
+      - "oai-g4.1"
+      - "oai-o3m"
+      - "g25f"
+      - "ministral3b"
+    concluding_llm: "g25f"
+    concluding_prompt: "synth_default"
+
+  - name: "mom2"
+    llms_to_query:
+      - "oai-g4.1"
+      - "ministral3b"
+    concluding_llm: "oai-g4.1"
+    concluding_prompt: "synth_count"
 
 service:
   timeout_seconds: 30
 
-# Optional: User prompt to guide the concluding LLM.
-# This will be appended as a user message after the fan-out LLM responses.
-concluding_llm_user_prompt: |
-  Please review all llm replies above after the final user message. they come from different llm providers (possibly: openai, google, anthropic, openmodels, ...) to the last users inuput. then proceed with:
-
-  1. Identify each response’s key insight(s) and any conflicting points.  
-  2. Synthesize a single, cohesive answer that:
-     - Maintain the big picture and context of the original question
-     - Looks for the perspectives provided by each response.
-     - Combines the key insights from all responses
-     - Integrates the strongest, most accurate insights.
-     - Resolves or explains any disagreements.
-     - Fills in missing information as needed. 
-
-  Only output the final answer—omit your private analysis.
-  Avoid mentioning that this answer is consolidated, it should look like a single response.
-
 langfuse:
-  public_key_env: "LANGFUSE_PUBLIC_KEY" # Environment variable for Langfuse public key
-  secret_key_env: "LANGFUSE_SECRET_KEY" # Environment variable for Langfuse secret key
-  host_env: "LANGFUSE_HOST" # Environment variable for Langfuse host URL (e.g., https://cloud.langfuse.com)
+  public_key_env: "LANGFUSE_PUBLIC_KEY"
+  secret_key_env: "LANGFUSE_SECRET_KEY"
+  host_env: "LANGFUSE_HOST"
