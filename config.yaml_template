@@ -1,0 +1,34 @@
+# Example config.yaml_template for MoM API Service
+# Fill in with your LLM details and service settings for later phases.
+
+llms_to_query:
+  - name: "fan_out_llm"
+    model: "gpt-3.5-turbo"
+    api_key_env: "OPENAI_API_KEY"
+
+concluding_llm:
+  name: "concluder_llm"
+  model: "gpt-3.5-turbo"
+  api_key_env: "OPENAI_API_KEY"
+
+service:
+  timeout_seconds: 30
+
+# Optional: User prompt to guide the concluding LLM.
+# This will be appended as a user message after the fan-out LLM responses.
+concluding_llm_user_prompt: |
+  Please review all llm replies above after the final user message, then:
+
+  1. Identify each response’s key insight(s) and any conflicting points.  
+  2. Synthesize a single, cohesive answer that:
+     - Integrates the strongest, most accurate insights  
+     - Resolves or explains any disagreements  
+     - Fills in missing information as needed  
+
+  Only output the final answer and the processed count—omit your private analysis.
+
+# Langfuse details (optional)
+langfuse:
+  public_key_env: "LANGFUSE_PUBLIC_KEY" # Environment variable for Langfuse public key
+  secret_key_env: "LANGFUSE_SECRET_KEY" # Environment variable for Langfuse secret key
+  host_env: "LANGFUSE_HOST" # Environment variable for Langfuse host URL (e.g., https://cloud.langfuse.com)

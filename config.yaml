@@ -1,0 +1,40 @@
+llms_to_query:
+  - name: "fo_4.1"
+    model: "openai/gpt-4.1"
+    api_key_env: "OPENAI_API_KEY"
+  - name: "fo_o3m"
+    model: "openai/o3-mini"
+    api_key_env: "OPENAI_API_KEY"
+  - name: "fo_gemini25flash"
+    model: "gemini/gemini-2.5-flash-preview-04-17"
+    api_key_env: "GOOGLE_API_KEY"
+
+concluding_llm:
+  name: "concluder_llm"
+  model: "gemini/gemini-2.5-flash-preview-04-17"
+  api_key_env: "GOOGLE_API_KEY"
+
+service:
+  timeout_seconds: 30
+
+# Optional: User prompt to guide the concluding LLM.
+# This will be appended as a user message after the fan-out LLM responses.
+concluding_llm_user_prompt: |
+  Please review all llm replies above after the final user message. they come from different llm providers (possibly: openai, google, anthropic, openmodels, ...) to the last users inuput. then proceed with:
+
+  1. Identify each response’s key insight(s) and any conflicting points.  
+  2. Synthesize a single, cohesive answer that:
+     - Maintain the big picture and context of the original question
+     - Looks for the perspectives provided by each response.
+     - Combines the key insights from all responses
+     - Integrates the strongest, most accurate insights.
+     - Resolves or explains any disagreements.
+     - Fills in missing information as needed. 
+
+  Only output the final answer—omit your private analysis.
+  Avoid mentioning that this answer is consolidated, it should look like a single response.
+
+langfuse:
+  public_key_env: "LANGFUSE_PUBLIC_KEY" # Environment variable for Langfuse public key
+  secret_key_env: "LANGFUSE_SECRET_KEY" # Environment variable for Langfuse secret key
+  host_env: "LANGFUSE_HOST" # Environment variable for Langfuse host URL (e.g., https://cloud.langfuse.com)
