@@ -1,118 +1,101 @@
-import os
-import time
 import asyncio
 import logging
-import uuid # Added
-import sys # Added for explicit stdout logging
-from dotenv import load_dotenv # Moved up
-load_dotenv() # Load .env file at the very beginning
+import os
+import sys
+import time
+import uuid
+from typing import List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Header, Request
-from pydantic import BaseModel
-from typing import List, Optional, Literal
 import litellm
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi import Response
+from pydantic import BaseModel
 
-# --- Early and Explicit Logging Configuration ---
-# Ensure this runs before other application-level imports if possible,
-# though module-level imports like litellm and FastAPI will already have occurred.
+from .config import load_config
+from .llm_calls import _call_lite_llm
+
+load_dotenv()
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout) # Explicitly direct to stdout
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
-logger = logging.getLogger(__name__) # Get logger for this module
+logger = logging.getLogger(__name__)
 logger.info("--- mom_service.main.py: Logging configured ---")
 
-# Control LiteLLM verbosity with an environment variable
-# Note: load_dotenv() is called later. If LITELLM_VERBOSE is in .env,
-# ensure it's loaded before this point or set it in the shell environment.
 LITELLM_VERBOSE_ENV = os.getenv("LITELLM_VERBOSE", "false").lower()
-if LITELLM_VERBOSE_ENV in ["true", "1", "yes"]:
-    litellm.set_verbose = True
-    logger.info("--- mom_service.main.py: LiteLLM verbose logging ENABLED via LITELLM_VERBOSE env var ---")
-else:
-    litellm.set_verbose = False
-    logger.info("--- mom_service.main.py: LiteLLM verbose logging DISABLED ---")
+litellm.set_verbose = LITELLM_VERBOSE_ENV in ("true", "1", "yes")
+logger.info(
+    f"--- LiteLLM verbose logging {'ENABLED' if litellm.set_verbose else 'DISABLED'} ---"
+)
 
-from .config import load_config # Corrected to relative import
-from .llm_calls import _call_lite_llm # Import the refactored function
-
-# --- Langfuse Initialization ---
+# Load configuration
 try:
     config = load_config()
-    if config.langfuse:
-        from langfuse import Langfuse # Import only if configured
-        langfuse_public_key = os.getenv(config.langfuse.public_key_env)
-        langfuse_secret_key = os.getenv(config.langfuse.secret_key_env)
-        langfuse_host = os.getenv(config.langfuse.host_env)
-
-        if langfuse_public_key and langfuse_secret_key and langfuse_host:
-            langfuse_client = Langfuse(
-                public_key=langfuse_public_key,
-                secret_key=langfuse_secret_key,
-                host=langfuse_host
-            )
-            logger.info("--- mom_service.main.py: Langfuse client initialized ---")
-        else:
-            langfuse_client = None
-            logger.warning("--- mom_service.main.py: Langfuse configured but missing environment variables (public_key, secret_key, or host). Langfuse disabled. ---")
-    else:
-        langfuse_client = None
-        logger.info("--- mom_service.main.py: Langfuse not configured. ---")
 except Exception as e:
-    langfuse_client = None
-    logger.error(f"--- mom_service.main.py: Error during Langfuse initialization: {e}. Langfuse disabled. ---")
+    logger.error(f"Error loading config: {e}")
+    raise
+
+# Initialize Langfuse if configured
+langfuse_client = None
+if config.langfuse:
+    try:
+        from langfuse import Langfuse
+
+        pub = os.getenv(config.langfuse.public_key_env)
+        sec = os.getenv(config.langfuse.secret_key_env)
+        host = os.getenv(config.langfuse.host_env)
+        if pub and sec and host:
+            langfuse_client = Langfuse(public_key=pub, secret_key=sec, host=host)
+            logger.info("--- Langfuse client initialized ---")
+        else:
+            logger.warning("--- Langfuse configured but missing env vars ---")
+    except Exception as e:
+        logger.error(f"Langfuse init error: {e}")
 
 app = FastAPI()
-logger.info("--- mom_service.main.py: FastAPI app initialized ---")
+logger.info("--- FastAPI app initialized ---")
 
-# Pydantic models for OpenAI-compatible error response
+
 class ErrorDetail(BaseModel):
     message: str
     type: str
     param: Optional[str] = None
     code: Optional[str] = None
 
+
 class OpenAIErrorResponse(BaseModel):
     error: ErrorDetail
 
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    error_type = "api_error" # Default type
-    if exc.status_code == 400:
-        error_type = "invalid_request_error"
-    elif exc.status_code == 401:
-        error_type = "authentication_error"
-    elif exc.status_code == 403:
-        error_type = "permission_error"
-    elif exc.status_code == 404:
-        error_type = "not_found_error"
-    elif exc.status_code == 429:
-        error_type = "rate_limit_exceeded_error"
-    
-    detail_message = exc.detail
-    if isinstance(exc.detail, dict) and "message" in exc.detail and "type" in exc.detail:
-        # If detail is already structured, use it
-        error_detail = ErrorDetail(**exc.detail)
-    else:
-        # Otherwise, use the string detail as the message
-        error_detail = ErrorDetail(message=str(exc.detail), type=error_type)
-
+    mapping = {
+        400: "invalid_request_error",
+        401: "authentication_error",
+        403: "permission_error",
+        404: "not_found_error",
+        429: "rate_limit_exceeded_error",
+    }
+    typ = mapping.get(exc.status_code, "api_error")
+    detail = (
+        exc.detail
+        if isinstance(exc.detail, dict)
+        else {"message": str(exc.detail), "type": typ}
+    )
+    error_detail = ErrorDetail(**detail)
     return JSONResponse(
         status_code=exc.status_code,
         content=OpenAIErrorResponse(error=error_detail).dict(),
     )
 
-# CORS control: set ALLOWED_CORS_ORIGINS to a comma-separated list of allowed origins
-ALLOWED_CORS_ORIGINS = os.getenv("ALLOWED_CORS_ORIGINS", "")
 
+ALLOWED_CORS_ORIGINS = os.getenv("ALLOWED_CORS_ORIGINS", "")
 if ALLOWED_CORS_ORIGINS:
-    origins = [origin.strip() for origin in ALLOWED_CORS_ORIGINS.split(",") if origin.strip()]
+    origins = [o.strip() for o in ALLOWED_CORS_ORIGINS.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
@@ -121,25 +104,25 @@ if ALLOWED_CORS_ORIGINS:
         allow_headers=["*"],
     )
 
-# Simple token auth: set API_TOKEN in environment
 API_TOKEN = os.getenv("API_TOKEN")
 
+
 def check_token(request: Request):
-    token = request.headers.get("Authorization")
-    if API_TOKEN and (not token or token.replace("Bearer ", "") != API_TOKEN):
+    token = request.headers.get("Authorization", "")
+    if API_TOKEN and token.replace("Bearer ", "") != API_TOKEN:
         raise HTTPException(
-            status_code=401, 
+            status_code=401,
             detail={
-                "message": "Invalid or missing API token. Ensure 'Authorization: Bearer YOUR_TOKEN' is provided.",
-                "type": "authentication_error"
-            }
+                "message": "Invalid or missing API token.",
+                "type": "authentication_error",
+            },
         )
 
-# Pydantic models for OpenAI-compatible API
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
+
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -151,278 +134,352 @@ class ChatCompletionRequest(BaseModel):
     stream: Optional[bool] = None
     stop: Optional[List[str]] = None
 
+
 class ChatCompletionResponseChoice(BaseModel):
     index: int
     message: ChatMessage
     finish_reason: Optional[str] = None
 
+
 class UsageInfo(BaseModel):
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    cost: Optional[float] = None  # Cost for this specific usage
+
+
+class ThinkingContextItem(BaseModel):
+    model: str  # The actual model used, e.g. "gpt-4"
+    content: str
+    usage: UsageInfo
+    # cost is already in usage
+
 
 class ChatCompletionResponse(BaseModel):
     id: str
     object: str = "chat.completion"
     created: int
-    model: str
+    model: str  # This would be the 'mom' model name (e.g., "mom-default")
     choices: List[ChatCompletionResponseChoice]
-    usage: Optional[UsageInfo] = None
+    usage: Optional[UsageInfo] = None  # Usage of the *concluding* LLM
+    thinking_context: Optional[List[ThinkingContextItem]] = None  # Custom field
+    total_cost_usd: Optional[float] = None  # Custom field for aggregated cost
+
 
 @app.get("/v1/models")
 def get_models():
-    logger.info("--- /v1/models endpoint HIT ---")
-    # Ensure config is loaded inside the function scope
-    from .config import load_config
-    config = load_config()
-    model_data = []
-    for model_conf in config.models:
-        model_data.append({
-            "id": model_conf.name,
-            "object": "model",
-            "created": int(time.time()),
-            "owned_by": "MoM-Service",
-            "permission": [],
-            "root": model_conf.name,
-            "parent": None
-        })
-    if not model_data:
-        logger.warning("No models configured in config.yaml for /v1/models endpoint.")
-    return {
-        "object": "list",
-        "data": model_data
-    }
+    data = []
+    for m in config.models:
+        data.append(
+            {
+                "id": m.name,
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "MoM-Service",
+                "permission": [],
+                "root": m.name,
+                "parent": None,
+            }
+        )
+    return {"object": "list", "data": data}
+
 
 @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 async def chat_completions(request_data: ChatCompletionRequest, request: Request):
     logger.info("--- chat_completions endpoint HIT ---")
-    logger.info(f"Received request for model: {request_data.model}")
     check_token(request)
-    # config is loaded globally at startup
     timeout = config.service.timeout_seconds
 
-    # --- Find the requested model configuration ---
-    target_model_name = request_data.model
-    model_config_to_use: Optional[config.ModelConfig] = None # Type hint from .config
-    for mc in config.models:
-        if mc.name == target_model_name:
-            model_config_to_use = mc
-            break
-    
-    if model_config_to_use is None:
-        logger.error(f"Model '{target_model_name}' not found in configuration.")
+    model_conf = next((m for m in config.models if m.name == request_data.model), None)
+    if not model_conf:
+        logger.error(f"Model {request_data.model} not found.")
         raise HTTPException(
             status_code=404,
             detail={
-                "message": f"The model `{target_model_name}` does not exist. Please check the available models at /v1/models.",
+                "message": f"Model {request_data.model} not found.",
                 "type": "invalid_request_error",
-                "param": "model"
-            }
+            },
         )
-    logger.info(f"Using model configuration: {model_config_to_use.name}")
+    logger.info(f"Using model config: {model_conf.name}")
 
-    # --- Create a mapping of LLMDefinition names to their objects for easy lookup ---
-    llm_definitions_map = {llm_def.name: llm_def for llm_def in config.llm_definitions}
+    llm_map = {ld.name: ld for ld in config.llm_definitions}
+    total_cost_accumulator = 0.0
 
     trace = None
     if langfuse_client:
-        trace_name = f"MoM Request - {request_data.model} - {str(uuid.uuid4())[:8]}"
         trace = langfuse_client.trace(
-            name=trace_name,
-            user_id=request.headers.get("x-user-id", "anonymous"), # Optional: get user_id from header
+            name=f"MoM-{model_conf.name}-{str(uuid.uuid4())[:8]}",
+            user_id=request.headers.get("x-user-id", "anon"),
             metadata={
-                "model_requested": request_data.model,
+                "model_requested": model_conf.name,
                 "num_messages": len(request_data.messages),
             },
-            tags=["mom-service", "phase3"],
-            input=request_data.dict() # Set input for the main trace
+            input=request_data.dict(),
         )
 
-    # _call_lite_llm function has been moved to llm_calls.py
-
-    # --- Step 1: Asynchronous Fan-out to Multiple LLMs ---
-    # Query LLMs specified in the chosen model_config_to_use.
-    fanout_llm_names = model_config_to_use.llms_to_query
-    logger.info(f"Starting fan-out to {len(fanout_llm_names)} LLMs for model '{model_config_to_use.name}'.")
-    fanout_tasks = []
-    actual_fanout_llms_configs = []
-
-    for i, llm_name in enumerate(fanout_llm_names):
-        llm_def = llm_definitions_map.get(llm_name)
-        if not llm_def:
-            logger.error(f"LLMDefinition '{llm_name}' (for fan-out in model '{model_config_to_use.name}') not found in llm_definitions. Skipping.")
-            # Optionally, could raise an error here if a defined LLM is critical
-            continue 
-        actual_fanout_llms_configs.append(llm_def)
-        langfuse_generation_id = f"fanout-{i}-{llm_def.name}" if trace else None
-        fanout_tasks.append(
+    # Step 1: Fan-out
+    tasks = []
+    fanout_llm_defs_in_order = []
+    for idx, llm_name in enumerate(model_conf.llms_to_query):
+        ld = llm_map.get(llm_name)
+        if not ld:
+            logger.warning(
+                f"LLMDefinition '{llm_name}' for fan-out not found. Skipping."
+            )
+            continue
+        fanout_llm_defs_in_order.append(ld)
+        gen_name = f"fanout-{idx}-{ld.name}" if trace else None
+        tasks.append(
             _call_lite_llm(
-                llm_def, # Use the looked-up LLMDefinition
+                ld,
                 [m.dict() for m in request_data.messages],
                 timeout,
-                call_type="Fan-out",
+                call_type="fanout",
                 trace=trace,
-                generation_name=langfuse_generation_id
+                generation_name=gen_name,
             )
         )
-    
-    if not fanout_tasks: # If all specified fanout LLMs were not found or none were specified
-        logger.error(f"No valid fan-out LLMs to query for model '{model_config_to_use.name}'.")
+
+    fanout_responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+    intermediate_thinking_context = []
+    for ld, res_obj in zip(fanout_llm_defs_in_order, fanout_responses):
+        cost = None  # Initialize cost to None
+        if isinstance(res_obj, Exception):
+            logger.error(f"Fan-out call to {ld.model} failed: {res_obj}")
+            # Optionally, create a ThinkingContextItem with error info
+            # For now, we just skip it for cost calculation and context
+            content = f"Error: Call to {ld.model} failed. Details: {str(res_obj)}"
+            usage_data_error = UsageInfo(
+                prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=0.0
+            )
+            intermediate_thinking_context.append(
+                ThinkingContextItem(
+                    model=ld.model, content=content, usage=usage_data_error
+                )
+            )
+            continue
+
+        if res_obj and res_obj.choices and res_obj.choices[0].message.content:
+            try:
+                cost = litellm.completion_cost(completion_response=res_obj)
+                if cost is not None:
+                    total_cost_accumulator += cost
+            except Exception as e:
+                logger.warning(
+                    f"Could not calculate cost for {ld.model}: {e}. Cost will be omitted for this item."
+                )
+                cost = None  # Ensure cost is None if calculation fails
+
+            usage_data = res_obj.usage or {}
+            current_usage_info = UsageInfo(
+                prompt_tokens=getattr(usage_data, "prompt_tokens", 0),
+                completion_tokens=getattr(usage_data, "completion_tokens", 0),
+                total_tokens=getattr(usage_data, "total_tokens", 0),
+                cost=cost,  # This will be None if cost calculation failed
+            )
+            intermediate_thinking_context.append(
+                ThinkingContextItem(
+                    model=ld.model,
+                    content=res_obj.choices[0].message.content,
+                    usage=current_usage_info,
+                )
+            )
+        else:  # Handle cases where res_obj is None or malformed, though _call_lite_llm should prevent this
+            logger.warning(
+                f"Fan-out call to {ld.model} returned an unexpected or empty response."
+            )
+            content = (
+                f"Warning: Call to {ld.model} returned an empty or malformed response."
+            )
+            usage_data_empty = UsageInfo(
+                prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=0.0
+            )
+            intermediate_thinking_context.append(
+                ThinkingContextItem(
+                    model=ld.model, content=content, usage=usage_data_empty
+                )
+            )
+
+    if not any(
+        item.content
+        and not item.content.startswith("Error:")
+        and not item.content.startswith("Warning:")
+        for item in intermediate_thinking_context
+    ):
+        logger.error("No successful fan-out responses with content.")
         if trace:
-            trace.update(level="ERROR", status_message=f"No valid fan-out LLMs for model {model_config_to_use.name}.")
-        raise HTTPException(
-            status_code=500, 
-            detail={
-                "message": f"Configuration error: No valid fan-out LLMs found for model '{model_config_to_use.name}'.",
-                "type": "internal_server_error"
-            }
+            trace.update(
+                level="ERROR",
+                status_message="All fan-out calls failed or returned no content.",
+            )
+        # We might still proceed if some calls failed but others succeeded,
+        # but if ALL failed or returned no usable content, then raise.
+        # The check above ensures at least one non-error/non-warning item exists.
+        # If intermediate_thinking_context is empty or all are errors/warnings, then it's an issue.
+        # A more robust check might be needed depending on desired behavior for partial failures.
+        # For now, if intermediate_thinking_context is populated but all are errors, it will proceed.
+        # Let's refine this: if NO successful content, then raise.
+        successful_fanout_count = sum(
+            1 for item in intermediate_thinking_context if item.usage.cost is not None
+        )  # A proxy for success
+        if successful_fanout_count == 0:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": "All fan-out LLM calls failed or pricing is unavailable for all.",
+                    "type": "service_unavailable_error",
+                },
+            )
+
+    # Step 2: Prepare concluding messages
+    concl_msgs = [m.dict() for m in request_data.messages]
+    concl_msgs.append({"role": "user", "content": "<<<<<<>>>>>>"})
+    for item in intermediate_thinking_context:
+        # Only append content from successful calls to the concluding prompt
+        if (
+            item.usage.cost is not None
+            and not item.content.startswith("Error:")
+            and not item.content.startswith("Warning:")
+        ):
+            concl_msgs.append({"role": "assistant", "content": item.content})
+
+    if (
+        model_conf.concluding_prompt and config.prompt_definitions is not None
+    ):  # Added 'is not None' check
+        pd = next(
+            (
+                p
+                for p in config.prompt_definitions
+                if p.name == model_conf.concluding_prompt
+            ),
+            None,
         )
+        if pd:
+            concl_msgs.append({"role": "user", "content": pd.content})
 
-    fanout_response_objects = await asyncio.gather(*fanout_tasks)
-    
-    successful_intermediate_answers = []
-    for res_obj in fanout_response_objects:
-        if res_obj and hasattr(res_obj, 'choices') and res_obj.choices and \
-           hasattr(res_obj.choices[0], 'message') and res_obj.choices[0].message and \
-           hasattr(res_obj.choices[0].message, 'content'):
-            successful_intermediate_answers.append(res_obj.choices[0].message.content)
-
-    logger.info(f"Fan-out for model '{model_config_to_use.name}' complete. Received {len(successful_intermediate_answers)} successful responses out of {len(actual_fanout_llms_configs)} attempted.")
-
-    if not successful_intermediate_answers:
-        logger.error(f"All fan-out LLM calls failed for model '{model_config_to_use.name}'.")
-        if trace:
-            trace.update(level="ERROR", status_message=f"All fan-out LLM calls failed for model '{model_config_to_use.name}'.")
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": f"All fan-out LLM calls for model '{model_config_to_use.name}' failed. The service could not get a response from any of the intermediary models.",
-                "type": "service_unavailable_error"
-            }
+    # Step 3: Concluding LLM
+    concl_def = llm_map.get(model_conf.concluding_llm)
+    if not concl_def:
+        logger.error(
+            f"Concluding LLMDefinition '{model_conf.concluding_llm}' not found."
         )
-
-    # --- Step 2: Prepare Messages for the Concluding LLM ---
-    logger.info(f"Preparing messages for Concluding LLM for model '{model_config_to_use.name}'.")
-    concluding_messages = [m.dict() for m in request_data.messages]
-
-    concluding_messages.append({"role": "user", "content": "<<<<<<>>>>>>"})
-    logger.info("Appended separator message for expert responses.")
-
-    for answer in successful_intermediate_answers:
-        concluding_messages.append({"role": "assistant", "content": answer})
-
-    # Look up the prompt content by name if defined
-    prompt_content = None
-    if hasattr(config, "prompt_definitions") and config.prompt_definitions and model_config_to_use.concluding_prompt:
-        for prompt_def in config.prompt_definitions:
-            if prompt_def.name == model_config_to_use.concluding_prompt:
-                prompt_content = prompt_def.content
-                break
-    if prompt_content:
-        concluding_messages.append({"role": "user", "content": prompt_content})
-        logger.info(f"Appended concluding_prompt '{model_config_to_use.concluding_prompt}' from prompt_definitions for model '{model_config_to_use.name}'.")
-
-    # --- Step 3: Call the Concluding LLM ---
-    concluding_llm_name = model_config_to_use.concluding_llm
-    concluding_llm_def = llm_definitions_map.get(concluding_llm_name)
-
-    if not concluding_llm_def:
-        logger.error(f"Concluding LLMDefinition '{concluding_llm_name}' (for model '{model_config_to_use.name}') not found in llm_definitions.")
         if trace:
-            trace.update(level="ERROR", status_message=f"Concluding LLMDefinition '{concluding_llm_name}' not found.")
+            trace.update(
+                level="ERROR",
+                status_message=f"Concluding LLMDef '{model_conf.concluding_llm}' not found.",
+            )
         raise HTTPException(
             status_code=500,
             detail={
-                "message": f"Configuration error: Concluding LLM '{concluding_llm_name}' for model '{model_config_to_use.name}' not defined.",
-                "type": "internal_server_error"
-            }
+                "message": "Concluding LLM definition not found.",
+                "type": "internal_server_error",
+            },
         )
-    
-    logger.info(f"Calling Concluding LLM: {concluding_llm_def.name} (Model: {concluding_llm_def.model}) for model '{model_config_to_use.name}'.")
-    
-    concluding_generation_name = f"concluding-{concluding_llm_def.name}" if trace else None
-    concluding_llm_response_obj = await _call_lite_llm(
-        concluding_llm_def,
-        concluding_messages,
+
+    gen_name = f"concluding-{concl_def.name}" if trace else None
+    concl_res_obj = await _call_lite_llm(
+        concl_def,
+        concl_msgs,
         timeout,
-        call_type="Concluding",
+        call_type="concluding",
         trace=trace,
-        generation_name=concluding_generation_name
+        generation_name=gen_name,
     )
 
-    if concluding_llm_response_obj is None:
-        logger.error(f"Concluding LLM call failed for {concluding_llm_def.name} (model={concluding_llm_def.model}) on model '{model_config_to_use.name}'.")
+    if (
+        not concl_res_obj
+        or not concl_res_obj.choices
+        or not concl_res_obj.choices[0].message.content
+    ):
+        logger.error("Concluding LLM call failed or returned empty content.")
         if trace:
-            trace.update(level="ERROR", status_message=f"Concluding LLM call failed for {concluding_llm_def.name} on model '{model_config_to_use.name}'.")
+            trace.update(level="ERROR", status_message="Concluding LLM call failed.")
         raise HTTPException(
             status_code=502,
             detail={
-                "message": f"The concluding LLM ({concluding_llm_def.name}) call failed for model '{model_config_to_use.name}'. Unable to generate a final response.",
-                "type": "bad_gateway_error"
-            }
+                "message": "Concluding LLM failed to generate response.",
+                "type": "bad_gateway_error",
+            },
         )
 
-    final_content = ""
-    if hasattr(concluding_llm_response_obj, 'choices') and concluding_llm_response_obj.choices and \
-       hasattr(concluding_llm_response_obj.choices[0], 'message') and concluding_llm_response_obj.choices[0].message and \
-       hasattr(concluding_llm_response_obj.choices[0].message, 'content'):
-        final_content = concluding_llm_response_obj.choices[0].message.content
-    else:
-        logger.error(f"Concluding LLM response object for {concluding_llm_def.name} (model '{model_config_to_use.name}') did not have expected structure.")
-        if trace:
-            trace.update(level="ERROR", status_message=f"Concluding LLM response for {concluding_llm_def.name} (model '{model_config_to_use.name}') was malformed.")
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "message": f"The concluding LLM ({concluding_llm_def.name}) response for model '{model_config_to_use.name}' was malformed.",
-                "type": "bad_gateway_error"
-            }
-        )
-        
-    usage_info = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-    if hasattr(concluding_llm_response_obj, "usage") and concluding_llm_response_obj.usage is not None:
-        usage_data = concluding_llm_response_obj.usage
-        usage_info = UsageInfo(
-            prompt_tokens=getattr(usage_data, "prompt_tokens", 0),
-            completion_tokens=getattr(usage_data, "completion_tokens", 0),
-            total_tokens=getattr(usage_data, "total_tokens", 0)
-        )
-        logger.info(f"Concluding LLM usage for model '{model_config_to_use.name}': {usage_info.dict()}")
-    else:
-        logger.warning(f"Could not retrieve usage information from Concluding LLM response for {concluding_llm_def.name} (model '{model_config_to_use.name}').")
+    final_content_from_concluding_llm = concl_res_obj.choices[0].message.content
+    # Default to current behavior for the separate thinking_context field
+    processed_thinking_context_for_response_field = intermediate_thinking_context
 
-    # --- Step 4: Format and Return OpenAI-Compatible Response ---
-    response_id = f"mom-{model_config_to_use.name}-" + str(uuid.uuid4())
-    current_time = int(time.time())
-    
-    response_payload = ChatCompletionResponse(
+    if model_conf.include_thinking_context:
+        thinking_steps_str_parts = []
+        if intermediate_thinking_context:  # Ensure it's not None
+            for item in intermediate_thinking_context:
+                # Consider html.escape(item.content) if content can have XML special chars
+                thinking_steps_str_parts.append(
+                    f"Model: {item.model}\nContent: {item.content}"
+                )
+
+        if thinking_steps_str_parts:
+            full_thinking_block = (
+                "<think>\n" + "\n---\n".join(thinking_steps_str_parts) + "\n</think>"
+            )
+            final_content = (
+                f"{full_thinking_block}\n{final_content_from_concluding_llm}"
+            )
+        else:
+            # No thinking steps to embed, use original content
+            final_content = final_content_from_concluding_llm
+        # If thinking context is embedded, do not populate the separate field
+        processed_thinking_context_for_response_field = None
+    else:
+        # If not embedding, use original content and keep intermediate_thinking_context for the separate field
+        final_content = final_content_from_concluding_llm
+        # processed_thinking_context_for_response_field is already correctly set
+
+    concluding_llm_cost = None
+    try:
+        concluding_llm_cost = litellm.completion_cost(completion_response=concl_res_obj)
+        if concluding_llm_cost is not None:
+            total_cost_accumulator += concluding_llm_cost
+    except Exception as e:
+        logger.warning(
+            f"Could not calculate cost for concluding LLM {concl_def.model}: {e}. Cost will be omitted."
+        )
+        concluding_llm_cost = None
+
+    concluding_usage_data = concl_res_obj.usage or {}
+    concluding_usage_info = UsageInfo(
+        prompt_tokens=getattr(concluding_usage_data, "prompt_tokens", 0),
+        completion_tokens=getattr(concluding_usage_data, "completion_tokens", 0),
+        total_tokens=getattr(concluding_usage_data, "total_tokens", 0),
+        cost=concluding_llm_cost,
+    )
+
+    # Step 4: Build response
+    response_id = f"mom-{model_conf.name}-{str(uuid.uuid4())}"
+    final_response = ChatCompletionResponse(
         id=response_id,
-        created=current_time,
-        model=model_config_to_use.name, # Use the requested model name in the response
+        created=int(time.time()),
+        model=model_conf.name,
         choices=[
             ChatCompletionResponseChoice(
                 index=0,
                 message=ChatMessage(role="assistant", content=final_content),
-                finish_reason="stop" # Assuming stop, could be length if max_tokens is hit
+                finish_reason="stop",
             )
         ],
-        usage=usage_info
+        usage=concluding_usage_info,
+        thinking_context=processed_thinking_context_for_response_field,
+        total_cost_usd=(
+            round(total_cost_accumulator, 8) if total_cost_accumulator > 0 else None
+        ),
     )
-    logger.info(f"Sending final response. ID: {response_id}")
 
     if trace:
-        # Log the final output to the trace (This trace.generation call is kept as per original logic for "Final Output")
-        # Set the output for the main trace
-        trace.update(output=response_payload.dict(), usage=litellm.utils.Usage(prompt_tokens=usage_info.prompt_tokens, completion_tokens=usage_info.completion_tokens) if usage_info else None)
-        trace.update(level="DEFAULT", status_message="Successfully processed request.") # Mark trace as successful
-        # Ensure Langfuse client flushes data before returning response
-        # This might be blocking, consider background task if performance critical
-        # For now, direct flush for simplicity and reliability of tracing.
-        if hasattr(langfuse_client, 'flush') and callable(langfuse_client.flush):
-            try:
-                langfuse_client.flush()
-                logger.info("--- mom_service.main.py: Langfuse data flushed. ---")
-            except Exception as e:
-                logger.error(f"--- mom_service.main.py: Error flushing Langfuse data: {e} ---")
+        trace.update(
+            output=final_response.dict(),
+            status_message="Successfully processed request.",
+        )
+        try:
+            langfuse_client.flush()
+        except Exception as e:
+            logger.error(f"Error flushing Langfuse data: {e}")
 
-    return response_payload
+    return final_response

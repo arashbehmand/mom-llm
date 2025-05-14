@@ -1,33 +1,39 @@
 import os
+from typing import Any, Dict, List, Optional
+
 import yaml
-from typing import List, Optional
 from pydantic import BaseModel, ValidationError
 
-from typing import List, Optional, Dict, Any # Added Dict, Any
 
-class LLMDefinition(BaseModel): # Renamed from LLMConfig, serves as the single LLM definition
-    name: str # Unique identifier for this LLM definition
+class LLMDefinition(BaseModel):
+    name: str  # Unique identifier for this LLM definition
     model: str
     api_key_env: str
     params: Optional[Dict[str, Any]] = None
 
+
 class PromptDefinition(BaseModel):
     name: str
     content: str
+
 
 class ModelConfig(BaseModel):
     name: str
     llms_to_query: List[str]
     concluding_llm: str
     concluding_prompt: Optional[str] = None  # Name of the PromptDefinition to use
+    include_thinking_context: bool = False  # Default to false if not specified
+
 
 class ServiceConfig(BaseModel):
     timeout_seconds: int = 30
+
 
 class LangfuseConfig(BaseModel):
     public_key_env: str
     secret_key_env: str
     host_env: str
+
 
 class MoMConfig(BaseModel):
     llm_definitions: List[LLMDefinition]
@@ -35,6 +41,7 @@ class MoMConfig(BaseModel):
     models: List[ModelConfig]
     service: ServiceConfig
     langfuse: Optional[LangfuseConfig] = None
+
 
 def load_config(config_path: str = None) -> MoMConfig:
     # Try current working directory first, then fallback to mom_service/config.yaml
