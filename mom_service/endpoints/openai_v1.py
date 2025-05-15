@@ -73,6 +73,9 @@ async def chat_completions_openai(
         async def event_stream():
             response_id = f"mom-oai-{req_data.model}-{str(uuid.uuid4())}"
             index = 0
+            # Accumulate the complete content for Langfuse trace update
+            complete_content = ""
+            trace_obj = None
             try:
                 # _process_mom_chat_request is an async def function that returns an async generator object when stream=True.
                 # Await the async generator function call to get the async generator object
@@ -82,6 +85,11 @@ async def chat_completions_openai(
                     request,
                     stream=True,
                 )
+                
+                # Get the trace object from the request state if it exists
+                if hasattr(request.state, "trace_obj"):
+                    trace_obj = request.state.trace_obj
+                
                 async for chunk in the_generator:
                     # Ensure chunk is a dictionary before processing
                     if isinstance(chunk, dict):
@@ -93,6 +101,9 @@ async def chat_completions_openai(
 
                             # Handle content delta
                             if delta and delta.get("content") is not None:
+                                # Accumulate content for Langfuse
+                                complete_content += delta["content"]
+                                
                                 data = {
                                     "id": response_id,
                                     "object": "chat.completion.chunk",
@@ -140,6 +151,30 @@ async def chat_completions_openai(
                     else:
                         # Log unexpected chunk type
                         logger.warning(f"Received unexpected chunk type: {type(chunk)}")
+
+                # After streaming is done, update Langfuse trace with complete output
+                if trace_obj and complete_content:
+                    try:
+                        # Create a response object similar to non-streaming mode
+                        openai_response = OpenAIChatCompletionResponse(
+                            id=response_id,
+                            created=int(time.time()),
+                            model=req_data.model,
+                            choices=[
+                                OpenAIChatCompletionResponseChoice(
+                                    index=0, 
+                                    message=ChatMessage(
+                                        role="assistant", 
+                                        content=complete_content
+                                    )
+                                )
+                            ],
+                        )
+                        # Update the trace with the complete output
+                        trace_obj.update(output=openai_response.dict(exclude_none=True))
+                        logger.info("Successfully updated Langfuse trace for streaming response")
+                    except Exception as e:
+                        logger.error(f"Failed to update Langfuse trace for streaming response: {e}")
 
             except Exception as e:
                 logger.error(f"Error in streaming response: {str(e)}")

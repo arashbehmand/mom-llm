@@ -76,13 +76,26 @@ async def _call_lite_llm(
                 stream=True,
                 **(llm_cfg.params or {}),
             )
+            
+            # Track the accumulated content for Langfuse
+            streamed_content = ""
+            
             # Now iterate over the obtained async generator
             async for chunk in async_generator:
+                # For OpenAI-like responses, extract and accumulate content
+                if hasattr(chunk, "choices") and chunk.choices:
+                    choice = chunk.choices[0]
+                    delta = getattr(choice, "delta", None)
+                    if delta and hasattr(delta, "content") and delta.content is not None:
+                        streamed_content += delta.content
                 yield chunk
+            
+            # Update Langfuse with the complete streamed content
             if current_generation:
                 current_generation.end(
-                    output="<streamed>", usage=None
-                )  # Simplified Langfuse for stream
+                    output=streamed_content if streamed_content else "<streamed>", 
+                    usage=None
+                )
         except Exception as e:
             logger.error(
                 f"Streaming call failed for {llm_cfg.name} (Model: {model_name}): {e}"

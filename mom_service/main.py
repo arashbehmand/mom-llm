@@ -130,12 +130,17 @@ async def _process_mom_chat_request(
             metadata={
                 "model_requested": model_conf.name,
                 "num_messages": len(request_messages),
+                "streaming": stream,
             },
             input={
                 "model": mom_model_name,
                 "messages": request_messages,
+                "stream": stream,
             },
         )
+        # Store trace in request state for access in streaming response
+        if hasattr(fastapi_request_obj, "state"):
+            fastapi_request_obj.state.trace_obj = trace
 
     # Step 1: Fan-out
     intermediate_thinking_context = await _perform_fanout_calls(
