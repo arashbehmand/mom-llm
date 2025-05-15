@@ -204,8 +204,34 @@ async def _process_mom_chat_request(
             f"_process_mom_chat_request: Returning generator of type {type(the_generator)}"
         )
 
+        # Prepare thinking context if configured
+        thinking_block = None
+        if model_conf.include_thinking_context and intermediate_thinking_context:
+            thinking_steps_str_parts = []
+            for item in intermediate_thinking_context:
+                escaped_item_content = html.escape(item.content)
+                thinking_steps_str_parts.append(
+                    f"Model: {html.escape(item.model)}\nContent: {escaped_item_content}"
+                )
+            if thinking_steps_str_parts:
+                thinking_block = "<think>\n" + "\n---\n".join(thinking_steps_str_parts) + "\n</think>\n"
+        
         # Wrap the generator to filter/transform only ModelResponse chunks for streaming
         async def filtered_generator():
+            # First stream the thinking context if available
+            if thinking_block:
+                # Stream thinking context as first chunk
+                data = {
+                    "choices": [
+                        {
+                            "delta": {"content": thinking_block},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+                yield data
+            
+            # Then stream the concluding model responses
             async for chunk in the_generator:
                 # For OpenAI streaming, yield chunk.choices[0] as dict if present
                 if hasattr(chunk, "choices") and chunk.choices:
