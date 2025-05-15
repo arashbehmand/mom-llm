@@ -37,7 +37,7 @@ prompt_definitions:
 
   - name: "synth_count"
     content: |
-      Please review all expert replies above, then:
+      Please review all expert replies above , appearing as ai messages, your messages, specifically after the `<<<<<<>>>>>>` separator, which appear after the final user message. then:
 
       1. Count how many distinct expert responses you see.
       2. Identify each response’s key insight(s) and any conflicting points.
@@ -58,16 +58,19 @@ models:
       - "ministral3b"
     concluding_llm: "g25f"
     concluding_prompt: "synth_default"
+    include_thinking_context: true
 
-  - name: "mom2"
+  - name: "deepseek-reasoner"
     llms_to_query:
       - "oai-g4.1"
       - "ministral3b"
     concluding_llm: "oai-g4.1"
-    concluding_prompt: "synth_count"
+    concluding_prompt: "synth_default"
+    include_thinking_context: true
 
 service:
   timeout_seconds: 30
+  exposed_apis: ["openai", "ollama"] # Add other API types like "claude" as needed
 
 langfuse:
   public_key_env: "LANGFUSE_PUBLIC_KEY"

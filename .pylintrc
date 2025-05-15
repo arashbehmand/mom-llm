@@ -1,0 +1,25 @@
+[MASTER]
+ignore=.venv
+
+[MESSAGES CONTROL]
+disable=
+    C0114,  ; missing-module-docstring
+    C0115,  ; missing-class-docstring
+    C0116,  ; missing-function-docstring
+    C0301,  ; line-too-long
+    R0914,  ; too many local variables
+    R0912,  ; too many branches
+    R0915,  ; too many statements
+    W1203,  ; use lazy % formatting in logging functions
+    W0707,  ; consider explicitly re-raising with "from" keyword
+    W0718,  ; catching too general exception
+    R0401,  ; cyclic import
+    R0801,  ; duplicate code/similar lines
+    C0415,  ; import outside toplevel
+    E1133   ; non-iterable used in iterating context
+
+[FORMAT]
+max-line-length=100
+
+[TYPECHECK]
+# (No ignore-missing-imports option here)

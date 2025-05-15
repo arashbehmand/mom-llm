@@ -27,6 +27,7 @@ class ModelConfig(BaseModel):
 
 class ServiceConfig(BaseModel):
     timeout_seconds: int = 30
+    exposed_apis: List[str] = ["openai"]  # Default to only openai if not specified
 
 
 class LangfuseConfig(BaseModel):
@@ -53,7 +54,7 @@ def load_config(config_path: str = None) -> MoMConfig:
         search_paths.append(os.path.join(os.path.dirname(__file__), "config.yaml"))
     for path in search_paths:
         if os.path.isfile(path):
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 raw = yaml.safe_load(f)
             try:
                 config = MoMConfig(**raw)

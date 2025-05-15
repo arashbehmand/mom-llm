@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import litellm
 
@@ -15,39 +15,36 @@ async def _call_lite_llm(
     llm_cfg: LLMDefinition,
     messages: List[Dict[str, Any]],
     timeout_val: int,
-    call_type: str = "Fan-out",
-    trace: Optional[Any] = None,  # Langfuse trace object, type unknown
-    generation_name: Optional[
-        str
-    ] = None,  # Name for this specific generation in Langfuse
-) -> Optional[litellm.ModelResponse]:
-    logger.info(
-        f"--- _call_lite_llm attempting to call: {llm_cfg.name} as {call_type} ---"
-    )  # Added test log
+    options: Optional[dict] = None,
+) -> AsyncGenerator[litellm.ModelResponse, None]:
     """
     Helper function to make an asynchronous call to an LLM using LiteLLM.
     Includes timeout, basic error handling, and optional Langfuse tracing.
-    Returns the full ModelResponse object on success, None on failure.
+    Always returns an async generator. For non-streaming, it yields one item then stops.
+    For streaming, it yields chunks. On error, it yields nothing and stops.
     """
+    options = options or {}
+    call_type = options.get("call_type", "Fan-out")
+    trace = options.get("trace")
+    generation_name = options.get("generation_name")
+    stream = options.get("stream", False)
+    logger.info(
+        f"--- _call_lite_llm attempting to call: {llm_cfg.name} as {call_type} ---"
+    )
     api_key = os.getenv(llm_cfg.api_key_env)
     if not api_key:
         logger.error(
             f"API key env variable {llm_cfg.api_key_env} not set for {call_type} LLM {llm_cfg.name}"
         )
-        return None
+        return  # MODIFIED: bare return for async generator
 
     model_name = llm_cfg.model
-    # Provider-specific model name prefixing (e.g., "openai/") is often handled by LiteLLM
-    # or should be included in the model name in config.yaml if necessary.
-    # Example: if llm_cfg.provider == "openai" and not model_name.startswith("openai/"):
-    # model_name = f"openai/{model_name}"
-    # For now, assume model_name in config is sufficient or LiteLLM handles it.
-
     logger.info(
         f"Calling {call_type} LLM: {llm_cfg.name} (Model: {model_name}) with timeout {timeout_val}s"
     )
 
     current_generation = None
+
     if trace and generation_name:
         try:
             current_generation = trace.generation(
@@ -66,6 +63,37 @@ async def _call_lite_llm(
             )
             current_generation = None
 
+    if stream:
+        logger.info(
+            f"Calling {call_type} LLM in streaming mode: {llm_cfg.name} (Model: {model_name})"
+        )
+        try:
+            # Await the acompletion call to get the async generator object
+            async_generator = await litellm.acompletion(
+                model=model_name,
+                messages=messages,
+                api_key=api_key,
+                stream=True,
+                **(llm_cfg.params or {}),
+            )
+            # Now iterate over the obtained async generator
+            async for chunk in async_generator:
+                yield chunk
+            if current_generation:
+                current_generation.end(
+                    output="<streamed>", usage=None
+                )  # Simplified Langfuse for stream
+        except Exception as e:
+            logger.error(
+                f"Streaming call failed for {llm_cfg.name} (Model: {model_name}): {e}"
+            )
+            if current_generation:
+                current_generation.end(
+                    level="ERROR", status_message=f"Streaming Error: {e}"
+                )
+        # The async for loop will naturally complete, no need for a final return in the generator.
+
+    # Non-streaming path
     try:
         response_obj = await asyncio.wait_for(
             litellm.acompletion(
@@ -81,38 +109,41 @@ async def _call_lite_llm(
         if current_generation:
             try:
                 output_content = None
-                if (
-                    response_obj
-                    and hasattr(response_obj, "choices")
-                    and response_obj.choices
+                has_choices = hasattr(response_obj, "choices") and response_obj.choices
+                has_message = (
+                    has_choices
                     and hasattr(response_obj.choices[0], "message")
                     and response_obj.choices[0].message
-                    and hasattr(response_obj.choices[0].message, "content")
-                ):
+                )
+                has_content = has_message and hasattr(
+                    response_obj.choices[0].message, "content"
+                )
+                if response_obj and has_content:
                     output_content = response_obj.choices[0].message.content
 
                 usage_data = None
                 if hasattr(response_obj, "usage") and response_obj.usage is not None:
-                    usage_data = litellm.utils.Usage(
+                    usage_data = litellm.utils.Usage(  # Ensure this is the correct Usage object for Langfuse
                         prompt_tokens=getattr(response_obj.usage, "prompt_tokens", 0),
                         completion_tokens=getattr(
                             response_obj.usage, "completion_tokens", 0
                         ),
+                        # cost might be available on response_obj directly or needs calculation
                     )
-
                 current_generation.end(output=output_content, usage=usage_data)
             except Exception as e:
                 logger.error(
                     f"Langfuse: Error ending generation '{generation_name}': {e}"
                 )
-        return response_obj
+        yield response_obj  # MODIFIED: yield response_obj
+        return  # MODIFIED: bare return
     except asyncio.TimeoutError:
         logger.warning(
             f"{call_type} LLM {llm_cfg.name} (Model: {model_name}) call timed out after {timeout_val} seconds."
         )
         if current_generation:
             current_generation.end(level="WARNING", status_message="Timeout")
-        return None
+        return  # MODIFIED: bare return
     except litellm.exceptions.APIConnectionError as e:
         logger.error(
             f"{call_type} LLM {llm_cfg.name} (Model: {model_name}) API Connection Error: {e}",
@@ -122,7 +153,7 @@ async def _call_lite_llm(
             current_generation.end(
                 level="ERROR", status_message=f"API Connection Error: {e}"
             )
-        return None
+        return  # MODIFIED: bare return
     except litellm.exceptions.RateLimitError as e:
         logger.error(
             f"{call_type} LLM {llm_cfg.name} (Model: {model_name}) Rate Limit Error: {e}",
@@ -132,7 +163,7 @@ async def _call_lite_llm(
             current_generation.end(
                 level="ERROR", status_message=f"Rate Limit Error: {e}"
             )
-        return None
+        return  # MODIFIED: bare return
     except litellm.exceptions.APIError as e:
         logger.error(
             f"{call_type} LLM {llm_cfg.name} (Model: {model_name}) LiteLLM API Error: {e}",
@@ -142,7 +173,7 @@ async def _call_lite_llm(
             current_generation.end(
                 level="ERROR", status_message=f"LiteLLM API Error: {e}"
             )
-        return None
+        return  # MODIFIED: bare return
     except Exception as e:
         logger.error(
             f"{call_type} LLM {llm_cfg.name} (Model: {model_name}) call failed with an unexpected error: {e}",
@@ -152,4 +183,4 @@ async def _call_lite_llm(
             current_generation.end(
                 level="ERROR", status_message=f"Unexpected Error: {e}"
             )
-        return None
+        return  # MODIFIED: bare return
