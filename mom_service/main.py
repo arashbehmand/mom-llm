@@ -5,6 +5,8 @@ import logging
 import os
 import sys
 import uuid
+import json # Import json for streaming
+import time # Import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 import litellm
@@ -15,7 +17,7 @@ from fastapi import (  # Keep APIRouter for now, might be needed by exception ha
     Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse # Import StreamingResponse
 
 from .config import (  # Removed ModelConfig as MoMModelConfig alias, not used here
     MoMConfig,
@@ -24,7 +26,7 @@ from .config import (  # Removed ModelConfig as MoMModelConfig alias, not used h
 from .core_logic import (
     _calculate_and_log_costs,
     _execute_concluding_call,
-    _perform_fanout_calls,
+    _perform_fanout_calls, # This will now be an async generator
     _prepare_concluding_messages,
 )
 
@@ -98,7 +100,7 @@ async def _process_mom_chat_request(
         bool,
         Optional[Any],
     ],
-    AsyncGenerator[str, None],
+    AsyncGenerator[Dict[str, Any], None], # Change return type for streaming to Dict[str, Any] chunks
 ]:
     """
     Processes a chat request using the MoM logic.
@@ -112,6 +114,7 @@ async def _process_mom_chat_request(
         - trace_obj: Optional[Any] (Langfuse trace object)
         OR
         - async generator yielding streaming chunks in real-time if stream=True.
+          Chunks are dictionaries formatted for OpenAI streaming response.
     """
     timeout = config.service.timeout_seconds
     model_conf = next((m for m in config.models if m.name == mom_model_name), None)
@@ -120,6 +123,7 @@ async def _process_mom_chat_request(
         raise ValueError(f"MoM Model '{mom_model_name}' not found.")
 
     llm_map = {ld.name: ld for ld in config.llm_definitions}
+    # thinking_was_embedded_in_content is now only relevant for non-streaming
     thinking_was_embedded_in_content = False
 
     trace = None
@@ -142,184 +146,356 @@ async def _process_mom_chat_request(
         if hasattr(fastapi_request_obj, "state"):
             fastapi_request_obj.state.trace_obj = trace
 
-    # Step 1: Fan-out
-    intermediate_thinking_context = await _perform_fanout_calls(
+    # Step 1: Fan-out (now returns an async generator)
+    # We will consume this generator differently based on stream mode
+    fanout_results_generator = _perform_fanout_calls(
         model_conf, llm_map, request_messages, timeout, trace
     )
 
-    successful_fanout_content_exists = any(
-        item.content
-        and not item.content.startswith("Error:")
-        and not item.content.startswith("Warning:")
-        for item in intermediate_thinking_context
-    )
-    if not successful_fanout_content_exists:
-        logger.error("No successful fan-out responses with usable content.")
-        if trace:
-            trace.update(
-                level="ERROR",
-                status_message="All fan-out calls failed or returned no usable content.",
-            )
-        if not intermediate_thinking_context and model_conf.llms_to_query:
-            raise ValueError(
-                "All configured fan-out LLM definitions were invalid or missing."
-            )
-
-    # Step 2: Prepare concluding messages
-    concl_msgs_for_llm = _prepare_concluding_messages(
-        request_messages, intermediate_thinking_context, model_conf, config
-    )
-
-    # Step 3: Concluding LLM
-    concl_def = llm_map.get(model_conf.concluding_llm)
-    if not concl_def:
-        logger.error(
-            f"Concluding LLMDefinition '{model_conf.concluding_llm}' not found."
-        )
-        if trace:
-            trace.update(
-                level="ERROR",
-                status_message=f"Concluding LLMDef '{model_conf.concluding_llm}' not found.",
-            )
-        raise ValueError("Concluding LLM definition not found in configuration.")
-
-    gen_name_concl = f"concluding-{concl_def.name}" if trace else None
+    intermediate_thinking_context: List[ThinkingContextItem] = [] # Collect results here for concluding call
 
     if stream:
         logger.info(
-            "_process_mom_chat_request: Calling _execute_concluding_call with stream=True to get generator"
+            "_process_mom_chat_request: Handling streaming request."
         )
-        # Await the async generator function call to get the async generator object
-        the_generator = await _execute_concluding_call(
+
+        async def streaming_response_generator():
+            response_id = f"mom-oai-{mom_model_name}-{str(uuid.uuid4())}"
+            index = 0 # For OpenAI streaming chunk index
+            thinking_block_open = False # Flag to track if <think> is open
+
+            # Stream thinking context as it becomes available
+            logger.info("Streaming fan-out thinking context...")
+            async for thinking_item in fanout_results_generator:
+                intermediate_thinking_context.append(thinking_item) # Collect for concluding call
+
+                if model_conf.include_thinking_context:
+                    if not thinking_block_open:
+                        # Yield the opening <think> tag as the first thinking chunk
+                        open_tag_data = {
+                            "id": response_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": mom_model_name,
+                            "choices": [
+                                {
+                                    "index": index,
+                                    "delta": {"content": "<think>\n"},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        yield open_tag_data
+                        thinking_block_open = True
+
+                    # Format individual thinking item content
+                    escaped_item_content = html.escape(thinking_item.content)
+                    thinking_chunk_content = (
+                        f"Model: {html.escape(thinking_item.model)}\nContent: {escaped_item_content}\n---\n" # Add separator
+                    )
+                    data = {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()), # Use current time for chunk
+                        "model": mom_model_name,
+                        "choices": [
+                            {
+                                "index": index,
+                                "delta": {"content": thinking_chunk_content},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    yield data # Yield the dictionary chunk
+
+            logger.info("Finished streaming fan-out thinking context.")
+
+            # Close the <think> block after all fan-out results are streamed
+            if thinking_block_open:
+                 close_tag_data = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": mom_model_name,
+                    "choices": [
+                        {
+                            "index": index,
+                            "delta": {"content": "</think>\n"},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                 yield close_tag_data
+
+
+            # Check if any successful fan-out content exists before concluding call
+            successful_fanout_content_exists = any(
+                item.content
+                and not item.content.startswith("Error:")
+                and not item.content.startswith("Warning:")
+                for item in intermediate_thinking_context
+            )
+            if not successful_fanout_content_exists:
+                logger.error("No successful fan-out responses with usable content.")
+                if trace:
+                    trace.update(
+                        level="ERROR",
+                        status_message="All fan-out calls failed or returned no usable content.",
+                    )
+                if not intermediate_thinking_context and model_conf.llms_to_query:
+                     # Yield an error chunk if no fan-out results and LLMs were configured
+                    error_data = {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": mom_model_name,
+                        "error": {"message": "All fan-out calls failed or returned no usable content.", "type": "internal_server_error"},
+                    }
+                    yield error_data
+                    return # Stop the generator
+
+            # Step 2: Prepare concluding messages (using the collected context)
+            concl_msgs_for_llm = _prepare_concluding_messages(
+                request_messages, intermediate_thinking_context, model_conf, config
+            )
+
+            # Step 3: Concluding LLM (streaming)
+            concl_def = llm_map.get(model_conf.concluding_llm)
+            if not concl_def:
+                logger.error(
+                    f"Concluding LLMDefinition '{model_conf.concluding_llm}' not found."
+                )
+                if trace:
+                    trace.update(
+                        level="ERROR",
+                        status_message=f"Concluding LLMDef '{model_conf.concluding_llm}' not found.",
+                    )
+                # Yield an error chunk
+                error_data = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": mom_model_name,
+                    "error": {"message": f"Concluding LLM definition '{model_conf.concluding_llm}' not found.", "type": "internal_server_error"},
+                }
+                yield error_data
+                return # Stop the generator
+
+
+            logger.info(
+                "_process_mom_chat_request: Calling _execute_concluding_call with stream=True to get generator"
+            )
+            gen_name_concl = f"concluding-{concl_def.name}" if trace else None
+            # Await the async generator function call to get the async generator object
+            the_concluding_generator = await _execute_concluding_call(
+                concl_def,
+                concl_msgs_for_llm,
+                timeout,
+                options={
+                    "trace": trace,
+                    "gen_name_concl": gen_name_concl,
+                    "stream": True,
+                },
+            )
+            logger.info(
+                f"_process_mom_chat_request: Streaming concluding LLM response..."
+            )
+
+            # Stream the concluding model responses
+            async for chunk in the_concluding_generator:
+                 # For OpenAI streaming, yield chunk.choices[0] as dict if present
+                if hasattr(chunk, "choices") and chunk.choices:
+                    choice = chunk.choices[0]
+                    delta = getattr(choice, "delta", None)
+                    finish_reason = getattr(choice, "finish_reason", None)
+
+                    # Only yield if there's content or a finish reason
+                    if (delta and getattr(delta, "content", None) is not None) or finish_reason is not None:
+                         data = {
+                            "id": response_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()), # Use current time for chunk
+                            "model": mom_model_name,
+                            "choices": [
+                                {
+                                    "index": index,
+                                    "delta": (
+                                        {"content": delta.content}
+                                        if delta
+                                        and getattr(delta, "content", None) is not None
+                                        else {}
+                                    ),
+                                    "finish_reason": finish_reason,
+                                }
+                            ],
+                        }
+                         yield data # Yield the dictionary chunk
+                # Handle potential error chunks from LiteLLM or internal errors
+                elif hasattr(chunk, "error"):
+                    error_data = {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": mom_model_name,
+                        "error": chunk["error"],
+                    }
+                    yield error_data # Yield the dictionary chunk
+                else:
+                    # Log unexpected chunk format
+                    logger.warning(f"Received unexpected chunk format from concluding LLM: {chunk}")
+
+            logger.info("Finished streaming concluding LLM response.")
+
+            # Calculate total cost after all calls are done (for logging/trace)
+            # Note: Cost calculation might be less precise in streaming as usage info
+            # might not be fully available until the end of the stream for some models.
+            # We'll calculate based on collected usage info.
+            concluding_llm_usage_info = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=None) # Placeholder
+            # In a real streaming scenario, you might need to accumulate usage info from chunks
+            # if the LiteLLM response object isn't fully available until the end.
+            # For now, we'll rely on the non-streaming path for accurate cost calculation in the return tuple.
+            # For streaming, cost calculation might need to happen differently or be omitted from the stream itself.
+            # Let's calculate based on the collected intermediate_thinking_context for fanout costs.
+            # Concluding LLM cost might be harder to get accurately during streaming.
+
+            # The total cost calculation below is primarily for the non-streaming return value and trace update.
+            # For streaming, we don't return the tuple, so this calculation isn't strictly needed *within* the generator,
+            # but it's needed for the trace update *after* the generator is consumed in the endpoint.
+            # The endpoint will need to handle collecting usage info from the stream if possible.
+            # For simplicity now, we'll calculate based on collected fanout usage.
+
+            # The Langfuse trace update with output and usage should ideally happen in the endpoint
+            # after the entire stream is consumed and aggregated.
+
+        # Return the async generator object
+        return streaming_response_generator()
+
+    # Non-streaming (default) path
+    logger.info("_process_mom_chat_request: Handling non-streaming request.")
+    try:
+        # Consume the fan-out generator into a list for the non-streaming path
+        async for thinking_item in fanout_results_generator:
+             intermediate_thinking_context.append(thinking_item)
+
+        # Check if any successful fan-out content exists before concluding call
+        successful_fanout_content_exists = any(
+            item.content
+            and not item.content.startswith("Error:")
+            and not item.content.startswith("Warning:")
+            for item in intermediate_thinking_context
+        )
+        if not successful_fanout_content_exists:
+            logger.error("No successful fan-out responses with usable content.")
+            if trace:
+                trace.update(
+                    level="ERROR",
+                    status_message="All fan-out calls failed or returned no usable content.",
+                )
+            if not intermediate_thinking_context and model_conf.llms_to_query:
+                raise ValueError(
+                    "All configured fan-out LLM definitions were invalid or missing."
+                )
+
+
+        # Step 2: Prepare concluding messages
+        concl_msgs_for_llm = _prepare_concluding_messages(
+            request_messages, intermediate_thinking_context, model_conf, config
+        )
+
+        # Step 3: Concluding LLM (non-streaming)
+        concl_def = llm_map.get(model_conf.concluding_llm)
+        if not concl_def:
+            logger.error(
+                f"Concluding LLMDefinition '{model_conf.concluding_llm}' not found."
+            )
+            if trace:
+                trace.update(
+                    level="ERROR",
+                    status_message=f"Concluding LLMDef '{model_conf.concluding_llm}' not found.",
+                )
+            raise ValueError("Concluding LLM definition not found in configuration.")
+
+        gen_name_concl = f"concluding-{concl_def.name}" if trace else None
+
+        # _execute_concluding_call with stream=False returns an async generator that yields one item
+        concl_res_obj = None
+        async for item in _execute_concluding_call(
             concl_def,
             concl_msgs_for_llm,
             timeout,
             options={
                 "trace": trace,
                 "gen_name_concl": gen_name_concl,
-                "stream": True,
+                "stream": False,
             },
-        )
-        logger.info(
-            f"_process_mom_chat_request: Returning generator of type {type(the_generator)}"
+        ):
+            concl_res_obj = item
+            break # Get the single item
+
+        if (
+            not concl_res_obj
+            or not concl_res_obj.choices
+            or not concl_res_obj.choices[0].message.content
+        ):
+            logger.error("Concluding LLM call failed or returned empty content.")
+            if trace:
+                trace.update(level="ERROR", status_message="Concluding LLM call failed.")
+            raise ValueError("Concluding LLM failed to generate response.")
+
+        final_content_from_concluding_llm = concl_res_obj.choices[0].message.content
+
+        concluding_usage_data = concl_res_obj.usage or {}
+        concluding_llm_usage_info = UsageInfo(
+            prompt_tokens=getattr(concluding_usage_data, "prompt_tokens", 0),
+            completion_tokens=getattr(concluding_usage_data, "completion_tokens", 0),
+            total_tokens=getattr(concluding_usage_data, "total_tokens", 0),
+            cost=getattr(concluding_usage_data, "cost", None),
         )
 
-        # Prepare thinking context if configured
-        thinking_block = None
-        if model_conf.include_thinking_context and intermediate_thinking_context:
+        # Step 4: Embed thinking context if configured (only for non-streaming)
+        final_content_to_return = final_content_from_concluding_llm
+        if model_conf.include_thinking_context:
             thinking_steps_str_parts = []
-            for item in intermediate_thinking_context:
-                escaped_item_content = html.escape(item.content)
-                thinking_steps_str_parts.append(
-                    f"Model: {html.escape(item.model)}\nContent: {escaped_item_content}"
-                )
+            if intermediate_thinking_context:
+                for item in intermediate_thinking_context:
+                    escaped_item_content = html.escape(item.content)
+                    thinking_steps_str_parts.append(
+                        f"Model: {html.escape(item.model)}\nContent: {escaped_item_content}"
+                    )
             if thinking_steps_str_parts:
-                thinking_block = "<think>\n" + "\n---\n".join(thinking_steps_str_parts) + "\n</think>\n"
-        
-        # Wrap the generator to filter/transform only ModelResponse chunks for streaming
-        async def filtered_generator():
-            # First stream the thinking context if available
-            if thinking_block:
-                # Stream thinking context as first chunk
-                data = {
-                    "choices": [
-                        {
-                            "delta": {"content": thinking_block},
-                            "finish_reason": None,
-                        }
-                    ]
-                }
-                yield data
-            
-            # Then stream the concluding model responses
-            async for chunk in the_generator:
-                # For OpenAI streaming, yield chunk.choices[0] as dict if present
-                if hasattr(chunk, "choices") and chunk.choices:
-                    choice = chunk.choices[0]
-                    delta = getattr(choice, "delta", None)
-                    finish_reason = getattr(choice, "finish_reason", None)
-                    data = {
-                        "choices": [
-                            {
-                                "delta": (
-                                    {"content": delta.content}
-                                    if delta
-                                    and getattr(delta, "content", None) is not None
-                                    else {}
-                                ),
-                                "finish_reason": finish_reason,
-                            }
-                        ]
-                    }
-                    yield data
-
-        return filtered_generator()
-    concl_res_obj = await _execute_concluding_call(
-        concl_def,
-        concl_msgs_for_llm,
-        timeout,
-        options={
-            "trace": trace,
-            "gen_name_concl": gen_name_concl,
-            "stream": False,
-        },
-    )
-
-    if (
-        not concl_res_obj
-        or not concl_res_obj.choices
-        or not concl_res_obj.choices[0].message.content
-    ):
-        logger.error("Concluding LLM call failed or returned empty content.")
-        if trace:
-            trace.update(level="ERROR", status_message="Concluding LLM call failed.")
-        raise ValueError("Concluding LLM failed to generate response.")
-
-    final_content_from_concluding_llm = concl_res_obj.choices[0].message.content
-
-    concluding_usage_data = concl_res_obj.usage or {}
-    concluding_llm_usage_info = UsageInfo(
-        prompt_tokens=getattr(concluding_usage_data, "prompt_tokens", 0),
-        completion_tokens=getattr(concluding_usage_data, "completion_tokens", 0),
-        total_tokens=getattr(concluding_usage_data, "total_tokens", 0),
-        cost=getattr(concluding_usage_data, "cost", None),
-    )
-
-    # Step 4: Embed thinking context if configured
-    final_content_to_return = final_content_from_concluding_llm
-    if model_conf.include_thinking_context:
-        thinking_steps_str_parts = []
-        if intermediate_thinking_context:
-            for item in intermediate_thinking_context:
-                escaped_item_content = html.escape(item.content)
-                thinking_steps_str_parts.append(
-                    f"Model: {html.escape(item.model)}\nContent: {escaped_item_content}"
+                full_thinking_block = (
+                    "<think>\n" + "\n---\n".join(thinking_steps_str_parts) + "\n</think>"
                 )
-        if thinking_steps_str_parts:
-            full_thinking_block = (
-                "<think>\n" + "\n---\n".join(thinking_steps_str_parts) + "\n</think>"
-            )
-            final_content_to_return = (
-                f"{full_thinking_block}\n{final_content_from_concluding_llm}"
-            )
-            thinking_was_embedded_in_content = True
+                final_content_to_return = (
+                    f"{full_thinking_block}\n{final_content_from_concluding_llm}"
+                )
+                thinking_was_embedded_in_content = True
 
-    total_cost_accumulator = _calculate_and_log_costs(
-        intermediate_thinking_context, concluding_llm_usage_info
-    )
+        total_cost_accumulator = _calculate_and_log_costs(
+            intermediate_thinking_context, concluding_llm_usage_info
+        )
 
-    if trace:
-        pass
+        if trace:
+            pass # Trace update happens in the endpoint for non-streaming
 
-    return (
-        final_content_to_return,
-        (intermediate_thinking_context if intermediate_thinking_context else None),
-        concluding_llm_usage_info,
-        total_cost_accumulator,
-        model_conf.name,
-        thinking_was_embedded_in_content,
-        trace,
-    )
+        return (
+            final_content_to_return,
+            (intermediate_thinking_context if intermediate_thinking_context else None),
+            concluding_llm_usage_info,
+            total_cost_accumulator,
+            model_conf.name,
+            thinking_was_embedded_in_content,
+            trace,
+        )
+    except ValueError as e:
+         # Re-raise ValueErrors from within the non-streaming path
+         raise e
+    except Exception as e:
+        # Catch any other unexpected errors in the non-streaming path
+        logger.error(f"Unexpected error in non-streaming path: {e}", exc_info=True)
+        if trace:
+             trace.update(level="ERROR", status_message=f"Unexpected Error: {e}")
+        raise ValueError(f"An unexpected error occurred: {e}") # Re-raise as ValueError
 
 
 # --- Main FastAPI App Setup ---
@@ -396,10 +572,10 @@ elif "/" not in [route.path for route in app.routes]:
 
 @app.middleware("http")
 async def langfuse_trace_middleware(request: Request, call_next):
-    if LANGFUSE_CLIENT and hasattr(request.state, "trace_obj"):
-        pass
-    elif LANGFUSE_CLIENT:
-        pass
+    # This middleware is primarily for flushing the trace after the request is done.
+    # Trace creation and initial setup happens within _process_mom_chat_request.
+    # For streaming, the trace update with the final output needs to happen in the endpoint
+    # after the stream is fully consumed.
     response = await call_next(request)
     if (
         LANGFUSE_CLIENT
@@ -407,6 +583,9 @@ async def langfuse_trace_middleware(request: Request, call_next):
         and request.state.trace_obj
     ):
         try:
+            # For streaming, the trace might still be active here.
+            # The endpoint is responsible for calling trace.update() with the final output.
+            # Flushing here ensures any completed spans/generations are sent.
             LANGFUSE_CLIENT.flush()
         except Exception as e:
             logger.error(f"Langfuse: Error in middleware flush: {e}")

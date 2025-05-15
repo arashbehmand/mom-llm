@@ -69,7 +69,7 @@ def check_token(request: Request):
         )
 
 
-@ollama_router.post("/api/chat", response_model=OllamaChatResponse)
+@ollama_router.post("/chat/completions", response_model=OllamaChatResponse)
 async def chat_completions_ollama(req_data: OllamaChatRequest, request: Request):
     try:
         check_token(request)
@@ -142,7 +142,7 @@ async def chat_completions_ollama(req_data: OllamaChatRequest, request: Request)
         return format_ollama_error(500, f"Unexpected server error: {str(e)}")
 
 
-@ollama_router.get("/api/tags", response_model=OllamaTagsResponse)
+@ollama_router.get("/models", response_model=OllamaTagsResponse)
 async def get_ollama_models_list(request: Request):
     """Returns a list of available Ollama models (tags)."""
     try:

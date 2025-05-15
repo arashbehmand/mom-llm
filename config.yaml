@@ -1,19 +1,39 @@
 llm_definitions:
-  - name: "oai-g4.1"
+  - name: "oaig4.1"
     model: "openai/gpt-4.1"
     api_key_env: "OPENAI_API_KEY"
     params:
       temperature: 0.7
-  - name: "oai-o3m"
-    model: "openai/o3-mini"
+  - name: "oaio4ml"
+    model: "openai/o4-mini"
     api_key_env: "OPENAI_API_KEY"
+    params:
+      reasoning_effort: "low"
   - name: "g25f"
     model: "gemini/gemini-2.5-flash-preview-04-17"
     api_key_env: "GOOGLE_API_KEY"
-  - name: "ministral3b"
-    model: "openrouter/mistralai/ministral-3b"
+  - name: "g25pl"
+    model: "gemini/ gemini-2.5-pro-preview-05-06"
+    api_key_env: "GOOGLE_API_KEY"
+  - name: "claude37tl"
+    model: "anthropic/claude-3-7-sonnet-20250219"
+    api_key_env: "ANTHROPIC_API_KEY"
+    params:
+      reasoning_effort: "low"
+  - name: "grok3ml"
+    model: "xai/grok-3-mini-beta"
+    api_key_env: "XAI_API_KEY"
+    params:
+      reasoning_effort: "low"
+  - name: "r1l"
+    model: "deepseek/deepseek-reasoner"
+    api_key_env: "DEEPSEEK_API_KEY"
+  - name: "mistral3m"
+    model: "mistral/mistral-medium-latest"
+    api_key_env: "MISTRAL_API_KEY"
+  - name: "qwen235"
+    model: "openrouter/qwen/qwen3-235b-a22b"
     api_key_env: "OPENROUTER_API_KEY"
-
 prompt_definitions:
   - name: "synth_default"
     content: |
@@ -50,17 +70,21 @@ prompt_definitions:
       Only output the final answer and the processed count—omit your private analysis.
 
 models:
-  - name: "mom"
+  - name: "mom-g25f[oaig4.1,oaio4ml,g25pl,claude37tl,grok3l,r1l,mistral3m,ministral3b,qwen235]"
     llms_to_query:
-      - "oai-g4.1"
-      - "oai-o3m"
-      - "g25f"
-      - "ministral3b"
+      - "oaig4.1"
+      - "oaio4ml"
+      - "g25pl"
+      - "claude37tl"
+      - "grok3l"
+      - "r1l"
+      - "mistral3m"
+      - "qwen235"
     concluding_llm: "g25f"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
-  - name: "deepseek-reasoner"
+  - name: "mom-cheap"
     llms_to_query:
       - "oai-g4.1"
       - "ministral3b"
@@ -69,8 +93,8 @@ models:
     include_thinking_context: true
 
 service:
-  timeout_seconds: 30
-  exposed_apis: ["openai", "ollama"] # Add other API types like "claude" as needed
+  timeout_seconds: 90
+  exposed_apis: ["openai"] # Add other API types like "claude" as needed
 
 langfuse:
   public_key_env: "LANGFUSE_PUBLIC_KEY"

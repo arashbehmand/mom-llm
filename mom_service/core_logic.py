@@ -1,12 +1,29 @@
 import asyncio
 import html
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Any, Dict, List, Optional, AsyncGenerator, Tuple # Import AsyncGenerator, Tuple
 
 import litellm
 
 from .config import LLMDefinition, MoMConfig
 from .endpoints.models import ThinkingContextItem, UsageInfo
 from .llm_calls import _call_lite_llm
+
+logger = logging.getLogger(__name__)
+
+# New helper function
+async def _call_and_return_with_def(llm_def: LLMDefinition, call_coroutine: AsyncGenerator[Any, None]) -> Tuple[LLMDefinition, Any]:
+    """Helper to await a generator expected to yield one item and return it with the LLMDefinition."""
+    result = None
+    try:
+        async for item in call_coroutine:
+            result = item
+            break # We expect only one item for non-streaming fanout
+    except Exception as e:
+        # If an exception occurs within the LLM call, return the definition and the exception
+        return (llm_def, e)
+
+    return (llm_def, result)
 
 
 async def _perform_fanout_calls(
@@ -15,107 +32,123 @@ async def _perform_fanout_calls(
     request_messages: List[Dict[str, Any]],
     timeout: int,
     trace: Optional[Any] = None,
-) -> List[ThinkingContextItem]:
+) -> AsyncGenerator[ThinkingContextItem, None]:
     """
-    Perform fan-out LLM calls and collect intermediate thinking context.
+    Perform fan-out LLM calls and yield intermediate thinking context items as they complete.
     """
     tasks = []
-    fanout_llm_defs_in_order = []
-
-    async def _get_single_item_from_gen(gen_func_call):
-        """Helper to consume an async generator expected to yield one item."""
-        async for item in gen_func_call:
-            return item  # Return the first (and only expected) item
-        return (
-            None  # Should not happen if _call_lite_llm (non-stream) works as expected
-        )
 
     for idx, llm_name_to_query in enumerate(model_conf.llms_to_query):
         ld = llm_map.get(llm_name_to_query)
         if not ld:
+            logger.warning(f"Fan-out LLMDefinition '{llm_name_to_query}' not found.")
             continue
-        fanout_llm_defs_in_order.append(ld)
+
         gen_name = f"fanout-{idx}-{ld.name}" if trace else None
 
-        # _call_lite_llm returns an async generator.
-        # We wrap its consumption in a coroutine for asyncio.gather.
-        # For fanout, stream is implicitly False.
-        tasks.append(
-            _get_single_item_from_gen(
-                _call_lite_llm(
-                    ld,
-                    request_messages,
-                    timeout,
-                    options={
-                        "call_type": "fanout",
-                        "trace": trace,
-                        "generation_name": gen_name,
-                        "stream": False,  # Explicitly False for fanout
-                    },
-                )
-            )
+        # Create the coroutine for the LLM call (non-streaming for fanout)
+        llm_call_coroutine = _call_lite_llm(
+            ld,
+            request_messages,
+            timeout,
+            options={
+                "call_type": "fanout",
+                "trace": trace,
+                "generation_name": gen_name,
+                "stream": False,  # Explicitly False for fanout
+            },
         )
 
-    # Gather results from the wrapper coroutines
-    fanout_results_objects = await asyncio.gather(*tasks, return_exceptions=True)
+        # Create a task for the helper that calls the LLM and returns the definition with the result/exception
+        task = asyncio.create_task(_call_and_return_with_def(ld, llm_call_coroutine))
+        tasks.append(task)
 
-    intermediate_thinking_context: List[ThinkingContextItem] = []
-    # fanout_results_objects now contains the actual response objects or exceptions
-    for ld_fanout, current_res_obj_fanout in zip(
-        fanout_llm_defs_in_order, fanout_results_objects
-    ):  # Renamed to avoid conflict
+    # Use asyncio.as_completed to yield results as they finish
+    for future in asyncio.as_completed(tasks):
         cost = None
         content_str = ""
-        # res_obj_fanout is now current_res_obj_fanout from the zip
+        current_res_obj_fanout = None
+        ld_fanout = None # Initialize ld_fanout
 
-        if isinstance(
-            current_res_obj_fanout, Exception
-        ):  # Check if the result from gather is an exception
-            content_str = f"Error: Call to {ld_fanout.model} failed. Details: {html.escape(str(current_res_obj_fanout))}"
-            # current_res_obj_fanout is already the exception
-        elif (
-            current_res_obj_fanout is None
-        ):  # Wrapper returned None (generator was empty)
-            content_str = f"Warning: Call to {ld_fanout.model} returned no response (empty generator)."
-        elif (
-            hasattr(current_res_obj_fanout, "choices")
-            and current_res_obj_fanout.choices
-            and hasattr(current_res_obj_fanout.choices[0], "message")
-            and current_res_obj_fanout.choices[0].message
-            and hasattr(current_res_obj_fanout.choices[0].message, "content")
-        ):
-            content_str = current_res_obj_fanout.choices[0].message.content
-            try:
-                cost = litellm.completion_cost(
-                    completion_response=current_res_obj_fanout
-                )
-            except Exception:
-                cost = None  # Error calculating cost
+        # Initialize usage info to a default value *before* processing the future
+        current_usage_info = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=0.0)
 
-            usage_data = current_res_obj_fanout.usage or {}  # Corrected variable name
-            current_usage_info = UsageInfo(
-                prompt_tokens=getattr(usage_data, "prompt_tokens", 0),
-                completion_tokens=getattr(usage_data, "completion_tokens", 0),
-                total_tokens=getattr(usage_data, "total_tokens", 0),
-                cost=cost,
-            )
-            intermediate_thinking_context.append(
-                ThinkingContextItem(
-                    model=ld_fanout.model, content=content_str, usage=current_usage_info
+        try:
+            # Await the future to get the tuple (llm_def, result_or_exception)
+            ld_fanout, result_or_exception = await future
+
+            if isinstance(result_or_exception, Exception):
+                 # An exception occurred within the helper coroutine (during the LLM call)
+                 content_str = f"Error: Call to {ld_fanout.model} failed. Details: {html.escape(str(result_or_exception))}"
+                 logger.error(f"Fan-out call to {ld_fanout.name} failed: {result_or_exception}")
+                 # current_usage_info is already initialized to default
+            else:
+                 # The LLM call was successful, result_or_exception is the response object
+                 current_res_obj_fanout = result_or_exception
+
+        except Exception as e:
+             # This catches exceptions from asyncio.as_completed itself or unexpected errors
+             # within the loop, less likely but good to have.
+             # If ld_fanout is None here, it's a more general error.
+            if ld_fanout:
+                 content_str = f"Error: An unexpected error occurred processing result for {ld_fanout.model}. Details: {html.escape(str(e))}"
+                 logger.error(f"Unexpected error processing result for {ld_fanout.name}: {e}")
+            else:
+                 content_str = f"Error: An unexpected error occurred processing a fan-out result. Details: {html.escape(str(e))}"
+                 logger.error(f"An unexpected error occurred processing an unattributed fan-out result: {e}")
+            # current_usage_info is already initialized to default
+
+
+        # Process the result if the call was successful (current_res_obj_fanout is not None)
+        if current_res_obj_fanout is not None:
+            if (
+                hasattr(current_res_obj_fanout, "choices")
+                and current_res_obj_fanout.choices
+                and hasattr(current_res_obj_fanout.choices[0], "message")
+                and current_res_obj_fanout.choices[0].message
+                and hasattr(current_res_obj_fanout.choices[0].message, "content")
+            ):
+                content_str = current_res_obj_fanout.choices[0].message.content
+                try:
+                    cost = litellm.completion_cost(
+                        completion_response=current_res_obj_fanout
+                    )
+                except Exception:
+                    cost = None  # Error calculating cost
+
+                usage_data = current_res_obj_fanout.usage or {}
+                current_usage_info = UsageInfo(
+                    prompt_tokens=getattr(usage_data, "prompt_tokens", 0),
+                    completion_tokens=getattr(usage_data, "completion_tokens", 0),
+                    total_tokens=getattr(usage_data, "total_tokens", 0),
+                    cost=cost,
                 )
-            )
-        else:  # Handles errors from above or if res_obj_fanout is None/malformed
-            if not content_str:  # If no specific error message was set yet
-                content_str = f"Warning: Call to {ld_fanout.model} returned an empty or malformed response."
-            usage_data_error = UsageInfo(
-                prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=0.0
-            )
-            intermediate_thinking_context.append(
-                ThinkingContextItem(
-                    model=ld_fanout.model, content=content_str, usage=usage_data_error
-                )
-            )
-    return intermediate_thinking_context
+            else:
+                # Response object was malformed or unexpected, but no exception was raised by the call itself
+                if not content_str: # Only set if no error message was already captured by an exception
+                    content_str = f"Warning: Call to {ld_fanout.model} returned an empty or malformed response."
+                # current_usage_info is already initialized to default
+
+        # Yield the ThinkingContextItem as soon as it's ready
+        # Ensure ld_fanout is available before yielding
+        if ld_fanout:
+             logger.info(f"DEBUG: Yielding ThinkingContextItem for {ld_fanout.model} with usage: {current_usage_info} (type: {type(current_usage_info)})") # Add debug print
+             yield ThinkingContextItem(
+                 model=ld_fanout.model, content=content_str, usage=current_usage_info
+             )
+        else:
+             # If ld_fanout is None, it means the exception happened before we could get the definition.
+             # We still yield an item, but with a generic model name indicating an error.
+             logger.info(f"DEBUG: Yielding ThinkingContextItem for unknown_error_model with usage: {current_usage_info} (type: {type(current_usage_info)})") # Add debug print
+             yield ThinkingContextItem(
+                 model="unknown_error_model", content=content_str, usage=current_usage_info
+             )
+
+
+# Keep other functions as they are
+# _prepare_concluding_messages
+# _execute_concluding_call
+# _calculate_and_log_costs
 
 
 def _prepare_concluding_messages(

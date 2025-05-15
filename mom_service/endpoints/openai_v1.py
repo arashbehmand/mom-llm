@@ -66,16 +66,22 @@ async def chat_completions_openai(
             },
         )
 
-    from ..main import _process_mom_chat_request, logger
+    from ..main import _process_mom_chat_request, logger, LANGFUSE_CLIENT # Import LANGFUSE_CLIENT
 
     if getattr(req_data, "stream", False):
 
         async def event_stream():
             response_id = f"mom-oai-{req_data.model}-{str(uuid.uuid4())}"
-            index = 0
+            # index is handled within _process_mom_chat_request generator now
             # Accumulate the complete content for Langfuse trace update
             complete_content = ""
             trace_obj = None
+            # Accumulate usage info if available in chunks (less common for streaming)
+            # Or calculate based on collected info after the stream.
+            # For now, we'll rely on the non-streaming path for accurate usage/cost in the response object.
+            # Langfuse trace update will use the accumulated content.
+            # accumulated_usage = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=None) # Usage accumulation is complex for streaming
+
             try:
                 # _process_mom_chat_request is an async def function that returns an async generator object when stream=True.
                 # Await the async generator function call to get the async generator object
@@ -85,99 +91,67 @@ async def chat_completions_openai(
                     request,
                     stream=True,
                 )
-                
+
                 # Get the trace object from the request state if it exists
                 if hasattr(request.state, "trace_obj"):
                     trace_obj = request.state.trace_obj
-                
-                async for chunk in the_generator:
+
+                async for chunk_dict in the_generator: # Iterate over the dictionary chunks yielded by _process_mom_chat_request
                     # Ensure chunk is a dictionary before processing
-                    if isinstance(chunk, dict):
+                    if isinstance(chunk_dict, dict):
                         # Check if it's a LiteLLM chunk with choices
-                        if "choices" in chunk and chunk["choices"]:
-                            choice = chunk["choices"][0]
+                        if "choices" in chunk_dict and chunk_dict["choices"]:
+                            choice = chunk_dict["choices"][0]
                             delta = choice.get("delta")
-                            finish_reason = choice.get("finish_reason")
+                            # finish_reason is included in the chunk_dict
 
                             # Handle content delta
                             if delta and delta.get("content") is not None:
                                 # Accumulate content for Langfuse
                                 complete_content += delta["content"]
-                                
-                                data = {
-                                    "id": response_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": int(time.time()),
-                                    "model": req_data.model,
-                                    "choices": [
-                                        {
-                                            "index": index,
-                                            "delta": {"content": delta["content"]},
-                                            "finish_reason": None,
-                                        }
-                                    ],
-                                }
-                                yield f"data: {json.dumps(data)}\n\n"
 
-                            # Handle finish reason
-                            if finish_reason is not None:
-                                data = {
-                                    "id": response_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": int(time.time()),
-                                    "model": req_data.model,
-                                    "choices": [
-                                        {
-                                            "index": index,
-                                            "delta": {},
-                                            "finish_reason": finish_reason,
-                                        }
-                                    ],
-                                }
-                                yield f"data: {json.dumps(data)}\n\n"
+                            # Yield the chunk as an SSE data block
+                            yield f"data: {json.dumps(chunk_dict)}\n\n"
+
                         # Handle potential error chunks from LiteLLM or internal errors
-                        elif "error" in chunk:
-                            error_data = {
-                                "id": response_id,
-                                "object": "chat.completion.chunk",
-                                "created": int(time.time()),
-                                "model": req_data.model,
-                                "error": chunk["error"],
-                            }
-                            yield f"data: {json.dumps(error_data)}\n\n"
+                        elif "error" in chunk_dict:
+                             yield f"data: {json.dumps(chunk_dict)}\n\n"
                         else:
                             # Log unexpected chunk format
-                            logger.warning(f"Received unexpected chunk format: {chunk}")
+                            logger.warning(f"Received unexpected chunk format from _process_mom_chat_request: {chunk_dict}")
                     else:
                         # Log unexpected chunk type
-                        logger.warning(f"Received unexpected chunk type: {type(chunk)}")
+                        logger.warning(f"Received unexpected chunk type from _process_mom_chat_request: {type(chunk_dict)}")
 
                 # After streaming is done, update Langfuse trace with complete output
                 if trace_obj and complete_content:
                     try:
-                        # Create a response object similar to non-streaming mode
-                        openai_response = OpenAIChatCompletionResponse(
+                        # Create a response object similar to non-streaming mode for trace output
+                        # Note: Usage and cost might not be accurately available here for streaming
+                        openai_response_for_trace = OpenAIChatCompletionResponse(
                             id=response_id,
-                            created=int(time.time()),
+                            created=int(time.time()), # Use current time for the final response object timestamp
                             model=req_data.model,
                             choices=[
                                 OpenAIChatCompletionResponseChoice(
-                                    index=0, 
+                                    index=0,
                                     message=ChatMessage(
-                                        role="assistant", 
+                                        role="assistant",
                                         content=complete_content
                                     )
                                 )
                             ],
+                            # usage=accumulated_usage if accumulated_usage.total_tokens > 0 else None, # Include usage if accumulated
+                            # total_cost_usd=... # Cost might need separate calculation or omitted for streaming trace
                         )
                         # Update the trace with the complete output
-                        trace_obj.update(output=openai_response.dict(exclude_none=True))
+                        trace_obj.update(output=openai_response_for_trace.dict(exclude_none=True))
                         logger.info("Successfully updated Langfuse trace for streaming response")
                     except Exception as e:
                         logger.error(f"Failed to update Langfuse trace for streaming response: {e}")
 
             except Exception as e:
-                logger.error(f"Error in streaming response: {str(e)}")
+                logger.error(f"Error in streaming response generator: {str(e)}", exc_info=True)
                 error_data = {
                     "id": response_id,
                     "object": "chat.completion.chunk",
@@ -204,11 +178,20 @@ async def chat_completions_openai(
             req_data.model,
             [m.dict(exclude_none=True) for m in req_data.messages],
             request,
+            stream=False, # Explicitly False for non-streaming
         )
     except ValueError as e:
+        # Catch ValueErrors raised by _process_mom_chat_request and return as HTTPException
         raise HTTPException(
             status_code=500, detail={"message": str(e), "type": "internal_server_error"}
         )
+    except Exception as e:
+        # Catch any other unexpected errors from _process_mom_chat_request
+        logger.error(f"Unexpected error in non-streaming _process_mom_chat_request: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail={"message": f"An unexpected error occurred: {e}", "type": "internal_server_error"}
+        )
+
 
     response_id = f"mom-oai-{mom_model_name_used}-{str(uuid.uuid4())}"
     openai_response = OpenAIChatCompletionResponse(
@@ -222,13 +205,14 @@ async def chat_completions_openai(
         ],
         usage=concluding_usage,
         thinking_context=None if thinking_embedded else raw_thinking_ctx,
-        total_cost_usd=total_cost if total_cost > 0 else None,
+        total_cost_usd=total_cost if total_cost is not None and total_cost > 0 else None, # Ensure total_cost is not None
     )
 
     if trace_obj:
         try:
+            # Update trace with the final response object for non-streaming
             trace_obj.update(output=openai_response.dict(exclude_none=True))
         except Exception as e:
-            logger.error(f"OpenAI Endpoint: Failed to update Langfuse trace: {e}")
+            logger.error(f"OpenAI Endpoint: Failed to update Langfuse trace for non-streaming: {e}")
 
     return openai_response
