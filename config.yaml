@@ -9,22 +9,47 @@ llm_definitions:
     api_key_env: "OPENAI_API_KEY"
     params:
       reasoning_effort: "low"
+  - name: "oaio4mh"
+    model: "openai/o4-mini"
+    api_key_env: "OPENAI_API_KEY"
+    params:
+      reasoning_effort: "high"
+  - name: "oaio3h"
+    model: "openai/o3"
+    api_key_env: "OPENAI_API_KEY"
+    params:
+      reasoning_effort: "high"
   - name: "g25f"
     model: "gemini/gemini-2.5-flash-preview-04-17"
     api_key_env: "GOOGLE_API_KEY"
-  - name: "g25pl"
-    model: "gemini/ gemini-2.5-pro-preview-05-06"
+  - name: "g25fh"
+    model: "gemini/gemini-2.5-flash-preview-04-17"
+    api_key_env: "GOOGLE_API_KEY"
+    params:
+      reasoning_effort: "high"
+  - name: "g25p"
+    model: "gemini/gemini-2.5-pro-preview-05-06"
     api_key_env: "GOOGLE_API_KEY"
   - name: "claude37tl"
     model: "anthropic/claude-3-7-sonnet-20250219"
     api_key_env: "ANTHROPIC_API_KEY"
     params:
       reasoning_effort: "low"
+  - name: "claude37th"
+    model: "anthropic/claude-3-7-sonnet-20250219"
+    api_key_env: "ANTHROPIC_API_KEY"
+    params:
+      reasoning_effort: "high"
   - name: "grok3ml"
     model: "xai/grok-3-mini-beta"
     api_key_env: "XAI_API_KEY"
     params:
       reasoning_effort: "low"
+  - name: "grok3mh"
+    model: "xai/grok-3-mini-beta"
+    api_key_env: "XAI_API_KEY"
+    params:
+      reasoning_effort: "high"
   - name: "r1l"
     model: "deepseek/deepseek-reasoner"
     api_key_env: "DEEPSEEK_API_KEY"
@@ -70,31 +95,46 @@ prompt_definitions:
       Only output the final answer and the processed count—omit your private analysis.
 
 models:
-  - name: "mom-g25f[oaig4.1,oaio4ml,g25pl,claude37tl,grok3l,r1l,mistral3m,ministral3b,qwen235]"
+  - name: "mom-g25f[oaig4.1,oaio4ml,g25p,claude37tl,grok3ml,r1l,mistral3m,qwen235]"
     llms_to_query:
       - "oaig4.1"
       - "oaio4ml"
-      - "g25pl"
+      - "g25p"
       - "claude37tl"
-      - "grok3l"
+      - "grok3ml"
       - "r1l"
       - "mistral3m"
       - "qwen235"
     concluding_llm: "g25f"
     concluding_prompt: "synth_default"
     include_thinking_context: true
-
+  - name: "bmom-g25p[oaig4.1,oaio3h,oaio4mh,g25p,g25fh,claude37th,grok3mh,r1l,mistral3m,qwen235]"
+    llms_to_query:
+      - "oaig4.1"
+      - "oaio3h"
+      - "oaio4mh"
+      - "g25p"
+      - "g25fh"
+      - "claude37th"
+      - "grok3mh"
+      - "r1l"
+      - "mistral3m"
+      # - "qwen235"
+    concluding_llm: "g25p"
+    concluding_prompt: "synth_default"
+    include_thinking_context: true
   - name: "mom-cheap"
     llms_to_query:
-      - "oai-g4.1"
-      - "ministral3b"
-    concluding_llm: "oai-g4.1"
+      - "oaig4.1"
+      - "mistral3m"
+    concluding_llm: "mistral3m"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
 service:
-  timeout_seconds: 90
+  timeout_seconds: 600
   exposed_apis: ["openai"] # Add other API types like "claude" as needed
+  cache_enabled: true
 
 langfuse:
   public_key_env: "LANGFUSE_PUBLIC_KEY"

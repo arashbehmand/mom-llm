@@ -116,6 +116,7 @@ async def _process_mom_chat_request(
         - async generator yielding streaming chunks in real-time if stream=True.
           Chunks are dictionaries formatted for OpenAI streaming response.
     """
+    logger.info(f"--- _process_mom_chat_request received model name: {mom_model_name} ---") # Add this line
     timeout = config.service.timeout_seconds
     model_conf = next((m for m in config.models if m.name == mom_model_name), None)
     if not model_conf:
@@ -149,7 +150,7 @@ async def _process_mom_chat_request(
     # Step 1: Fan-out (now returns an async generator)
     # We will consume this generator differently based on stream mode
     fanout_results_generator = _perform_fanout_calls(
-        model_conf, llm_map, request_messages, timeout, trace
+        model_conf, llm_map, request_messages, timeout, config, trace # Pass config
     )
 
     intermediate_thinking_context: List[ThinkingContextItem] = [] # Collect results here for concluding call
@@ -188,8 +189,9 @@ async def _process_mom_chat_request(
                         yield open_tag_data
                         thinking_block_open = True
 
-                    # Format individual thinking item content
-                    escaped_item_content = html.escape(thinking_item.content)
+                    # Format individual thinking item content and clean inner think tags
+                    item_content_cleaned = thinking_item.content.replace("<think>", "[inner_think]").replace("</think>", "[/inner_think]")
+                    escaped_item_content = html.escape(item_content_cleaned)
                     thinking_chunk_content = (
                         f"Model: {html.escape(thinking_item.model)}\nContent: {escaped_item_content}\n---\n" # Add separator
                     )
@@ -291,6 +293,7 @@ async def _process_mom_chat_request(
                 concl_def,
                 concl_msgs_for_llm,
                 timeout,
+                config, # Pass config
                 options={
                     "trace": trace,
                     "gen_name_concl": gen_name_concl,
@@ -302,49 +305,14 @@ async def _process_mom_chat_request(
             )
 
             # Stream the concluding model responses
+            logger.info("_process_mom_chat_request: Starting to stream concluding LLM chunks...")
             async for chunk in the_concluding_generator:
-                 # For OpenAI streaming, yield chunk.choices[0] as dict if present
-                if hasattr(chunk, "choices") and chunk.choices:
-                    choice = chunk.choices[0]
-                    delta = getattr(choice, "delta", None)
-                    finish_reason = getattr(choice, "finish_reason", None)
+                 logger.debug(f"_process_mom_chat_request: Yielding concluding chunk: {chunk}")
+                 # Yield the chunk directly. The generator in llm_calls.py is responsible
+                 # for formatting the chunks correctly for both live and cached streams.
+                 yield chunk
 
-                    # Only yield if there's content or a finish reason
-                    if (delta and getattr(delta, "content", None) is not None) or finish_reason is not None:
-                         data = {
-                            "id": response_id,
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()), # Use current time for chunk
-                            "model": mom_model_name,
-                            "choices": [
-                                {
-                                    "index": index,
-                                    "delta": (
-                                        {"content": delta.content}
-                                        if delta
-                                        and getattr(delta, "content", None) is not None
-                                        else {}
-                                    ),
-                                    "finish_reason": finish_reason,
-                                }
-                            ],
-                        }
-                         yield data # Yield the dictionary chunk
-                # Handle potential error chunks from LiteLLM or internal errors
-                elif hasattr(chunk, "error"):
-                    error_data = {
-                        "id": response_id,
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": mom_model_name,
-                        "error": chunk["error"],
-                    }
-                    yield error_data # Yield the dictionary chunk
-                else:
-                    # Log unexpected chunk format
-                    logger.warning(f"Received unexpected chunk format from concluding LLM: {chunk}")
-
-            logger.info("Finished streaming concluding LLM response.")
+            logger.info("_process_mom_chat_request: Finished streaming concluding LLM response.")
 
             # Calculate total cost after all calls are done (for logging/trace)
             # Note: Cost calculation might be less precise in streaming as usage info
@@ -423,6 +391,7 @@ async def _process_mom_chat_request(
             concl_def,
             concl_msgs_for_llm,
             timeout,
+            config, # Pass config
             options={
                 "trace": trace,
                 "gen_name_concl": gen_name_concl,
@@ -458,7 +427,9 @@ async def _process_mom_chat_request(
             thinking_steps_str_parts = []
             if intermediate_thinking_context:
                 for item in intermediate_thinking_context:
-                    escaped_item_content = html.escape(item.content)
+                    # Clean inner think tags before escaping and appending
+                    item_content_cleaned = item.content.replace("<think>", "[inner_think]").replace("</think>", "[/inner_think]")
+                    escaped_item_content = html.escape(item_content_cleaned)
                     thinking_steps_str_parts.append(
                         f"Model: {html.escape(item.model)}\nContent: {escaped_item_content}"
                     )
@@ -585,7 +556,7 @@ async def langfuse_trace_middleware(request: Request, call_next):
         try:
             # For streaming, the trace might still be active here.
             # The endpoint is responsible for calling trace.update() with the final output.
-            # Flushing here ensures any completed spans/generations are sent.
+            # Flushing here ensures any completed spans are sent.
             LANGFUSE_CLIENT.flush()
         except Exception as e:
             logger.error(f"Langfuse: Error in middleware flush: {e}")

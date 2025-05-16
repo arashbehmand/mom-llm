@@ -31,6 +31,7 @@ async def _perform_fanout_calls(
     llm_map: Dict[str, LLMDefinition],
     request_messages: List[Dict[str, Any]],
     timeout: int,
+    config: MoMConfig, # Add config parameter
     trace: Optional[Any] = None,
 ) -> AsyncGenerator[ThinkingContextItem, None]:
     """
@@ -51,6 +52,7 @@ async def _perform_fanout_calls(
             ld,
             request_messages,
             timeout,
+            config, # Pass config to _call_lite_llm
             options={
                 "call_type": "fanout",
                 "trace": trace,
@@ -132,16 +134,14 @@ async def _perform_fanout_calls(
         # Yield the ThinkingContextItem as soon as it's ready
         # Ensure ld_fanout is available before yielding
         if ld_fanout:
-             logger.info(f"DEBUG: Yielding ThinkingContextItem for {ld_fanout.model} with usage: {current_usage_info} (type: {type(current_usage_info)})") # Add debug print
              yield ThinkingContextItem(
-                 model=ld_fanout.model, content=content_str, usage=current_usage_info
+                 model=ld_fanout.model, content=str(content_str), usage=current_usage_info
              )
         else:
              # If ld_fanout is None, it means the exception happened before we could get the definition.
              # We still yield an item, but with a generic model name indicating an error.
-             logger.info(f"DEBUG: Yielding ThinkingContextItem for unknown_error_model with usage: {current_usage_info} (type: {type(current_usage_info)})") # Add debug print
              yield ThinkingContextItem(
-                 model="unknown_error_model", content=content_str, usage=current_usage_info
+                 model="unknown_error_model", content=str(content_str), usage=current_usage_info
              )
 
 
@@ -193,6 +193,7 @@ async def _execute_concluding_call(
     concl_def: LLMDefinition,
     concl_msgs_for_llm: List[Dict[str, Any]],
     timeout: int,
+    config: MoMConfig, # Add config parameter
     options: Optional[dict] = None,
 ) -> Any:
     """
@@ -215,6 +216,7 @@ async def _execute_concluding_call(
             concl_def,
             concl_msgs_for_llm,
             timeout,
+            config, # Pass config to _call_lite_llm
             options={
                 "call_type": "concluding",
                 "trace": trace,
@@ -232,6 +234,7 @@ async def _execute_concluding_call(
         concl_def,
         concl_msgs_for_llm,
         timeout,
+        config, # Pass config to _call_lite_llm
         options={
             "call_type": "concluding",
             "trace": trace,
