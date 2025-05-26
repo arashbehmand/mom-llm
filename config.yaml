@@ -104,7 +104,7 @@ models:
       - "grok3ml"
       - "r1l"
       - "mistral3m"
-      - "qwen235"
+      # - "qwen235"
     concluding_llm: "g25f"
     concluding_prompt: "synth_default"
     include_thinking_context: true
