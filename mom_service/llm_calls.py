@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # SQLite database file path
 CACHE_DB_PATH = os.path.join(os.path.dirname(__file__), "llm_cache.db")
+logger.info(f"Cache DB path: {CACHE_DB_PATH}")
 
 def _init_cache_db():
     """Initializes the SQLite database and creates the cache table if it doesn't exist."""
@@ -218,9 +219,13 @@ async def _call_lite_llm(
 
     cache_key = None
     cached_response = None
+    logger.info(f"Cache enabled: {config.service.cache_enabled}")
     if config.service.cache_enabled: # Check cache regardless of stream
         cache_key = _generate_cache_key(llm_cfg, messages, llm_cfg.params)
+        logger.info(f"Generated cache key: {cache_key}")
         cached_response = _get_cached_response(cache_key)
+        if not cached_response:
+            logger.info(f"Cache miss for key: {cache_key}")
 
     if cached_response:
         logger.info(f"Cache hit for {llm_cfg.name} (Model: {model_name}). Returning cached response.")
