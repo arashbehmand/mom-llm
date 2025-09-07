@@ -161,7 +161,7 @@ def _prepare_concluding_messages(
     Prepare messages for the concluding LLM.
     """
     concl_msgs_for_llm = list(request_messages)
-    concl_msgs_for_llm.append({"role": "user", "content": "<<<<<<>>>>>>"})  # Separator
+    concl_msgs_for_llm.append({"role": "user", "content": "For the above content, we have the following llm responses:\n<<<<<<>>>>>>\n"})  # Separator
     for item_ctx in intermediate_thinking_context:
         if (
             item_ctx.usage.cost is not None

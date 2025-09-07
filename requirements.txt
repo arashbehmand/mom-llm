@@ -1,7 +1,0 @@
-fastapi==0.115.12
-langfuse==2.60.5
-litellm==1.70.2
-pydantic==2.11.4
-python-dotenv==1.1.0
-PyYAML==6.0.2
-uvicorn==0.34.2
