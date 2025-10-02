@@ -9,6 +9,11 @@ llm_definitions:
     api_key_env: "OPENAI_API_KEY"
     params:
       reasoning_effort: "low"
+  - name: "oaio4mm"
+    model: "openai/o4-mini"
+    api_key_env: "OPENAI_API_KEY"
+    params:
+      reasoning_effort: "medium"
   - name: "oaio4mh"
     model: "openai/o4-mini"
     api_key_env: "OPENAI_API_KEY"
@@ -34,6 +39,11 @@ llm_definitions:
     api_key_env: "OPENAI_API_KEY"
     params:
       reasoning_effort: "high"
+  - name: "oai5cdx"
+    model: "openai/gpt-5-codex"
+    api_key_env: "OPENAI_API_KEY"
+    params:
+      reasoning_effort: "medium"
   - name: "g25f"
     model: "gemini/gemini-2.5-flash"
     api_key_env: "GOOGLE_API_KEY"
@@ -45,11 +55,26 @@ llm_definitions:
   - name: "g25p"
     model: "gemini/gemini-2.5-pro"
     api_key_env: "GOOGLE_API_KEY"
+  - name: "g25ph"
+    model: "gemini/gemini-2.5-pro"
+    api_key_env: "GOOGLE_API_KEY"
+    params:
+      reasoning_effort: "high"
+  - name: "g25pm"
+    model: "gemini/gemini-2.5-pro"
+    api_key_env: "GOOGLE_API_KEY"
+    params:
+      reasoning_effort: "medium"
   - name: "cl4stl"
     model: "anthropic/claude-sonnet-4-20250514"
     api_key_env: "ANTHROPIC_API_KEY"
     params:
       reasoning_effort: "low"
+  - name: "cl4stm"
+    model: "anthropic/claude-sonnet-4-20250514"
+    api_key_env: "ANTHROPIC_API_KEY"
+    params:
+      reasoning_effort: "medium"
   - name: "cl4sth"
     model: "anthropic/claude-sonnet-4-20250514"
     api_key_env: "ANTHROPIC_API_KEY"
@@ -175,22 +200,8 @@ prompt_definitions:
 
       Only output the final synthesized answer—omit any private analysis or mention of consolidation. The response should read as a single, direct answer to the user.
 
-  - name: "synth_count"
-    content: |
-      Please review all expert replies above , appearing as ai messages, your messages, specifically after the `<<<<<<>>>>>>` separator, which appear after the final user message. then:
-
-      1. Count how many distinct expert responses you see.
-      2. Identify each response’s key insight(s) and any conflicting points.
-      3. Synthesize a single, cohesive answer that:
-        - Integrates the strongest, most accurate insights
-        - Resolves or explains any disagreements
-        - Fills in missing information as needed
-      4. At the end, write:
-        Responses processed: <number>
-      Only output the final answer and the processed count—omit your private analysis.
-
 models:
-  - name: "mom-g25f[oai5l,oaig4.1,oaio4ml,g25p,cl4stl,grok3ml,r1l,mstrl3m]"
+  - name: "mom"
     llms_to_query:
       - "oai5l"
       - "oaig4.1"
@@ -200,11 +211,10 @@ models:
       - "grok3ml"
       - "r1l"
       - "mstrl3m"
-      # - "qwn235"
     concluding_llm: "g25f"
     concluding_prompt: "synth_default"
     include_thinking_context: true
-  - name: "bmom-g25p[oai5m,oaig4.1,oaio3h,oaio4mh,g25p,g25fh,cl4sth,grok3mh,r1l,mstrl3m]"
+  - name: "bmom"
     llms_to_query:
       - "oai5m"
       - "oaig4.1"
@@ -226,7 +236,7 @@ models:
     concluding_llm: "mstrl3m"
     concluding_prompt: "synth_default"
     include_thinking_context: true
-  - name: "hmom-g25p[oai5h,oaig4.1,oaio3h,oaio4mh,g25p,g25fh,cl4sth,cl41oth,grok3mh,r1l,mstrl3m,grok4,qwn235]"
+  - name: "hmom"
     llms_to_query:
       - "oai5h"
       - "oaig4.1"
@@ -246,9 +256,29 @@ models:
     concluding_llm: "g25p"
     concluding_prompt: "synth_default"
     include_thinking_context: true
-  - name: "mom-g25p-o[oaio4mdr,oai4omsp,g25ph,cl4sth,grok3mh,grok4,plx-snr-rp,k2]"
+  - name: "emom"
     llms_to_query:
-      - "oaio4mdr-o"
+      - "oai5h"
+      - "g25ph"
+      - "cl4sth"
+      - "grok4"
+    concluding_llm: "g25p"
+    concluding_prompt: "synth_default"
+    include_thinking_context: true
+  - name: "mom-code"
+    llms_to_query:
+      - "oai5cdx"
+      - "oaig4.1"
+      - "oaio4mm"
+      - "g25pm"
+      - "cl4stm"
+      - "grok4"
+    concluding_llm: "g25fh"
+    concluding_prompt: "synth_default"
+    include_thinking_context: true
+  - name: "mom-oh"
+    llms_to_query:
+      - "oaio4mdr-o1"
       - "oai4omsp-o"
       - "g25ph-o"
       - "cl4sth-o"
@@ -261,7 +291,7 @@ models:
     include_thinking_context: true  
 
 service:
-  timeout_seconds: 600
+  timeout_seconds: 1200
   exposed_apis: ["openai"] # Add other API types like "claude" as needed
   cache_enabled: true
 
