@@ -1,196 +1,464 @@
-# MoM (Mixture of Models) Service
+# 🎭 MoM (Mixture of Models) Service
 
-The MoM Service is a Python-based FastAPI application that acts as a meta-LLM (Large Language Model) service. It receives a request, fans it out to multiple configured LLMs, and then uses a concluding LLM to synthesize their responses into a single, cohesive answer. It aims to provide OpenAI and Ollama compatible API endpoints.
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.116+-green.svg)](https://fastapi.tiangolo.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
-## Features
+> **Transform multiple AI perspectives into superior answers through intelligent synthesis**
 
-*   **OpenAI-Compatible API**: Exposes `/v1/chat/completions` and `/v1/models` endpoints for easy integration with existing tools.
-*   **Ollama-Compatible API**: Exposes `/ollama/api/chat` endpoint for compatibility with Ollama clients.
-*   **LLM Fan-Out**: Queries multiple LLMs simultaneously (defined in `config.yaml`) for a given prompt.
-*   **Response Synthesis**: Uses a designated "concluding LLM" to process the responses from the fan-out LLMs and generate a final answer.
-*   **Streaming Support**: Supports streaming responses for chat completions.
-*   **Configuration-Driven**: LLM providers, models, API keys, prompts, and service behavior are configured through `config.yaml` and environment variables.
-*   **Langfuse Integration**: Optional integration with [Langfuse](https://langfuse.com/) for tracing and observability of LLM calls.
-*   **Token Authentication**: Secures the API endpoint with a configurable bearer token.
-*   **CORS Support**: Allows cross-origin requests from specified domains.
-*   **Dockerized**: Comes with a `Dockerfile` for easy containerization and deployment.
+MoM Service is an OpenAI-compatible API that revolutionizes LLM usage by orchestrating multiple AI models simultaneously. Instead of relying on a single model's perspective, it queries several LLMs in parallel and synthesizes their responses into a single, superior answer using a dedicated "concluding" model.
 
-## Project Structure
+Think of it as assembling an expert panel: you get the creativity of GPT-4, the speed of Gemini Flash, and the reasoning of Claude—all combined into one comprehensive response that's more reliable and nuanced than any individual model could produce.
+
+## 🌟 Why a Mixture of Models?
+
+In today's AI landscape with hundreds of specialized LLMs, relying on a single model is limiting. A Mixture of Models (MoM) approach delivers compelling advantages:
+
+| Benefit | Description |
+|---------|-------------|
+| **🎯 Superior Quality** | Synthesize multiple perspectives to mitigate individual model weaknesses (hallucinations, biases, knowledge gaps) |
+| **🛡️ Enhanced Reliability** | If one LLM fails or underperforms, others compensate to maintain high-quality output |
+| **💰 Cost Optimization** | Route queries strategically—use cost-effective models where appropriate, premium ones when needed |
+| **🔄 Maximum Flexibility** | Hot-swap models via configuration without code changes. Create specialized "meta-models" for different tasks |
+
+### Real-World Use Cases
+
+- **📝 Content Creation**: Combine creative and factual models for balanced, engaging content
+- **💻 Code Generation**: Merge multiple coding assistants for more robust solutions
+- **🔍 Research & Analysis**: Get comprehensive answers by consulting multiple AI "experts"
+- **🎓 Educational Applications**: Provide students with well-rounded explanations from diverse perspectives
+
+## 🔄 How It Works
+
+MoM Service uses an elegant **fan-out, fan-in architecture** for parallel processing and intelligent synthesis:
 
 ```
-.
-├── Dockerfile
-├── config.yaml
-├── config.yaml_template
-├── requirements.txt
-├── mom_service/
-│   ├── __init__.py
-│   ├── config.py       # Handles loading config.yaml and defines config models
-│   ├── core_logic.py   # Contains the core fan-out and synthesis logic
-│   ├── llm_calls.py    # Logic for calling LLMs via LiteLLM
-│   ├── main.py         # FastAPI application entry point, middleware, routers
-│   └── endpoints/
-│       ├── __init__.py
-│       ├── models.py   # Defines Pydantic models for API requests/responses and internal data
-│       ├── ollama_api.py # Implements Ollama compatible API endpoints
-│       └── openai_v1.py  # Implements OpenAI compatible API endpoints
-└── README.md
+┌─────────────────┐
+│  Client Request │
+│  (OpenAI API)   │
+└────────┬────────┘
+         │
+         ▼
+┌────────────────────┐
+│   MoM Service      │
+│   (FastAPI)        │
+└────────┬───────────┘
+         │ Fan-Out
+         ├─────────────────┬─────────────────┬─────────────────┐
+         ▼                 ▼                 ▼                 ▼
+    ┌─────────┐       ┌─────────┐       ┌─────────┐       ┌─────────┐
+    │ GPT-4   │       │ Claude  │       │ Gemini  │       │ Llama   │
+    │  (LLM1) │       │  (LLM2) │       │  (LLM3) │       │  (LLM4) │
+    └────┬────┘       └────┬────┘       └────┬────┘       └────┬────┘
+         │                 │                 │                 │
+         └─────────────────┴─────────────────┴─────────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │  Concluding LLM      │
+                         │  (Synthesizes All)   │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │   Final Response     │
+                         │   (Streamed to User) │
+                         └──────────────────────┘
 ```
 
-## Setup and Running
+### Processing Flow
+
+1. **📥 Request In**: Client makes request to OpenAI-compatible endpoint (`/v1/chat/completions`)
+2. **🎯 Fan-Out**: Service identifies the MoM configuration and forwards request to all configured LLMs
+3. **⚡ Concurrent Processing**: All LLMs process the request simultaneously (non-blocking)
+4. **🧠 Synthesize**: Responses collected and passed to the "Concluding LLM"
+5. **📤 Stream Response**: Final synthesized answer streamed back to client in real-time
+
+## ✨ Features
+
+- **🔌 OpenAI-Compatible API**: Drop-in replacement with `/v1/chat/completions` and `/v1/models` endpoints
+- **🦙 Ollama-Compatible API**: Full compatibility with Ollama clients via `/ollama/api/chat`
+- **🎭 Multi-Model Orchestration**: Query multiple LLMs in parallel with intelligent synthesis
+- **⚡ Real-Time Streaming**: Stream synthesized responses back to clients with low latency
+- **⚙️ Configuration-Driven**: Define everything in a single `config.yaml` file—no code changes needed
+- **📊 Langfuse Integration**: Built-in observability and tracing for production monitoring
+- **🔒 Enterprise Security**: Bearer token authentication and flexible CORS policies
+- **🐳 Docker Ready**: One-command deployment with included `Dockerfile`
+- **💾 Response Caching**: Automatic LLM response caching to reduce costs and latency
+
+## 📁 Project Structure
+
+```
+mom-llm/
+├── 📄 Dockerfile              # Container configuration for deployment
+├── ⚙️  config.yaml            # Main configuration (gitignored - use template)
+├── 📋 config.yaml_template    # Configuration template with examples
+├── 📦 requirements.txt        # Python dependencies
+├── 📝 LICENSE                 # MIT License
+├── 🔒 .env                    # Environment variables (gitignored)
+└── 📂 mom_service/
+    ├── 🎯 main.py            # FastAPI application & middleware
+    ├── ⚙️  config.py         # Configuration loader & models
+    ├── 🧠 core_logic.py      # Fan-out & synthesis engine
+    ├── 📞 llm_calls.py       # LLM communication via LiteLLM
+    └── 📂 endpoints/
+        ├── 📊 models.py      # Pydantic request/response models
+        ├── 🔌 openai_v1.py   # OpenAI-compatible endpoints
+        └── 🦙 ollama_api.py  # Ollama-compatible endpoints
+```
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
-*   Python 3.9+
-*   `pip` for installing dependencies.
-*   Access to the LLM APIs you intend to use (e.g., OpenAI, Google Gemini, local Ollama instance).
-
-### Environment Variables
-
-Create a `.env` file in the project root or set these environment variables in your deployment environment:
-
-*   **API Keys for LLMs**:
-    *   `OPENAI_API_KEY`: Your OpenAI API key (if using OpenAI models).
-    *   `GOOGLE_API_KEY`: Your Google API key (if using Gemini models).
-    *   *(Add other keys as per `config.yaml`'s `api_key_env` fields)*
-*   **Service Configuration**:
-    *   `API_TOKEN`: A secret token for authorizing requests to this service.
-    *   `ALLOWED_CORS_ORIGINS`: Comma-separated list of allowed CORS origins (e.g., `http://localhost:3000,https://yourfrontend.com`). Leave empty or unset to disable CORS.
-    *   `LITELLM_VERBOSE`: Set to `true` to enable verbose logging from LiteLLM. Defaults to `false`.
-*   **Langfuse (Optional)**:
-    *   `LANGFUSE_PUBLIC_KEY`: Your Langfuse public key.
-    *   `LANGFUSE_SECRET_KEY`: Your Langfuse secret key.
-    *   `LANGFUSE_HOST`: The Langfuse host URL (e.g., `https://cloud.langfuse.com`).
-
-Refer to `config.yaml_template` for a list of LLM-specific API key environment variables you might need based on your chosen models.
+- Python 3.9 or higher
+- Docker (optional, for containerized deployment)
+- API keys for your chosen LLM providers (OpenAI, Google Gemini, Anthropic, etc.)
 
 ### Installation
 
-1.  Clone the repository.
-2.  Install dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/arashbehmand/mom-llm.git
+   cd mom-llm
+   ```
 
-### Running Locally
+2. **Set up environment variables**
+   
+   Create a `.env` file in the project root:
+   ```bash
+   # Service Configuration
+   API_TOKEN="your-secret-bearer-token"
+   ALLOWED_CORS_ORIGINS=""  # Comma-separated origins, or empty for no CORS
+   LITELLM_VERBOSE="false"
 
-Run the FastAPI application using Uvicorn:
+   # LLM API Keys (add the ones you need)
+   OPENAI_API_KEY="sk-..."
+   GOOGLE_API_KEY="..."
+   ANTHROPIC_API_KEY="..."
+
+   # Optional: Langfuse for observability
+   LANGFUSE_PUBLIC_KEY=""
+   LANGFUSE_SECRET_KEY=""
+   LANGFUSE_HOST="https://cloud.langfuse.com"
+   ```
+
+3. **Configure your models**
+   
+   Copy the template and customize:
+   
+   - macOS/Linux:
+     ```bash
+     cp config.yaml_template config.yaml
+     # Edit config.yaml to define your LLMs and MoM configurations
+     ```
+   - Windows (PowerShell):
+     ```powershell
+     Copy-Item config.yaml_template config.yaml
+     # Then edit config.yaml to define your LLMs and MoM configurations
+     ```
+
+4. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+5. **Run the service**
+   ```bash
+   uvicorn mom_service.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+### 🐳 Docker Deployment
 
 ```bash
-uvicorn mom_service.main:app --host 0.0.0.0 --port 8000 --reload --reload-include "config.yaml"
-```
-
-This command includes `--reload-include "config.yaml"` which tells Uvicorn to specifically watch `config.yaml` for changes and reload the application.
-The service will be available at `http://localhost:8000`.
-
-## Configuration (`config.yaml`)
-
-The `config.yaml` file defines the core behavior of the service:
-
-*   `llm_definitions`: A list of definitions for individual LLMs that can be used by the service. Each entry specifies:
-    *   `name`: A unique identifier for this LLM definition.
-    *   `model`: The model string recognized by LiteLLM (e.g., `openai/gpt-4.1`, `gemini/gemini-2.5-flash-preview-04-17`, `ollama/llama3`).
-    *   `api_key_env`: The environment variable name holding the API key for this model (if required).
-    *   `params` (optional): Additional parameters for the LiteLLM call (e.g., `temperature`, `max_tokens`).
-*   `prompt_definitions` (optional): A list of reusable prompt templates that can be referenced by models. Each entry specifies:
-    *   `name`: A unique identifier for the prompt.
-    *   `content`: The text content of the prompt.
-*   `models`: A list of MoM model configurations. Each entry defines how a specific MoM model behaves:
-    *   `name`: A unique identifier for this MoM model (e.g., "MoM-Standard").
-    *   `llms_to_query`: A list of names (referencing `llm_definitions`) to which the initial request will be fanned out.
-    *   `concluding_llm`: The name (referencing `llm_definitions`) of the LLM that synthesizes the responses.
-    *   `concluding_prompt` (optional): The name (referencing `prompt_definitions`) of a prompt to append to the messages sent to the concluding LLM.
-    *   `include_thinking_context` (optional): Boolean, if true, the responses from the fan-out LLMs will be included in the final response within `<think>` tags. Defaults to `false`.
-*   `service`:
-    *   `timeout_seconds`: Timeout for individual LLM calls.
-    *   `exposed_apis`: A list of API types to expose (e.g., `["openai", "ollama"]`).
-*   `langfuse` (optional): Configuration for Langfuse integration, specifying environment variable names for keys and host.
-
-## Docker
-
-### Building the Image
-
-```bash
+# Build the image
 docker build -t mom-service .
-```
 
-### Running the Container
-
-```bash
-docker run -d -p 8000:8000 \
+# Run the container
+docker run -d \
+  --name mom-service \
+  -p 8000:8000 \
   --env-file .env \
+  -v $(pwd)/config.yaml:/app/config.yaml \
   mom-service
 ```
 
-Make sure your `.env` file contains all necessary environment variables. The service inside the container will be accessible on port 8000 of the host machine.
+### 📝 Basic Usage
 
-## API Endpoints
+**Test the service:**
+```bash
+curl http://localhost:8000/v1/models \
+  -H "Authorization: Bearer your-secret-bearer-token"
+```
 
-### `POST /v1/chat/completions`
+**Make a chat completion request:**
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-secret-bearer-token" \
+  -d '{
+    "model": "mom",
+    "messages": [
+      {"role": "user", "content": "Explain quantum computing in simple terms"}
+    ],
+    "stream": true
+  }'
+```
+Note: Set "stream": false to get a single JSON response instead of an SSE stream.
+## ⚙️ Configuration
 
-OpenAI-compatible endpoint for chat completions.
+The entire service is configured through `config.yaml`. Here's a breakdown of the key sections:
 
-**Request Body:** (Matches OpenAI `ChatCompletionRequest`)
+### LLM Definitions
 
+Define the individual LLMs you want to use:
+
+```yaml
+llm_definitions:
+  - name: "gpt4"
+    model: "openai/gpt-4"
+    api_key_env: "OPENAI_API_KEY"
+    params:
+      temperature: 0.7
+  
+  - name: "gemini-flash"
+    model: "gemini/gemini-2.5-flash-preview-04-17"
+    api_key_env: "GOOGLE_API_KEY"
+```
+
+### Synthesis Prompts
+
+Customize how the concluding LLM synthesizes responses:
+
+```yaml
+prompt_definitions:
+  - name: "synth_default"
+    content: |
+      Review all expert responses and synthesize a single, cohesive answer that:
+      - Integrates the strongest insights from each response
+      - Resolves any disagreements between models
+      - Provides a balanced, comprehensive answer
+```
+
+### MoM Models
+
+Create your "meta-models" that define which LLMs to query and how to synthesize:
+
+```yaml
+models:
+  - name: "mom-creative"
+    llms_to_query:
+      - "gpt4"
+      - "claude"
+      - "gemini-flash"
+    concluding_llm: "gpt4"
+    concluding_prompt: "synth_default"
+    include_thinking_context: true  # Show intermediate responses
+  
+  - name: "mom-fast"
+    llms_to_query:
+      - "gemini-flash"
+      - "gpt-3.5-turbo"
+    concluding_llm: "gemini-flash"
+    concluding_prompt: "synth_default"
+    include_thinking_context: false
+```
+
+### Service Settings
+
+```yaml
+service:
+  timeout_seconds: 30
+
+langfuse:  # Optional observability
+  public_key_env: "LANGFUSE_PUBLIC_KEY"
+  secret_key_env: "LANGFUSE_SECRET_KEY"
+  host_env: "LANGFUSE_HOST"
+```
+
+## 🔌 API Reference
+
+### OpenAI-Compatible Endpoints
+
+#### `GET /v1/models`
+List all available MoM models defined in your configuration.
+
+**Headers:**
+- `Authorization: Bearer YOUR_API_TOKEN`
+
+**Response:**
 ```json
 {
-  "model": "MoM-Standard", // Use the name of a model defined in config.yaml
-  "messages": [
-    {"role": "user", "content": "What is the capital of France?"}
-  ],
-  "max_tokens": 50,
-  "temperature": 0.7,
-  "stream": false // Set to true for streaming response
+  "object": "list",
+  "data": [
+    {
+      "id": "mom-creative",
+      "object": "model",
+      "created": 1234567890,
+      "owned_by": "MoM-Service"
+    }
+  ]
 }
 ```
 
-**Headers:**
-
-*   `Authorization: Bearer YOUR_API_TOKEN`
-
-**Response Body:** (Matches OpenAI `ChatCompletionResponse`)
-
-Includes optional `thinking_context` if `include_thinking_context` is false for the model, or embedded within the `content` if true. Includes optional `total_cost_usd`.
-
-### `GET /v1/models`
-
-OpenAI-compatible endpoint to list available models defined in `config.yaml`.
+#### `POST /v1/chat/completions`
+Send chat completion requests to your MoM models.
 
 **Headers:**
+- `Authorization: Bearer YOUR_API_TOKEN`
+- `Content-Type: application/json`
 
-*   `Authorization: Bearer YOUR_API_TOKEN`
-
-### `POST /ollama/api/chat`
-
-Ollama-compatible endpoint for chat completions.
-
-**Request Body:** (Matches Ollama Chat Request)
-
+**Request:**
 ```json
 {
-  "model": "MoM-Standard", // Use the name of a model defined in config.yaml
+  "model": "mom-creative",
   "messages": [
-    {"role": "user", "content": "What is the capital of France?"}
+    {"role": "user", "content": "Explain machine learning"}
   ],
-  "options": {
-    "temperature": 0.7
-  },
-  "stream": false // Set to true for streaming response
+  "stream": true,
+  "temperature": 0.7
 }
 ```
 
-**Headers:**
+### Ollama-Compatible Endpoint
 
-*   `Authorization: Bearer YOUR_API_TOKEN` (Optional, if `API_TOKEN` is set)
+#### `POST /ollama/api/chat`
+Compatible with Ollama client applications.
 
-**Response Body:** (Matches Ollama Chat Response)
+**Request:**
+```json
+{
+  "model": "mom-creative",
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ],
+  "stream": false
+}
+```
 
-## How it Works
+## 🎯 Advanced Features
 
-1.  A request is made to `/v1/chat/completions` or `/ollama/api/chat`.
-2.  The service authenticates the request using the `API_TOKEN` (for OpenAI endpoint).
-3.  The user's messages are fanned out asynchronously to all LLMs defined in the chosen MoM model's `llms_to_query` list in `config.yaml`.
-4.  Responses from these LLMs are collected.
-5.  The original user messages, along with the collected fan-out LLM responses (and the optional `concluding_prompt`), are sent to the `concluding_llm` defined in the MoM model config.
-6.  The response from the `concluding_llm` is formatted as an OpenAI or Ollama compatible chat completion response (including streaming if requested) and returned to the client.
-7.  If Langfuse is configured, traces and generations are logged for observability.
+### Thinking Context
+
+When `include_thinking_context: true`, the service includes intermediate LLM responses in the output, wrapped in `<think>` tags:
+
+```
+<think>
+Model: gpt-4
+Content: [GPT-4's response]
+---
+Model: claude
+Content: [Claude's response]
+---
+</think>
+
+[Final synthesized answer]
+```
+
+This is useful for:
+- Understanding how the synthesis was formed
+- Debugging model behavior
+- Transparency in decision-making
+
+### Cost Tracking
+
+The service automatically tracks and logs API costs for each request using LiteLLM's cost calculation.
+
+### Langfuse Observability
+
+Enable tracing and monitoring:
+
+1. Sign up at [Langfuse](https://langfuse.com/)
+2. Add credentials to `.env`
+3. View detailed traces for every request in Langfuse dashboard
+
+## 🛠️ Development
+
+### Running in Development Mode
+
+```bash
+uvicorn mom_service.main:app --reload --reload-include "config.yaml"
+```
+
+The `--reload-include` flag watches `config.yaml` for changes and automatically reloads the service.
+
+### Health Check
+
+Verify the service is up:
+
+```bash
+curl http://localhost:8000/health
+```
+
+### Testing
+
+Test with curl:
+```bash
+# Quick health check via models endpoint
+curl http://localhost:8000/v1/models \
+  -H "Authorization: Bearer your-token"
+
+# Test a simple completion
+curl http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer your-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mom",
+    "messages": [{"role": "user", "content": "Hi!"}],
+    "stream": false
+  }'
+```
+
+### Using with OpenAI SDK
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="your-secret-bearer-token"
+)
+
+response = client.chat.completions.create(
+    model="mom-creative",
+    messages=[
+        {"role": "user", "content": "What is the meaning of life?"}
+    ],
+    stream=True
+)
+
+for chunk in response:
+    print(chunk.choices[0].delta.content or "", end="")
+```
+
+## 🤝 Contributing
+
+Contributions are welcome! This project is part of my portfolio, but I'm happy to accept:
+
+- Bug fixes
+- Performance improvements
+- Documentation enhancements
+- New feature suggestions
+
+Please open an issue first to discuss major changes.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Built with [FastAPI](https://fastapi.tiangolo.com/) and [LiteLLM](https://github.com/BerriAI/litellm)
+- Inspired by ensemble learning and multi-agent AI systems
+- Observability powered by [Langfuse](https://langfuse.com/)
+
+## 📬 Contact
+
+**Arash Behmand**
+- GitHub: [@arashbehmand](https://github.com/arashbehmand)
+- LinkedIn: [linkedin.com/in/arashbehmand](https://linkedin.com/in/arashbehmand)
+
+---
+
+⭐ If you find this project useful, please consider giving it a star on GitHub!

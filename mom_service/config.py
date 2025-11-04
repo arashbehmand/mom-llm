@@ -48,20 +48,33 @@ class MoMConfig(BaseModel):
 
 
 def load_config(config_path: str = None) -> MoMConfig:
-    # Try current working directory first, then fallback to mom_service/config.yaml
-    search_paths = []
-    if config_path:
-        search_paths.append(config_path)
+    # If config_path is provided, use it directly.
+    # Otherwise, check the MOM_CONFIG_PATH environment variable.
+    # Fallback to default search paths if neither is set.
+    path_to_load = config_path or os.getenv("MOM_CONFIG_PATH")
+
+    if path_to_load:
+        if not os.path.isfile(path_to_load):
+            raise FileNotFoundError(f"Config file not found at specified path: {path_to_load}")
+        search_paths = [path_to_load]
     else:
-        search_paths.append(os.path.join(os.getcwd(), "config.yaml"))
-        search_paths.append(os.path.join(os.path.dirname(__file__), "config.yaml"))
+        # Default search paths
+        search_paths = [
+            os.path.join(os.getcwd(), "config.yaml"),
+            os.path.join(os.path.dirname(__file__), "..", "config.yaml"), # Adjusted for being in mom_service/
+        ]
+
     for path in search_paths:
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
                 raw = yaml.safe_load(f)
             try:
                 config = MoMConfig(**raw)
+                # Log the path that was successfully loaded
+                # Use a simple print here as logger might not be configured yet
+                print(f"--- Config loaded successfully from: {path} ---")
+                return config
             except ValidationError as e:
-                raise RuntimeError(f"Invalid config.yaml: {e}")
-            return config
-    raise FileNotFoundError(f"config.yaml not found in any of: {search_paths}")
+                raise RuntimeError(f"Invalid configuration in {path}: {e}") from e
+
+    raise FileNotFoundError(f"config.yaml not found in any of the search paths: {search_paths}")

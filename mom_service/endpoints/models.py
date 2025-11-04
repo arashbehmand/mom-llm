@@ -16,6 +16,49 @@ class UsageInfo(BaseModel):
     total_tokens: Optional[int] = None
     cost: Optional[float] = None
 
+    @classmethod
+    def from_litellm_usage(cls, usage: Any, response_obj: Any = None) -> "UsageInfo":
+        """
+        Create UsageInfo from LiteLLM usage object or response.
+
+        Args:
+            usage: LiteLLM usage object or dict
+            response_obj: Optional full LiteLLM response object for cost calculation
+
+        Returns:
+            UsageInfo instance with tokens and cost
+        """
+        if usage is None:
+            return cls(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=None)
+
+        # Extract token counts
+        if isinstance(usage, dict):
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+        else:
+            # LiteLLM usage object
+            prompt_tokens = getattr(usage, "prompt_tokens", 0)
+            completion_tokens = getattr(usage, "completion_tokens", 0)
+            total_tokens = getattr(usage, "total_tokens", 0)
+
+        # Calculate cost using litellm.completion_cost if response_obj provided
+        cost = None
+        if response_obj is not None:
+            try:
+                import litellm
+                cost = litellm.completion_cost(completion_response=response_obj)
+            except Exception:
+                # Cost calculation failed, leave as None
+                pass
+
+        return cls(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            cost=cost,
+        )
+
 
 class ThinkingContextItem(BaseModel):
     model: str
