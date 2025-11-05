@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
-def call_llm(
+async def call_llm(
     llm_def: LLMDefinition,
     params_obj: LLMCallParams,
     timeout: int,
@@ -33,13 +33,14 @@ def call_llm(
     # Ensure the stream flag from params_obj is available to the underlying call
     options = {**options, "stream": params_obj.stream}
     # Delegate to the low-level call with messages from params_obj
-    return _call_lite_llm(
+    async for item in _call_lite_llm(
         llm_def,
         params_obj.messages,
         timeout,
         config,
         options=options,
-    )
+    ):
+        yield item
 
 
 async def _perform_fanout_calls(
