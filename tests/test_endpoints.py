@@ -1,13 +1,14 @@
 """
 Integration tests for mom_service API endpoints
 """
+
 # pylint: disable=redefined-outer-name
 
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 
 
 @pytest.fixture
@@ -53,7 +54,9 @@ class TestOpenAIEndpoints:
 
     @patch("mom_service.main.get_mom_model_config")
     @patch("mom_service.main._process_mom_chat_request")
-    def test_chat_completions_non_streaming(self, mock_process, mock_get_config, test_client, auth_headers):
+    def test_chat_completions_non_streaming(
+        self, mock_process, mock_get_config, test_client, auth_headers
+    ):
         """Test POST /v1/chat/completions for non-streaming"""
         # Mock the response
         mock_process.return_value = (

@@ -14,6 +14,7 @@ from .models import (
     OpenAIChatCompletionResponseChoice,
 )
 
+
 config = load_config()
 openai_router = APIRouter(prefix="/v1", tags=["OpenAI"])
 
@@ -144,7 +145,9 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
                                 )
                             ],
                         )
-                        trace_obj.update(output=openai_response_for_trace.model_dump(exclude_none=True))
+                        trace_obj.update(
+                            output=openai_response_for_trace.model_dump(exclude_none=True)
+                        )
                         logger.info("Successfully updated Langfuse trace for streaming response")
                     except Exception as e:
                         logger.error(f"Failed to update Langfuse trace for streaming response: {e}")
