@@ -17,19 +17,20 @@ class UsageInfo(BaseModel):
     cost: Optional[float] = None
 
     @classmethod
-    def from_litellm_usage(cls, usage: Any, response_obj: Any = None) -> "UsageInfo":
+    def from_litellm_usage(cls, usage: Any, response_obj: Any = None, is_cached: bool = False) -> "UsageInfo":
         """
         Create UsageInfo from LiteLLM usage object or response.
 
         Args:
             usage: LiteLLM usage object or dict
             response_obj: Optional full LiteLLM response object for cost calculation
+            is_cached: Whether this is a cached response (cost should be 0.0)
 
         Returns:
             UsageInfo instance with tokens and cost
         """
         if usage is None:
-            return cls(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=None)
+            return cls(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=0.0 if is_cached else None)
 
         # Extract token counts
         if isinstance(usage, dict):
@@ -42,15 +43,20 @@ class UsageInfo(BaseModel):
             completion_tokens = getattr(usage, "completion_tokens", 0)
             total_tokens = getattr(usage, "total_tokens", 0)
 
-        # Calculate cost using litellm.completion_cost if response_obj provided
+        # Calculate cost
         cost = None
-        if response_obj is not None:
+        if is_cached:
+            # Cached responses have zero cost
+            cost = 0.0
+        elif response_obj is not None:
             try:
                 import litellm
-                cost = litellm.completion_cost(completion_response=response_obj)
+                calculated_cost = litellm.completion_cost(completion_response=response_obj)
+                # Ensure cost is always a number or None, never something else
+                cost = float(calculated_cost) if calculated_cost is not None else 0.0
             except Exception:
-                # Cost calculation failed, leave as None
-                pass
+                # Cost calculation failed, default to 0.0 for safety
+                cost = 0.0
 
         return cls(
             prompt_tokens=prompt_tokens,

@@ -29,8 +29,10 @@ class ServiceConfig(BaseModel):
     timeout_seconds: int = 30
     exposed_apis: List[str] = ["openai"]  # Default to only openai if not specified
     cache_enabled: bool = False # Add cache enabled flag
-    max_retries: int = 3 # Add max retries for LLM calls
-    retry_delay_seconds: int = 5 # Add delay between retries
+    max_retries: int = 3 # Add max retries for LLM calls (legacy - for backward compat)
+    retry_delay_seconds: int = 5 # Add delay between retries (legacy - for backward compat)
+    max_llm_retries: int = 3 # Max retries for individual LLM calls
+    llm_retry_delay_seconds: int = 2 # Delay between LLM call retries
 
 
 class LangfuseConfig(BaseModel):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import html
 import logging
 import os
@@ -18,6 +19,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langfuse import Langfuse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import (
     MoMConfig,
@@ -40,11 +42,22 @@ from .endpoints.openai_v1 import openai_router
 
 load_dotenv()
 
+# Context variable for request ID
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='no-request-id')
+
+class RequestIDFilter(logging.Filter):
+    """Add request_id to all log records"""
+    def filter(self, record):
+        record.request_id = request_id_var.get('no-request-id')
+        return True
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
+# Add filter to root logger so all loggers inherit it
+logging.getLogger().addFilter(RequestIDFilter())
 logger = logging.getLogger(__name__)
 logger.info("--- mom_service.main.py: Logging configured ---")
 
@@ -76,6 +89,28 @@ if config.langfuse:
 
 app = FastAPI()
 
+# Request ID Middleware
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Middleware to generate and attach a unique request_id to each request"""
+    async def dispatch(self, request: Request, call_next):
+        # Generate unique request ID
+        request_id = str(uuid.uuid4())
+
+        # Store in request state
+        request.state.request_id = request_id
+
+        # Set in context var for logging
+        request_id_var.set(request_id)
+
+        # Add to response headers for traceability
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+
+        return response
+
+# Add Request ID middleware (must be added before other middlewares for proper ordering)
+app.add_middleware(RequestIDMiddleware)
+
 # Configure CORS from environment variable (comma-separated origins)
 cors_env = os.getenv("ALLOWED_CORS_ORIGINS", "").strip()
 if cors_env:
@@ -99,7 +134,14 @@ async def health_check():
     return {"status": "ok"}
 
 @app.exception_handler(HTTPException)
-async def http_exception_handler(_request: Request, exc: HTTPException):
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Enhanced HTTP exception handler with request_id and stack trace logging"""
+    request_id = getattr(request.state, 'request_id', 'unknown')
+    logger.error(
+        f"HTTP Exception occurred - Status: {exc.status_code}, Detail: {exc.detail}",
+        exc_info=True,
+        extra={'request_id': request_id}
+    )
     error_detail = OpenAIErrorDetail(
         message=exc.detail,
         type="invalid_request_error",
@@ -109,10 +151,18 @@ async def http_exception_handler(_request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content=OpenAIErrorResponse(error=error_detail).model_dump(),
+        headers={"X-Request-ID": request_id}
     )
 
 @app.exception_handler(Exception)
-async def generic_exception_handler(_request: Request, exc: Exception):
+async def generic_exception_handler(request: Request, exc: Exception):
+    """Enhanced generic exception handler with request_id and stack trace logging"""
+    request_id = getattr(request.state, 'request_id', 'unknown')
+    logger.error(
+        f"Unhandled exception occurred: {str(exc)}",
+        exc_info=True,
+        extra={'request_id': request_id}
+    )
     error_detail = OpenAIErrorDetail(
         message=str(exc),
         type="internal_server_error",
@@ -122,6 +172,7 @@ async def generic_exception_handler(_request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content=OpenAIErrorResponse(error=error_detail).model_dump(),
+        headers={"X-Request-ID": request_id}
     )
 
 async def _process_mom_chat_request(
@@ -358,9 +409,12 @@ async def _process_mom_chat_request(
 
         concluding_llm_usage_info = None
         if concluding_llm_response and concluding_llm_response.usage:
+            # Check if concluding response is cached
+            is_cached = getattr(concluding_llm_response, '_is_cached', False)
             concluding_llm_usage_info = UsageInfo.from_litellm_usage(
                 concluding_llm_response.usage,
-                response_obj=concluding_llm_response
+                response_obj=concluding_llm_response,
+                is_cached=is_cached
             )
 
         total_request_cost = _calculate_and_log_costs(

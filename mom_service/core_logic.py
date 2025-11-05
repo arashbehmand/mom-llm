@@ -95,9 +95,12 @@ async def _perform_fanout_calls(
             ):
                 content_str = current_res_obj_fanout.choices[0].message.content
                 # Use from_litellm_usage helper for consistent cost tracking
+                # Check if response is cached
+                is_cached = getattr(current_res_obj_fanout, '_is_cached', False)
                 current_usage_info = UsageInfo.from_litellm_usage(
                     current_res_obj_fanout.usage,
-                    response_obj=current_res_obj_fanout
+                    response_obj=current_res_obj_fanout,
+                    is_cached=is_cached
                 )
             else:
                 content_str = f"Warning: Call to {ld_fanout.model} returned an empty or malformed response."

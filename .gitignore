@@ -1,5 +1,10 @@
+.claude
+.serena
 config.yaml
 *.db
+repomix-output.xml
+LINKEDIN_POST.md
+TODO.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

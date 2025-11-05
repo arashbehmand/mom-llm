@@ -100,7 +100,8 @@ def _get_cached_response(cache_key: str) -> Optional[ModelResponse]:
                 total_tokens=usage_data.get("total_tokens"),
             )
 
-        return ModelResponse(
+        # Create ModelResponse and mark it as cached
+        model_response = ModelResponse(
             id=response_data.get("id"),
             choices=choices,
             created=response_data.get("created"),
@@ -109,6 +110,9 @@ def _get_cached_response(cache_key: str) -> Optional[ModelResponse]:
             usage=usage,
             object=response_data.get("object"),
         )
+        # Add a custom attribute to mark this as a cached response
+        model_response._is_cached = True
+        return model_response
     except Exception as e:
         logger.error(
             f"Error retrieving or reconstructing cached response for key {cache_key}: {e}"
@@ -152,12 +156,14 @@ async def _call_lite_llm(
     call_type = options.get("call_type", "unknown")
     stream = options.get("stream", False)
 
+    # Build params with retry configuration from service config
     params = {
         "model": llm_def.model,
         "messages": messages,
         "stream": stream,
         "timeout": timeout,
-        **llm_def.params,
+        "num_retries": config.service.max_llm_retries,  # LiteLLM retry parameter
+        **llm_def.params,  # LLM-specific params can override defaults
     }
 
     cache_key = _generate_cache_key(llm_def, messages, params)
