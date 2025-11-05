@@ -40,6 +40,7 @@ from .endpoints.models import (
 )
 from .endpoints.openai_v1 import openai_router
 from .endpoints.metrics_api import metrics_router
+from .health import perform_comprehensive_health_check
 
 load_dotenv()
 
@@ -132,7 +133,38 @@ app.add_middleware(
 
 @app.get("/health")
 async def health_check():
+    """
+    Basic health check endpoint.
+    Returns a simple status without performing deep checks.
+    """
     return {"status": "ok"}
+
+
+@app.get("/health/detailed")
+async def detailed_health_check(check_llm: bool = False):
+    """
+    Comprehensive health check endpoint.
+
+    Query Parameters:
+        check_llm (bool): Whether to perform LLM connectivity check (default: False)
+                         Set to true for thorough validation, but it's slower.
+
+    Returns:
+        Detailed health status of all system components:
+        - Database connectivity (cache and metrics)
+        - Configuration validity
+        - Optional LLM connectivity test
+    """
+    health_data = await perform_comprehensive_health_check(config, check_llm=check_llm)
+
+    # Return appropriate HTTP status code based on health
+    status_code = 200
+    if health_data["status"] == "degraded":
+        status_code = 200  # Still operational but with issues
+    elif health_data["status"] == "unhealthy":
+        status_code = 503  # Service unavailable
+
+    return JSONResponse(content=health_data, status_code=status_code)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):

@@ -2,6 +2,7 @@
 .serena
 config.yaml
 *.db
+data/
 repomix-output.xml
 LINKEDIN_POST.md
 TODO.md

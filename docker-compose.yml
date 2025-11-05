@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  mom-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mom-service
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount configuration files
+      - ./config.yaml:/app/config.yaml:ro
+      # Mount data directory for databases (cache and metrics)
+      - ./data:/app/data
+      # Optional: Mount .env file if using environment variables
+      # - ./.env:/app/.env:ro
+    environment:
+      # API authentication token
+      - API_TOKEN=${API_TOKEN:-your-secret-token-here}
+      # Langfuse configuration (optional)
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      # LLM provider API keys
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # Add other provider keys as needed
+      # - AZURE_API_KEY=${AZURE_API_KEY:-}
+      # - COHERE_API_KEY=${COHERE_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - mom-network
+
+  # Optional: SQLite browser for database inspection during development
+  # Uncomment to enable
+  # sqlite-browser:
+  #   image: coleifer/sqlite-web
+  #   container_name: mom-sqlite-browser
+  #   ports:
+  #     - "8080:8080"
+  #   volumes:
+  #     - ./data:/data
+  #   command: ["/data/llm_cache.db", "/data/metrics.db"]
+  #   networks:
+  #     - mom-network
+  #   depends_on:
+  #     - mom-service
+
+  # Optional: Langfuse self-hosted instance for tracing
+  # Uncomment to enable local Langfuse deployment
+  # langfuse-server:
+  #   image: langfuse/langfuse:latest
+  #   container_name: langfuse-server
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - DATABASE_URL=postgresql://postgres:postgres@langfuse-db:5432/langfuse
+  #     - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-change-me-in-production}
+  #     - NEXTAUTH_URL=http://localhost:3000
+  #     - SALT=${LANGFUSE_SALT:-change-me-in-production}
+  #   depends_on:
+  #     - langfuse-db
+  #   networks:
+  #     - mom-network
+
+  # langfuse-db:
+  #   image: postgres:15-alpine
+  #   container_name: langfuse-db
+  #   environment:
+  #     - POSTGRES_USER=postgres
+  #     - POSTGRES_PASSWORD=postgres
+  #     - POSTGRES_DB=langfuse
+  #   volumes:
+  #     - langfuse-db-data:/var/lib/postgresql/data
+  #   networks:
+  #     - mom-network
+
+networks:
+  mom-network:
+    driver: bridge
+
+volumes:
+  # Uncomment if using Langfuse database
+  # langfuse-db-data:

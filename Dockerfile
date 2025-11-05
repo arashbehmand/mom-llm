@@ -1,29 +1,59 @@
-# Use an official Python runtime as a parent image
-FROM python:3.9-slim
+# Multi-stage build for smaller image size
+# Stage 1: Build dependencies
+FROM python:3.9-slim-buster as builder
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libsqlite3-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install dependencies
 COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Install SQLite system dependencies
-RUN apt-get update && apt-get install -y libsqlite3-dev
+# Stage 2: Production image
+FROM python:3.9-slim-buster
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+WORKDIR /app
 
-# Copy the rest of the application code into the container at /app
-COPY ./mom_service ./mom_service
-COPY config.yaml .
+# Install only runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Make port 8000 available to the world outside this container
+# Copy installed packages from builder
+COPY --from=builder /root/.local /root/.local
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash appuser && \
+    chown -R appuser:appuser /app
+
+# Copy application code
+COPY --chown=appuser:appuser ./mom_service ./mom_service
+# Note: config.yaml should be mounted as a volume or provided via environment
+
+# Create directories for databases with correct permissions
+RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
+
+# Set environment variables
+ENV PYTHONPATH=/app \
+    PATH=/root/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
 EXPOSE 8000
 
-# Define environment variable
-ENV PYTHONPATH=/app
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)" || exit 1
 
-# Run main.py when the container launches
-# Includes --reload and --reload-include to watch config.yaml for changes.
-# This is useful for development; for production, you might remove these flags.
-CMD ["uvicorn", "mom_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-include", "config.yaml"]
+# Production command (no --reload)
+CMD ["uvicorn", "mom_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

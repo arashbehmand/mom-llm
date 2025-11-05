@@ -98,7 +98,7 @@ class TestCalculateAndLogCosts:
         assert total_cost == 0.002
 
 
-class TestPrepareC oncludingMessages:
+class TestPrepareConcludingMessages:
     """Tests for _prepare_concluding_messages function"""
 
     def test_prepare_messages_with_successful_fanout(self, sample_mom_config):
