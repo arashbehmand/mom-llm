@@ -16,6 +16,7 @@ from .llm_calls import _call_lite_llm
 logger = logging.getLogger(__name__)
 
 
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 def call_llm(
     llm_def: LLMDefinition,
     params_obj: LLMCallParams,

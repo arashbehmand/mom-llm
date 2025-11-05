@@ -1,6 +1,7 @@
 """
 Integration tests for mom_service API endpoints
 """
+# pylint: disable=redefined-outer-name
 
 import os
 from unittest.mock import MagicMock, patch
