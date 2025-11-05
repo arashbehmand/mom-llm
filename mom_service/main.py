@@ -56,13 +56,22 @@ class RequestIDFilter(logging.Filter):
             return "startup"
 
 
+# Create the filter instance
+request_id_filter = RequestIDFilter()
+
+# Configure logging with handler
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s")
+)
+stream_handler.addFilter(request_id_filter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[stream_handler],
 )
-# Add filter to root logger so all loggers inherit it
-logging.getLogger().addFilter(RequestIDFilter())
+# Also add filter to root logger for any other handlers that might be added later
+logging.getLogger().addFilter(request_id_filter)
 logger = logging.getLogger(__name__)
 logger.info("--- mom_service.main.py: Logging configured ---")
 
