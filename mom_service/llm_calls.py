@@ -112,7 +112,7 @@ def _get_cached_response(cache_key: str) -> Optional[ModelResponse]:
             usage=usage,
             object=response_data.get("object"),
         )
-        model_response.is_cached = True
+        model_response._is_cached = True  # pylint: disable=protected-access
         return model_response
     except Exception as e:
         logger.error(f"Error retrieving or reconstructing cached response for key {cache_key}: {e}")

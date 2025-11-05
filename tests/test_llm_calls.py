@@ -64,7 +64,7 @@ class TestCacheOperations:
 
         assert cached is not None
         assert hasattr(cached, "_is_cached")
-        assert cached._is_cached is True
+        assert cached._is_cached is True  # pylint: disable=protected-access
         assert cached.id == mock_litellm_response.id
         assert cached.model == mock_litellm_response.model
         assert cached.choices[0].message.content == "Paris is the capital of France."
@@ -228,6 +228,7 @@ class TestCallLiteLLM:
             assert "API Error" in str(exc_info.value)
 
     @respx.mock
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     async def test_call_litellm_with_trace(
         self,
         sample_llm_definition,

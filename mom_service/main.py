@@ -258,7 +258,12 @@ async def _process_mom_chat_request(
             fastapi_request_obj.state.trace_obj = trace
 
     fanout_results_generator = _perform_fanout_calls(
-        model_conf, llm_map, request_messages, timeout, config, trace, request_id
+        model_conf,
+        llm_map,
+        request_messages,
+        timeout,
+        config,
+        options={"trace": trace, "request_id": request_id},
     )
 
     intermediate_thinking_context: list[ThinkingContextItem] = []

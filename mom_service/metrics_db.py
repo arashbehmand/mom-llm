@@ -75,6 +75,7 @@ def _init_metrics_db():
 init_metrics_db = _init_metrics_db
 
 
+# pylint: disable=too-many-instance-attributes
 @dataclass
 class MetricRecord:
     request_id: str

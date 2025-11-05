@@ -110,6 +110,7 @@ async def get_usage_metrics(
         )
 
 
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 @metrics_router.get("/usage/raw")
 async def get_raw_usage_metrics(
     request: Request,

@@ -16,7 +16,7 @@ from .llm_calls import _call_lite_llm
 logger = logging.getLogger(__name__)
 
 
-async def call_llm(
+def call_llm(
     llm_def: LLMDefinition,
     params_obj: LLMCallParams,
     timeout: int,
@@ -93,7 +93,7 @@ async def _perform_fanout_calls(
             top_p=ld.params.get("top_p") if isinstance(ld.params, dict) else None,
             stream=False,
         )
-        llm_call_coroutine = await call_llm(
+        llm_call_generator = call_llm(
             ld,
             llm_call_params,
             timeout,
@@ -106,7 +106,7 @@ async def _perform_fanout_calls(
                 "mom_model_name": model_conf.name,
             },
         )
-        task = asyncio.create_task(call_and_return_with_def(ld, llm_call_coroutine))
+        task = asyncio.create_task(call_and_return_with_def(ld, llm_call_generator))
         tasks.append(task)
 
     for future in asyncio.as_completed(tasks):
@@ -238,7 +238,7 @@ async def _execute_concluding_call(
         top_p=concl_def.params.get("top_p") if isinstance(concl_def.params, dict) else None,
         stream=stream,
     )
-    llm_call_generator = await call_llm(concl_def, concl_params, timeout, config, options=options)
+    llm_call_generator = call_llm(concl_def, concl_params, timeout, config, options=options)
 
     if stream:
         return llm_call_generator
