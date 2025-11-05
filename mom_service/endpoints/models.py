@@ -24,6 +24,7 @@ class UsageInfo(BaseModel):
         response_obj: Any = None,
         is_cached: bool = False,
         pricing_config: Any = None,
+        model_name: str = None,
     ) -> "UsageInfo":
         """
         Create UsageInfo from LiteLLM usage object or response.
@@ -33,6 +34,7 @@ class UsageInfo(BaseModel):
             response_obj: Optional full LiteLLM response object for cost calculation
             is_cached: Whether this is a cached response (cost should be 0.0)
             pricing_config: Optional PricingConfig to override default LiteLLM pricing
+            model_name: Optional model name for cost calculation when response_obj is not available
 
         Returns:
             UsageInfo instance with tokens and cost
@@ -70,6 +72,20 @@ class UsageInfo(BaseModel):
 
                 calculated_cost = litellm.completion_cost(completion_response=response_obj)
                 # Ensure cost is always a number or None, never something else
+                cost = float(calculated_cost) if calculated_cost is not None else 0.0
+            except Exception:
+                # Cost calculation failed, default to 0.0 for safety
+                cost = 0.0
+        elif model_name is not None:
+            # Try to calculate cost using model name and token counts
+            try:
+                import litellm
+
+                calculated_cost = litellm.completion_cost(
+                    model=model_name,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
                 cost = float(calculated_cost) if calculated_cost is not None else 0.0
             except Exception:
                 # Cost calculation failed, default to 0.0 for safety

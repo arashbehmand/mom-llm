@@ -54,6 +54,7 @@ async def _perform_fanout_calls(
     """
     Perform fan-out LLM calls and yield intermediate thinking context items as they complete.
     Handles exceptions within the tasks gracefully.
+    Automatically filters models based on multimodal content capability.
     options (dict) may contain 'trace' and 'request_id'.
     """
 
@@ -72,8 +73,26 @@ async def _perform_fanout_calls(
     options = options or {}
     trace = options.get("trace")
     request_id = options.get("request_id", "unknown")
+
+    # Filter models based on multimodal capability
+    from .multimodal_utils import filter_multimodal_capable_models
+
+    filtered_llms, skipped_llms = filter_multimodal_capable_models(
+        model_conf.llms_to_query, llm_map, request_messages
+    )
+
+    # Yield warning items for skipped models
+    for skipped_llm_name in skipped_llms:
+        skipped_def = llm_map.get(skipped_llm_name)
+        model_display = skipped_def.model if skipped_def else skipped_llm_name
+        yield ThinkingContextItem(
+            model=model_display,
+            content=f"Warning: Model skipped due to lack of multimodal support for this request.",
+            usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=0.0),
+        )
+
     tasks = []
-    for idx, llm_name_to_query in enumerate(model_conf.llms_to_query):
+    for idx, llm_name_to_query in enumerate(filtered_llms):
         ld = llm_map.get(llm_name_to_query)
         if not ld:
             logger.warning(f"Fan-out LLMDefinition '{llm_name_to_query}' not found.")

@@ -402,6 +402,16 @@ async def _process_mom_chat_request(
                 yield error_data
                 return
 
+            # Check if concluding LLM supports multimodal if request contains multimodal content
+            from .multimodal_utils import has_multimodal_content, is_model_multimodal_capable
+
+            if has_multimodal_content(request_messages):
+                if not is_model_multimodal_capable(concl_def.model):
+                    logger.warning(
+                        f"Request contains multimodal content but concluding LLM '{concl_def.model}' "
+                        "may not support it. Results may be degraded."
+                    )
+
             logger.info(
                 "_process_mom_chat_request: Calling _execute_concluding_call with stream=True to get generator"
             )
@@ -478,6 +488,16 @@ async def _process_mom_chat_request(
     concl_def = llm_map.get(model_conf.concluding_llm)
     if not concl_def:
         raise ValueError(f"Concluding LLM '{model_conf.concluding_llm}' not found.")
+
+    # Check if concluding LLM supports multimodal if request contains multimodal content
+    from .multimodal_utils import has_multimodal_content, is_model_multimodal_capable
+
+    if has_multimodal_content(request_messages):
+        if not is_model_multimodal_capable(concl_def.model):
+            logger.warning(
+                f"Request contains multimodal content but concluding LLM '{concl_def.model}' "
+                "may not support it. Results may be degraded."
+            )
 
     gen_name_concl = f"concluding-{concl_def.name}" if trace else None
     concluding_llm_response = await _execute_concluding_call(

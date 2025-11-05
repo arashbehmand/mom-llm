@@ -146,6 +146,7 @@ async def _call_lite_llm(
     """
     Calls the LiteLLM completion endpoint with retry logic, caching, and metrics recording.
     Yields the response object.
+    For streaming, yields chunks and finally a special dict with usage info.
     """
     options = options or {}
     trace = options.get("trace")
@@ -164,6 +165,10 @@ async def _call_lite_llm(
         "num_retries": config.service.max_llm_retries,  # LiteLLM retry parameter
         **(llm_def.params or {}),  # LLM-specific params can override defaults (guard against None)
     }
+
+    # For streaming, request usage info in the stream
+    if stream:
+        params["stream_options"] = {"include_usage": True}
 
     cache_key = _generate_cache_key(llm_def, messages, params)
     if config.service.cache_enabled:
@@ -210,6 +215,9 @@ async def _call_lite_llm(
     try:
         if stream:
             response_stream = await litellm.acompletion(**params)
+            accumulated_usage = None
+            complete_content = ""
+
             async for chunk in response_stream:
                 # Convert LiteLLM streaming chunk objects to plain dicts so callers
                 # (and the OpenAI-compatible endpoint) can consume them uniformly.
@@ -226,18 +234,73 @@ async def _call_lite_llm(
                     except Exception:
                         chunk_dict = {"choices": [{"delta": {"content": str(chunk)}}]}
 
+                # Capture usage info if present in chunk (final chunk contains usage)
+                if "usage" in chunk_dict and chunk_dict["usage"]:
+                    accumulated_usage = chunk_dict["usage"]
+
+                # Accumulate content for Langfuse
+                if "choices" in chunk_dict and chunk_dict["choices"]:
+                    for choice in chunk_dict["choices"]:
+                        if "delta" in choice and "content" in choice["delta"]:
+                            content = choice["delta"]["content"]
+                            if content:
+                                complete_content += content
+
                 yield chunk_dict
 
-            # For streaming, we don't have full usage info until the end
-            # Metrics recording for streaming will be handled at a higher level
+            end_time = time.time()
+            duration_ms = (end_time - start_time) * 1000
 
-            # End Langfuse generation for streaming with proper status
-            if generation:
-                generation.end(
-                    output={"status": "streaming_completed"},
-                    level="DEFAULT",
-                    status_message="Streaming response completed successfully",
+            # Record metrics for streaming call with accumulated usage
+            if accumulated_usage:
+                from .endpoints.models import UsageInfo
+
+                usage_info = UsageInfo.from_litellm_usage(
+                    accumulated_usage,
+                    response_obj=None,  # No full response object for streaming
+                    is_cached=False,
+                    pricing_config=llm_def.pricing,
+                    model_name=llm_def.model,  # Pass model name for cost calculation
                 )
+
+                metrics_db.insert_metric_record(
+                    metrics_db.MetricRecord(
+                        request_id=request_id,
+                        mom_model_name=mom_model_name,
+                        llm_name=llm_def.name,
+                        call_type=call_type,
+                        prompt_tokens=usage_info.prompt_tokens or 0,
+                        completion_tokens=usage_info.completion_tokens or 0,
+                        total_tokens=usage_info.total_tokens or 0,
+                        cost=usage_info.cost,
+                        duration_ms=duration_ms,
+                        status="SUCCESS",
+                        error_message=None,
+                        cache_hit=False,
+                    )
+                )
+
+                # End Langfuse generation with usage info
+                if generation:
+                    generation.end(
+                        output={"content": complete_content, "status": "streaming_completed"},
+                        level="DEFAULT",
+                        status_message="Streaming response completed successfully",
+                        usage={
+                            "input": accumulated_usage.get("prompt_tokens", 0),
+                            "output": accumulated_usage.get("completion_tokens", 0),
+                            "total": accumulated_usage.get("total_tokens", 0),
+                        },
+                    )
+            else:
+                logger.warning(f"No usage info received in streaming response for {llm_def.name}")
+                # End Langfuse generation without usage
+                if generation:
+                    generation.end(
+                        output={"content": complete_content, "status": "streaming_completed"},
+                        level="DEFAULT",
+                        status_message="Streaming response completed (no usage info)",
+                    )
         else:
             response = await litellm.acompletion(**params)
             if config.service.cache_enabled:
