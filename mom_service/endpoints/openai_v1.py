@@ -97,7 +97,7 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
             try:
                 the_generator = await _process_mom_chat_request(
                     req_data.model,
-                    [m.dict(exclude_none=True) for m in req_data.messages],
+                    [m.model_dump(exclude_none=True) for m in req_data.messages],
                     request,
                     stream=True,
                 )
@@ -144,7 +144,9 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
                                 )
                             ],
                         )
-                        trace_obj.update(output=openai_response_for_trace.dict(exclude_none=True))
+                        trace_obj.update(
+                            output=openai_response_for_trace.model_dump(exclude_none=True)
+                        )
                         logger.info("Successfully updated Langfuse trace for streaming response")
                     except Exception as e:
                         logger.error(f"Failed to update Langfuse trace for streaming response: {e}")
@@ -175,7 +177,7 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
             _trace_obj,
         ) = await _process_mom_chat_request(
             req_data.model,
-            [m.dict(exclude_none=True) for m in req_data.messages],
+            [m.model_dump(exclude_none=True) for m in req_data.messages],
             request,
             stream=False,
         )
@@ -194,7 +196,7 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
             thinking_context=thinking_context,
             total_cost_usd=total_cost,
         )
-        resp_payload = response.dict(exclude_none=True)
+        resp_payload = response.model_dump(exclude_none=True)
     except HTTPException:
         raise
     except Exception as e:

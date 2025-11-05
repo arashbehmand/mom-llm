@@ -93,7 +93,7 @@ async def chat_completions_ollama(req_data: OllamaChatRequest, request: Request)
                 trace_obj,  # Added to receive the trace object
             ) = await _process_mom_chat_request(
                 req_data.model,
-                [m.dict(exclude_none=True) for m in req_data.messages],
+                [m.model_dump(exclude_none=True) for m in req_data.messages],
                 request,
             )
         except ValueError as e:
@@ -121,7 +121,7 @@ async def chat_completions_ollama(req_data: OllamaChatRequest, request: Request)
 
         if trace_obj:
             try:
-                trace_obj.update(output=ollama_response.dict(exclude_none=True))
+                trace_obj.update(output=ollama_response.model_dump(exclude_none=True))
             except Exception as e:
                 # Log error if trace update fails, but don't fail the request
                 from ..main import logger  # Import logger if not already available

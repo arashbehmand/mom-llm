@@ -11,6 +11,7 @@ from typing import Any
 import litellm
 from litellm.utils import ModelResponse
 
+from . import metrics_db
 from .config import MoMConfig
 
 logger = logging.getLogger(__name__)
@@ -86,13 +87,13 @@ async def check_llm_connectivity(config: MoMConfig, timeout: int = 10) -> dict[s
     try:
         start_time = time.time()
 
-        # Make a minimal completion call
+        # Make a minimal completion call; guard against params being None
         response: ModelResponse = await litellm.acompletion(
             model=test_llm.model,
             messages=[{"role": "user", "content": "Hi"}],
             max_tokens=5,
             timeout=timeout,
-            **test_llm.params,
+            **(test_llm.params or {}),
         )
 
         duration_ms = (time.time() - start_time) * 1000
@@ -145,8 +146,8 @@ async def perform_comprehensive_health_check(
     if cache_health["status"] != "healthy":
         health_data["status"] = "degraded"
 
-    # Check metrics database
-    metrics_db_path = os.path.join(os.path.dirname(__file__), "metrics.db")
+    # Check metrics database (use canonical path from metrics_db module)
+    metrics_db_path = metrics_db.METRICS_DB_PATH
     metrics_health = await check_database_health(metrics_db_path, "metrics")
     health_data["checks"]["metrics_db"] = metrics_health
 

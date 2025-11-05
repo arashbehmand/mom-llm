@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 import contextvars
 import html
 import logging
 import os
 import sys
 import time
-from typing import Any
 import uuid
+from collections.abc import AsyncGenerator
+from typing import Any
 
+import litellm
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langfuse import Langfuse
-import litellm
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import MoMConfig, load_config
@@ -30,7 +30,6 @@ from .endpoints.models import OpenAIErrorDetail, OpenAIErrorResponse, ThinkingCo
 from .endpoints.openai_v1 import openai_router
 from .health import perform_comprehensive_health_check
 
-
 load_dotenv()
 
 # Context variable for request ID
@@ -43,21 +42,36 @@ class RequestIDFilter(logging.Filter):
     """Add request_id to all log records"""
 
     def filter(self, record):
-        record.request_id = request_id_var.get("no-request-id")
+        try:
+            record.request_id = request_id_var.get()
+        except LookupError:
+            record.request_id = "startup"
         return True
 
     def get_request_id(self) -> str:
         """Return the current request id for use in tests/logging."""
-        return request_id_var.get("no-request-id")
+        try:
+            return request_id_var.get()
+        except LookupError:
+            return "startup"
 
+
+# Create the filter instance
+request_id_filter = RequestIDFilter()
+
+# Configure logging with handler
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s")
+)
+stream_handler.addFilter(request_id_filter)
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=[stream_handler],
 )
-# Add filter to root logger so all loggers inherit it
-logging.getLogger().addFilter(RequestIDFilter())
+# Also add filter to root logger for any other handlers that might be added later
+logging.getLogger().addFilter(request_id_filter)
 logger = logging.getLogger(__name__)
 logger.info("--- mom_service.main.py: Logging configured ---")
 
@@ -258,7 +272,12 @@ async def _process_mom_chat_request(
             fastapi_request_obj.state.trace_obj = trace
 
     fanout_results_generator = _perform_fanout_calls(
-        model_conf, llm_map, request_messages, timeout, config, trace, request_id
+        model_conf,
+        llm_map,
+        request_messages,
+        timeout,
+        config,
+        options={"trace": trace, "request_id": request_id},
     )
 
     intermediate_thinking_context: list[ThinkingContextItem] = []
@@ -405,10 +424,43 @@ async def _process_mom_chat_request(
             logger.info("Streaming concluding LLM response...")
             final_content_streamed = ""
             async for chunk in the_concluding_generator:
-                if chunk.choices[0].delta.content:
-                    final_content_streamed += chunk.choices[0].delta.content
-                logger.debug("_process_mom_chat_request: Yielding concluding chunk: %s", chunk)
-                yield chunk
+                # Normalize chunk to a dict with OpenAI-compatible shape so the
+                # outer OpenAI SSE generator can stream dicts consistently.
+                chunk_dict = None
+                try:
+                    if isinstance(chunk, dict):
+                        chunk_dict = chunk
+                    else:
+                        # Try to convert LiteLLM objects to dict
+                        try:
+                            chunk_dict = litellm.utils.convert_to_dict(chunk)
+                        except Exception:
+                            # As a last resort, attempt to stringify
+                            chunk_dict = {"choices": [{"delta": {"content": str(chunk)}}]}
+
+                    # Safely extract any streamed content for tracing
+                    try:
+                        choices = chunk_dict.get("choices", [])
+                        if choices and isinstance(choices, list):
+                            delta = (
+                                choices[0].get("delta") if isinstance(choices[0], dict) else None
+                            )
+                            if delta and delta.get("content") is not None:
+                                final_content_streamed += delta.get("content")
+                    except Exception:
+                        # ignore extraction errors
+                        pass
+
+                except Exception:
+                    logger.warning(
+                        "Received unexpected chunk type from _process_mom_chat_request: %s",
+                        type(chunk),
+                    )
+                    logger.debug("Chunk repr: %s", repr(chunk))
+                    continue
+
+                logger.debug("_process_mom_chat_request: Yielding concluding chunk: %s", chunk_dict)
+                yield chunk_dict
 
             if trace:
                 trace.update(output={"final_content_streamed": final_content_streamed})

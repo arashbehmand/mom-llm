@@ -2,6 +2,8 @@
 Integration tests for mom_service API endpoints
 """
 
+# pylint: disable=redefined-outer-name
+
 import os
 from unittest.mock import MagicMock, patch
 
@@ -27,32 +29,34 @@ def auth_headers():
 class TestOpenAIEndpoints:
     """Tests for OpenAI-compatible API endpoints"""
 
-    def test_get_models_success(self, client, headers):
+    def test_get_models_success(self, test_client, auth_headers):
         """Test GET /v1/models endpoint"""
-        response = client.get("/v1/models", headers=headers)
+        response = test_client.get("/v1/models", headers=auth_headers)
 
         assert response.status_code == 200
         data = response.json()
         assert "data" in data
         assert isinstance(data["data"], list)
 
-    def test_get_models_unauthorized(self, client):
+    def test_get_models_unauthorized(self, test_client):
         """Test GET /v1/models without authentication"""
-        response = client.get("/v1/models")
+        response = test_client.get("/v1/models")
 
         assert response.status_code == 401
         assert "error" in response.json()
 
-    def test_get_models_invalid_token(self, client):
+    def test_get_models_invalid_token(self, test_client):
         """Test GET /v1/models with invalid token"""
         headers = {"Authorization": "Bearer invalid-token"}
-        response = client.get("/v1/models", headers=headers)
+        response = test_client.get("/v1/models", headers=headers)
 
         assert response.status_code == 401
 
     @patch("mom_service.main.get_mom_model_config")
     @patch("mom_service.main._process_mom_chat_request")
-    def test_chat_completions_non_streaming(self, mock_process, mock_get_config, client, headers):
+    def test_chat_completions_non_streaming(
+        self, mock_process, mock_get_config, test_client, auth_headers
+    ):
         """Test POST /v1/chat/completions for non-streaming"""
         # Mock the response
         mock_process.return_value = (
@@ -84,7 +88,7 @@ class TestOpenAIEndpoints:
             "stream": False,
         }
 
-        response = client.post("/v1/chat/completions", json=request_data, headers=headers)
+        response = test_client.post("/v1/chat/completions", json=request_data, headers=auth_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -94,26 +98,26 @@ class TestOpenAIEndpoints:
         assert "usage" in data
         assert data["usage"]["total_tokens"] == 30
 
-    def test_chat_completions_model_not_found(self, client, headers):
+    def test_chat_completions_model_not_found(self, test_client, auth_headers):
         """Test POST /v1/chat/completions with non-existent model"""
         request_data = {
             "model": "nonexistent-model",
             "messages": [{"role": "user", "content": "Test"}],
         }
 
-        response = client.post("/v1/chat/completions", json=request_data, headers=headers)
+        response = test_client.post("/v1/chat/completions", json=request_data, headers=auth_headers)
 
         assert response.status_code == 404
         assert "error" in response.json()
 
-    def test_chat_completions_unauthorized(self, client):
+    def test_chat_completions_unauthorized(self, test_client):
         """Test POST /v1/chat/completions without authentication"""
         request_data = {
             "model": "test-mom-model",
             "messages": [{"role": "user", "content": "Test"}],
         }
 
-        response = client.post("/v1/chat/completions", json=request_data)
+        response = test_client.post("/v1/chat/completions", json=request_data)
 
         assert response.status_code == 401
 
@@ -121,9 +125,9 @@ class TestOpenAIEndpoints:
 class TestMetricsEndpoints:
     """Tests for metrics API endpoints"""
 
-    def test_get_usage_metrics_success(self, client, headers):
+    def test_get_usage_metrics_success(self, test_client, auth_headers):
         """Test GET /v1/metrics/usage endpoint"""
-        response = client.get("/v1/metrics/usage", headers=headers)
+        response = test_client.get("/v1/metrics/usage", headers=auth_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -132,10 +136,10 @@ class TestMetricsEndpoints:
         assert "metrics" in data
         assert "total_requests" in data["metrics"]
 
-    def test_get_usage_metrics_with_filters(self, client, headers):
+    def test_get_usage_metrics_with_filters(self, test_client, auth_headers):
         """Test GET /v1/metrics/usage with query parameters"""
-        response = client.get(
-            "/v1/metrics/usage?model_name=test-model&start_time=1000000000", headers=headers
+        response = test_client.get(
+            "/v1/metrics/usage?model_name=test-model&start_time=1000000000", headers=auth_headers
         )
 
         assert response.status_code == 200
@@ -143,15 +147,15 @@ class TestMetricsEndpoints:
         assert data["filters"]["model_name"] == "test-model"
         assert data["filters"]["start_time"] == 1000000000.0
 
-    def test_get_usage_metrics_unauthorized(self, client):
+    def test_get_usage_metrics_unauthorized(self, test_client):
         """Test GET /v1/metrics/usage without authentication"""
-        response = client.get("/v1/metrics/usage")
+        response = test_client.get("/v1/metrics/usage")
 
         assert response.status_code == 401
 
-    def test_get_raw_usage_metrics(self, client, headers):
+    def test_get_raw_usage_metrics(self, test_client, auth_headers):
         """Test GET /v1/metrics/usage/raw endpoint"""
-        response = client.get("/v1/metrics/usage/raw", headers=headers)
+        response = test_client.get("/v1/metrics/usage/raw", headers=auth_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -166,9 +170,9 @@ class TestMetricsEndpoints:
 class TestHealthEndpoint:
     """Tests for health check endpoint"""
 
-    def test_health_check(self, client):
+    def test_health_check(self, test_client):
         """Test GET /health endpoint"""
-        response = client.get("/health")
+        response = test_client.get("/health")
 
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
@@ -177,17 +181,17 @@ class TestHealthEndpoint:
 class TestRequestIDMiddleware:
     """Tests for request ID middleware"""
 
-    def test_request_id_in_response_headers(self, client):
+    def test_request_id_in_response_headers(self, test_client):
         """Test that X-Request-ID header is present in responses"""
-        response = client.get("/health")
+        response = test_client.get("/health")
 
         assert "X-Request-ID" in response.headers
         request_id = response.headers["X-Request-ID"]
         assert len(request_id) == 36  # UUID length with dashes
 
-    def test_request_id_in_error_responses(self, client):
+    def test_request_id_in_error_responses(self, test_client):
         """Test that X-Request-ID is present even in error responses"""
-        response = client.get("/v1/models")  # Will fail due to no auth
+        response = test_client.get("/v1/models")  # Will fail due to no auth
 
         assert response.status_code == 401
         assert "X-Request-ID" in response.headers

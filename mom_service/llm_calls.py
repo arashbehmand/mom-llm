@@ -112,7 +112,7 @@ def _get_cached_response(cache_key: str) -> Optional[ModelResponse]:
             usage=usage,
             object=response_data.get("object"),
         )
-        model_response.is_cached = True
+        model_response._is_cached = True  # pylint: disable=protected-access
         return model_response
     except Exception as e:
         logger.error(f"Error retrieving or reconstructing cached response for key {cache_key}: {e}")
@@ -162,7 +162,7 @@ async def _call_lite_llm(
         "stream": stream,
         "timeout": timeout,
         "num_retries": config.service.max_llm_retries,  # LiteLLM retry parameter
-        **llm_def.params,  # LLM-specific params can override defaults
+        **(llm_def.params or {}),  # LLM-specific params can override defaults (guard against None)
     }
 
     cache_key = _generate_cache_key(llm_def, messages, params)
@@ -211,7 +211,23 @@ async def _call_lite_llm(
         if stream:
             response_stream = await litellm.acompletion(**params)
             async for chunk in response_stream:
-                yield chunk
+                # Convert LiteLLM streaming chunk objects to plain dicts so callers
+                # (and the OpenAI-compatible endpoint) can consume them uniformly.
+                try:
+                    chunk_dict = litellm.utils.convert_to_dict(chunk)
+                except Exception:
+                    # Fallback: attempt to extract a string representation
+                    try:
+                        chunk_dict = {
+                            "choices": [
+                                {"delta": {"content": litellm.utils.get_response_string(chunk)}}
+                            ]
+                        }
+                    except Exception:
+                        chunk_dict = {"choices": [{"delta": {"content": str(chunk)}}]}
+
+                yield chunk_dict
+
             # For streaming, we don't have full usage info until the end
             # Metrics recording for streaming will be handled at a higher level
 
