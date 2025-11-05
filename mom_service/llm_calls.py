@@ -195,6 +195,63 @@ async def _call_lite_llm(
                     )
                 )
 
+            # Create Langfuse generation for cache hit
+            if trace:
+                # Filter params for Langfuse
+                langfuse_params = {}
+                for k, v in params.items():
+                    if k == "messages":
+                        continue
+                    if isinstance(v, (str, int, float, bool, list)):
+                        langfuse_params[k] = v
+                    elif isinstance(v, dict):
+                        import json
+                        langfuse_params[k] = json.dumps(v)
+
+                generation = trace.generation(
+                    name=generation_name,
+                    metadata={"call_type": call_type, "llm_name": llm_def.name, "cached": True},
+                    input=messages,
+                    model=llm_def.model,
+                    model_parameters=langfuse_params,
+                )
+
+                # End generation immediately for cache hit with usage info
+                if cached_response.usage:
+                    import litellm
+                    from .pricing_utils import calculate_normalized_tokens
+
+                    output_dict = litellm.utils.convert_to_dict(cached_response)
+
+                    # For cache hits, cost is 0 but we still report tokens
+                    actual_input = getattr(cached_response.usage, "prompt_tokens", 0)
+                    actual_output = getattr(cached_response.usage, "completion_tokens", 0)
+
+                    # For cached responses, report actual tokens since cost is 0
+                    generation.end(
+                        output=output_dict,
+                        level="DEFAULT",
+                        status_message="Cache hit - instant response (cost: $0)",
+                        usage={
+                            "input": actual_input,
+                            "output": actual_output,
+                            "total": actual_input + actual_output,
+                        },
+                        metadata={
+                            "actual_input_tokens": actual_input,
+                            "actual_output_tokens": actual_output,
+                            "actual_cost_usd": 0.0,
+                            "cached": True,
+                        },
+                    )
+                else:
+                    generation.end(
+                        output=litellm.utils.convert_to_dict(cached_response),
+                        level="DEFAULT",
+                        status_message="Cache hit - instant response (cost: $0)",
+                        metadata={"cached": True},
+                    )
+
             yield cached_response
             return
 
@@ -231,8 +288,10 @@ async def _call_lite_llm(
             response_stream = await litellm.acompletion(**params)
             accumulated_usage = None
             complete_content = ""
+            chunk_count = 0
 
             async for chunk in response_stream:
+                chunk_count += 1
                 # Convert LiteLLM streaming chunk objects to plain dicts so callers
                 # (and the OpenAI-compatible endpoint) can consume them uniformly.
                 try:
@@ -249,8 +308,16 @@ async def _call_lite_llm(
                         chunk_dict = {"choices": [{"delta": {"content": str(chunk)}}]}
 
                 # Capture usage info if present in chunk (final chunk contains usage)
+                # Only use it if it has non-zero values (final chunk)
                 if "usage" in chunk_dict and chunk_dict["usage"]:
-                    accumulated_usage = chunk_dict["usage"]
+                    usage_dict = chunk_dict["usage"]
+                    # Only accept usage if it has actual token counts
+                    if usage_dict.get("total_tokens", 0) > 0:
+                        accumulated_usage = usage_dict
+                        logger.debug(
+                            f"Captured usage from chunk {chunk_count}: input={usage_dict.get('prompt_tokens')}, "
+                            f"output={usage_dict.get('completion_tokens')}, total={usage_dict.get('total_tokens')}"
+                        )
 
                 # Accumulate content for Langfuse
                 if "choices" in chunk_dict and chunk_dict["choices"]:
@@ -262,12 +329,18 @@ async def _call_lite_llm(
 
                 yield chunk_dict
 
+            logger.info(
+                f"Streaming completed for {llm_def.name}: {chunk_count} chunks, "
+                f"content_length={len(complete_content)}, usage_captured={accumulated_usage is not None}"
+            )
+
             end_time = time.time()
             duration_ms = (end_time - start_time) * 1000
 
             # Record metrics for streaming call with accumulated usage
             if accumulated_usage:
                 from .endpoints.models import UsageInfo
+                from .pricing_utils import calculate_normalized_tokens
 
                 usage_info = UsageInfo.from_litellm_usage(
                     accumulated_usage,
@@ -294,16 +367,29 @@ async def _call_lite_llm(
                     )
                 )
 
-                # End Langfuse generation with usage info
+                # End Langfuse generation with normalized tokens and cost
                 if generation:
+                    # Calculate normalized tokens for unified pricing
+                    normalized_input, normalized_output = calculate_normalized_tokens(
+                        actual_cost=usage_info.cost or 0.0,
+                        actual_input_tokens=usage_info.prompt_tokens or 0,
+                        actual_output_tokens=usage_info.completion_tokens or 0,
+                    )
+
                     generation.end(
                         output={"content": complete_content, "status": "streaming_completed"},
                         level="DEFAULT",
                         status_message="Streaming response completed successfully",
                         usage={
-                            "input": accumulated_usage.get("prompt_tokens", 0),
-                            "output": accumulated_usage.get("completion_tokens", 0),
-                            "total": accumulated_usage.get("total_tokens", 0),
+                            "input": normalized_input,
+                            "output": normalized_output,
+                            "total": normalized_input + normalized_output,
+                        },
+                        metadata={
+                            "actual_input_tokens": usage_info.prompt_tokens or 0,
+                            "actual_output_tokens": usage_info.completion_tokens or 0,
+                            "actual_total_tokens": usage_info.total_tokens or 0,
+                            "actual_cost_usd": usage_info.cost or 0.0,
                         },
                     )
             else:
@@ -353,21 +439,40 @@ async def _call_lite_llm(
 
             # End Langfuse generation with comprehensive output and metadata
             if generation:
+                from .pricing_utils import calculate_normalized_tokens
+
                 output_dict = litellm.utils.convert_to_dict(response)
-                generation.end(
-                    output=output_dict,
-                    level="DEFAULT",
-                    status_message="LLM call completed successfully",
-                    usage=(
-                        {
-                            "input": response.usage.prompt_tokens if response.usage else 0,
-                            "output": response.usage.completion_tokens if response.usage else 0,
-                            "total": response.usage.total_tokens if response.usage else 0,
-                        }
-                        if response.usage
-                        else None
-                    ),
-                )
+
+                # Calculate normalized tokens for unified pricing
+                if response.usage and usage_info:
+                    normalized_input, normalized_output = calculate_normalized_tokens(
+                        actual_cost=usage_info.cost or 0.0,
+                        actual_input_tokens=usage_info.prompt_tokens or 0,
+                        actual_output_tokens=usage_info.completion_tokens or 0,
+                    )
+
+                    generation.end(
+                        output=output_dict,
+                        level="DEFAULT",
+                        status_message="LLM call completed successfully",
+                        usage={
+                            "input": normalized_input,
+                            "output": normalized_output,
+                            "total": normalized_input + normalized_output,
+                        },
+                        metadata={
+                            "actual_input_tokens": usage_info.prompt_tokens or 0,
+                            "actual_output_tokens": usage_info.completion_tokens or 0,
+                            "actual_total_tokens": usage_info.total_tokens or 0,
+                            "actual_cost_usd": usage_info.cost or 0.0,
+                        },
+                    )
+                else:
+                    generation.end(
+                        output=output_dict,
+                        level="DEFAULT",
+                        status_message="LLM call completed successfully",
+                    )
 
             yield response
 
