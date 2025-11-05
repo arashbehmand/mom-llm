@@ -78,7 +78,6 @@ MoM Service uses an elegant **fan-out, fan-in architecture** for parallel proces
 ## ✨ Features
 
 - **🔌 OpenAI-Compatible API**: Drop-in replacement with `/v1/chat/completions` and `/v1/models` endpoints
-- **🦙 Ollama-Compatible API**: Full compatibility with Ollama clients via `/ollama/api/chat`
 - **🎭 Multi-Model Orchestration**: Query multiple LLMs in parallel with intelligent synthesis
 - **⚡ Real-Time Streaming**: Stream synthesized responses back to clients with low latency
 - **⚙️ Configuration-Driven**: Define everything in a single `config.yaml` file—no code changes needed
@@ -115,7 +114,6 @@ mom-llm/
 │   └── 📂 endpoints/
 │       ├── 📋 models.py      # Pydantic request/response models
 │       ├── 🔌 openai_v1.py   # OpenAI-compatible endpoints
-│       ├── 🦙 ollama_api.py  # Ollama-compatible endpoints
 │       └── 📈 metrics_api.py # Usage metrics API
 └── 📂 tests/
     ├── ⚙️  conftest.py       # Pytest fixtures & configuration
@@ -352,22 +350,6 @@ Send chat completion requests to your MoM models.
   ],
   "stream": true,
   "temperature": 0.7
-}
-```
-
-### Ollama-Compatible Endpoint
-
-#### `POST /ollama/api/chat`
-Compatible with Ollama client applications.
-
-**Request:**
-```json
-{
-  "model": "mom-creative",
-  "messages": [
-    {"role": "user", "content": "Hello!"}
-  ],
-  "stream": false
 }
 ```
 
