@@ -39,6 +39,7 @@ from .endpoints.models import (
     UsageInfo,
 )
 from .endpoints.openai_v1 import openai_router
+from .endpoints.metrics_api import metrics_router
 
 load_dotenv()
 
@@ -452,5 +453,7 @@ async def _process_mom_chat_request(
         )
 
 app.include_router(openai_router)
+app.include_router(metrics_router)
 
 logger.info("--- MoM Service configured with OpenAI-compatible API at /v1 ---")
+logger.info("--- MoM Service configured with Metrics API at /v1/metrics ---")
