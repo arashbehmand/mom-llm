@@ -5,13 +5,12 @@ This module provides persistent storage for LLM call metrics using SQLite.
 It tracks token usage, costs, duration, and status for all LLM calls.
 """
 
-from dataclasses import dataclass
 import logging
 import os
 import sqlite3
 import time
+from dataclasses import dataclass
 from typing import Any, Optional
-
 
 logger = logging.getLogger(__name__)
 

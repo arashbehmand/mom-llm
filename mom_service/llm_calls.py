@@ -1,10 +1,10 @@
-from collections.abc import AsyncGenerator
 import hashlib
 import json
 import logging
 import os
 import sqlite3
 import time
+from collections.abc import AsyncGenerator
 from typing import Any, Optional
 
 import litellm
@@ -12,7 +12,6 @@ from litellm.utils import Choices, Message, ModelResponse, Usage
 
 from . import metrics_db
 from .config import LLMDefinition, MoMConfig
-
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +211,23 @@ async def _call_lite_llm(
         if stream:
             response_stream = await litellm.acompletion(**params)
             async for chunk in response_stream:
-                yield chunk
+                # Convert LiteLLM streaming chunk objects to plain dicts so callers
+                # (and the OpenAI-compatible endpoint) can consume them uniformly.
+                try:
+                    chunk_dict = litellm.utils.convert_to_dict(chunk)
+                except Exception:
+                    # Fallback: attempt to extract a string representation
+                    try:
+                        chunk_dict = {
+                            "choices": [
+                                {"delta": {"content": litellm.utils.get_response_string(chunk)}}
+                            ]
+                        }
+                    except Exception:
+                        chunk_dict = {"choices": [{"delta": {"content": str(chunk)}}]}
+
+                yield chunk_dict
+
             # For streaming, we don't have full usage info until the end
             # Metrics recording for streaming will be handled at a higher level
 

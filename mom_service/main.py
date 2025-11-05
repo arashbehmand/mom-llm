@@ -424,10 +424,43 @@ async def _process_mom_chat_request(
             logger.info("Streaming concluding LLM response...")
             final_content_streamed = ""
             async for chunk in the_concluding_generator:
-                if chunk.choices[0].delta.content:
-                    final_content_streamed += chunk.choices[0].delta.content
-                logger.debug("_process_mom_chat_request: Yielding concluding chunk: %s", chunk)
-                yield chunk
+                # Normalize chunk to a dict with OpenAI-compatible shape so the
+                # outer OpenAI SSE generator can stream dicts consistently.
+                chunk_dict = None
+                try:
+                    if isinstance(chunk, dict):
+                        chunk_dict = chunk
+                    else:
+                        # Try to convert LiteLLM objects to dict
+                        try:
+                            chunk_dict = litellm.utils.convert_to_dict(chunk)
+                        except Exception:
+                            # As a last resort, attempt to stringify
+                            chunk_dict = {"choices": [{"delta": {"content": str(chunk)}}]}
+
+                    # Safely extract any streamed content for tracing
+                    try:
+                        choices = chunk_dict.get("choices", [])
+                        if choices and isinstance(choices, list):
+                            delta = (
+                                choices[0].get("delta") if isinstance(choices[0], dict) else None
+                            )
+                            if delta and delta.get("content") is not None:
+                                final_content_streamed += delta.get("content")
+                    except Exception:
+                        # ignore extraction errors
+                        pass
+
+                except Exception:
+                    logger.warning(
+                        "Received unexpected chunk type from _process_mom_chat_request: %s",
+                        type(chunk),
+                    )
+                    logger.debug("Chunk repr: %s", repr(chunk))
+                    continue
+
+                logger.debug("_process_mom_chat_request: Yielding concluding chunk: %s", chunk_dict)
+                yield chunk_dict
 
             if trace:
                 trace.update(output={"final_content_streamed": final_content_streamed})

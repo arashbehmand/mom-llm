@@ -2,9 +2,9 @@
 Unit tests for mom_service.config module
 """
 
-from pydantic import ValidationError
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from mom_service.config import LLMDefinition, ModelConfig, MoMConfig, ServiceConfig, load_config
 
