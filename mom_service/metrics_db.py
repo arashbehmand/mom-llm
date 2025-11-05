@@ -5,12 +5,13 @@ This module provides persistent storage for LLM call metrics using SQLite.
 It tracks token usage, costs, duration, and status for all LLM calls.
 """
 
+from dataclasses import dataclass
 import logging
 import os
 import sqlite3
 import time
-from dataclasses import dataclass
 from typing import Any, Optional
+
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,13 @@ def _init_metrics_db():
 
 # Public alias for tests / external callers to avoid protected-access lint warnings
 init_metrics_db = _init_metrics_db
+
+# Initialize metrics DB at import so callers can insert without race conditions
+try:
+    init_metrics_db()
+except Exception as _:
+    # Initialization errors are already logged inside _init_metrics_db; don't raise at import time
+    logger.debug("metrics_db initialization attempted at import time")
 
 
 # pylint: disable=too-many-instance-attributes

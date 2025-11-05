@@ -2,8 +2,9 @@
 Unit tests for mom_service.config module
 """
 
-import pytest
 from pydantic import ValidationError
+import pytest
+import yaml
 
 from mom_service.config import LLMDefinition, ModelConfig, MoMConfig, ServiceConfig, load_config
 
@@ -115,7 +116,7 @@ class TestLoadConfig:
         invalid_config = tmp_path / "invalid_config.yaml"
         invalid_config.write_text("invalid: yaml: content: [")
 
-        with pytest.raises(Exception):  # YAML parsing error
+        with pytest.raises(yaml.YAMLError):  # YAML parsing error
             load_config(config_path=str(invalid_config))
 
     def test_load_config_invalid_schema(self, tmp_path):

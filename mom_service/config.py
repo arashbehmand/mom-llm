@@ -1,8 +1,8 @@
 import os
 from typing import Any, Optional
 
-import yaml
 from pydantic import BaseModel, ValidationError
+import yaml
 
 
 class PricingConfig(BaseModel):
