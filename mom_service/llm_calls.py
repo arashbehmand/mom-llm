@@ -218,15 +218,12 @@ async def _call_lite_llm(
 
                 # End generation immediately for cache hit with usage info
                 if cached_response.usage:
-                    from .pricing_utils import calculate_normalized_tokens
-
                     output_dict = litellm.utils.convert_to_dict(cached_response)
 
-                    # For cache hits, cost is 0 but we still report tokens
+                    # For cache hits, report actual tokens and $0 cost
                     actual_input = getattr(cached_response.usage, "prompt_tokens", 0)
                     actual_output = getattr(cached_response.usage, "completion_tokens", 0)
 
-                    # For cached responses, report actual tokens since cost is 0
                     generation.end(
                         output=output_dict,
                         level="DEFAULT",
@@ -236,12 +233,14 @@ async def _call_lite_llm(
                             "output": actual_output,
                             "total": actual_input + actual_output,
                         },
-                        metadata={
-                            "actual_input_tokens": actual_input,
-                            "actual_output_tokens": actual_output,
-                            "actual_cost_usd": 0.0,
-                            "cached": True,
-                        },
+                        metadata={"cached": True},
+                    )
+
+                    # Cache hits have $0 cost
+                    generation.update(
+                        cost_details={
+                            "total": 0.0,
+                        }
                     )
                 else:
                     generation.end(
@@ -366,31 +365,27 @@ async def _call_lite_llm(
                     )
                 )
 
-                # End Langfuse generation with normalized tokens and cost
+                # End Langfuse generation with actual tokens and cost
                 if generation:
-                    # Calculate normalized tokens for unified pricing
-                    normalized_input, normalized_output = calculate_normalized_tokens(
-                        actual_cost=usage_info.cost or 0.0,
-                        actual_input_tokens=usage_info.prompt_tokens or 0,
-                        actual_output_tokens=usage_info.completion_tokens or 0,
-                    )
-
+                    # Report actual tokens in usage for proper aggregation
                     generation.end(
                         output={"content": complete_content, "status": "streaming_completed"},
                         level="DEFAULT",
                         status_message="Streaming response completed successfully",
                         usage={
-                            "input": normalized_input,
-                            "output": normalized_output,
-                            "total": normalized_input + normalized_output,
-                        },
-                        metadata={
-                            "actual_input_tokens": usage_info.prompt_tokens or 0,
-                            "actual_output_tokens": usage_info.completion_tokens or 0,
-                            "actual_total_tokens": usage_info.total_tokens or 0,
-                            "actual_cost_usd": usage_info.cost or 0.0,
+                            "input": usage_info.prompt_tokens or 0,
+                            "output": usage_info.completion_tokens or 0,
+                            "total": usage_info.total_tokens or 0,
                         },
                     )
+
+                    # Update with cost details separately (Langfuse will aggregate these)
+                    if usage_info.cost and usage_info.cost > 0:
+                        generation.update(
+                            cost_details={
+                                "total": usage_info.cost,  # USD cost for this generation
+                            }
+                        )
             else:
                 logger.warning(f"No usage info received in streaming response for {llm_def.name}")
                 # End Langfuse generation without usage
@@ -436,36 +431,30 @@ async def _call_lite_llm(
                     )
                 )
 
-            # End Langfuse generation with comprehensive output and metadata
+            # End Langfuse generation with actual tokens and cost
             if generation:
-                from .pricing_utils import calculate_normalized_tokens
-
                 output_dict = litellm.utils.convert_to_dict(response)
 
-                # Calculate normalized tokens for unified pricing
+                # Report actual tokens for proper aggregation
                 if response.usage and usage_info:
-                    normalized_input, normalized_output = calculate_normalized_tokens(
-                        actual_cost=usage_info.cost or 0.0,
-                        actual_input_tokens=usage_info.prompt_tokens or 0,
-                        actual_output_tokens=usage_info.completion_tokens or 0,
-                    )
-
                     generation.end(
                         output=output_dict,
                         level="DEFAULT",
                         status_message="LLM call completed successfully",
                         usage={
-                            "input": normalized_input,
-                            "output": normalized_output,
-                            "total": normalized_input + normalized_output,
-                        },
-                        metadata={
-                            "actual_input_tokens": usage_info.prompt_tokens or 0,
-                            "actual_output_tokens": usage_info.completion_tokens or 0,
-                            "actual_total_tokens": usage_info.total_tokens or 0,
-                            "actual_cost_usd": usage_info.cost or 0.0,
+                            "input": usage_info.prompt_tokens or 0,
+                            "output": usage_info.completion_tokens or 0,
+                            "total": usage_info.total_tokens or 0,
                         },
                     )
+
+                    # Update with cost details separately (Langfuse will aggregate these)
+                    if usage_info.cost and usage_info.cost > 0:
+                        generation.update(
+                            cost_details={
+                                "total": usage_info.cost,  # USD cost for this generation
+                            }
+                        )
                 else:
                     generation.end(
                         output=output_dict,
