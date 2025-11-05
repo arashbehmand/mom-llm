@@ -311,10 +311,13 @@ async def _call_lite_llm(
                     usage_dict = chunk_dict["usage"]
                     # Only accept usage if it has actual token counts
                     if usage_dict.get("total_tokens", 0) > 0:
+                        # Always overwrite with latest usage (final chunk should have complete usage)
                         accumulated_usage = usage_dict
-                        logger.debug(
-                            f"Captured usage from chunk {chunk_count}: input={usage_dict.get('prompt_tokens')}, "
-                            f"output={usage_dict.get('completion_tokens')}, total={usage_dict.get('total_tokens')}"
+                        logger.info(
+                            f"[{llm_def.name}] Chunk {chunk_count} usage: "
+                            f"input={usage_dict.get('prompt_tokens')}, "
+                            f"output={usage_dict.get('completion_tokens')}, "
+                            f"total={usage_dict.get('total_tokens')}"
                         )
 
                 # Accumulate content for Langfuse
@@ -332,6 +335,14 @@ async def _call_lite_llm(
                 f"content_length={len(complete_content)}, usage_captured={accumulated_usage is not None}"
             )
 
+            if accumulated_usage:
+                logger.info(
+                    f"Captured usage for {llm_def.name}: "
+                    f"input={accumulated_usage.get('prompt_tokens')}, "
+                    f"output={accumulated_usage.get('completion_tokens')}, "
+                    f"total={accumulated_usage.get('total_tokens')}"
+                )
+
             end_time = time.time()
             duration_ms = (end_time - start_time) * 1000
 
@@ -346,6 +357,12 @@ async def _call_lite_llm(
                     is_cached=False,
                     pricing_config=llm_def.pricing,
                     model_name=llm_def.model,  # Pass model name for cost calculation
+                )
+
+                logger.info(
+                    f"Calculated usage_info for {llm_def.name}: "
+                    f"input={usage_info.prompt_tokens}, output={usage_info.completion_tokens}, "
+                    f"total={usage_info.total_tokens}, cost=${usage_info.cost:.6f if usage_info.cost else 0}"
                 )
 
                 metrics_db.insert_metric_record(
@@ -367,6 +384,15 @@ async def _call_lite_llm(
 
                 # End Langfuse generation with actual tokens and cost
                 if generation:
+                    # Update with cost details BEFORE ending (must be called first)
+                    if usage_info.cost and usage_info.cost > 0:
+                        generation.update(
+                            cost_details={
+                                "total": usage_info.cost,  # USD cost for this generation
+                            }
+                        )
+                        logger.info(f"Updated Langfuse with cost: ${usage_info.cost:.6f} for {llm_def.name}")
+
                     # Report actual tokens in usage for proper aggregation
                     generation.end(
                         output={"content": complete_content, "status": "streaming_completed"},
@@ -378,14 +404,6 @@ async def _call_lite_llm(
                             "total": usage_info.total_tokens or 0,
                         },
                     )
-
-                    # Update with cost details separately (Langfuse will aggregate these)
-                    if usage_info.cost and usage_info.cost > 0:
-                        generation.update(
-                            cost_details={
-                                "total": usage_info.cost,  # USD cost for this generation
-                            }
-                        )
             else:
                 logger.warning(f"No usage info received in streaming response for {llm_def.name}")
                 # End Langfuse generation without usage
@@ -437,6 +455,15 @@ async def _call_lite_llm(
 
                 # Report actual tokens for proper aggregation
                 if response.usage and usage_info:
+                    # Update with cost details BEFORE ending (must be called first)
+                    if usage_info.cost and usage_info.cost > 0:
+                        generation.update(
+                            cost_details={
+                                "total": usage_info.cost,  # USD cost for this generation
+                            }
+                        )
+                        logger.info(f"Updated Langfuse with cost: ${usage_info.cost:.6f} for {llm_def.name}")
+
                     generation.end(
                         output=output_dict,
                         level="DEFAULT",
@@ -447,14 +474,6 @@ async def _call_lite_llm(
                             "total": usage_info.total_tokens or 0,
                         },
                     )
-
-                    # Update with cost details separately (Langfuse will aggregate these)
-                    if usage_info.cost and usage_info.cost > 0:
-                        generation.update(
-                            cost_details={
-                                "total": usage_info.cost,  # USD cost for this generation
-                            }
-                        )
                 else:
                     generation.end(
                         output=output_dict,
