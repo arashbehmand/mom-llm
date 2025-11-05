@@ -202,12 +202,26 @@ async def _call_lite_llm(
 
     generation = None
     if trace:
+        # Filter out complex types that Langfuse can't handle (dicts, objects)
+        # Only include primitive types: str, int, float, bool, list
+        langfuse_params = {}
+        for k, v in params.items():
+            if k == "messages":
+                continue  # Skip messages as they're passed separately
+            # Only include primitive types that Langfuse accepts
+            if isinstance(v, (str, int, float, bool, list)):
+                langfuse_params[k] = v
+            elif isinstance(v, dict):
+                # Convert dicts to JSON string for Langfuse
+                import json
+                langfuse_params[k] = json.dumps(v)
+
         generation = trace.generation(
             name=generation_name,
             metadata={"call_type": call_type, "llm_name": llm_def.name},
             input=messages,
             model=llm_def.model,
-            model_parameters={k: v for k, v in params.items() if k != "messages"},
+            model_parameters=langfuse_params,
         )
 
     start_time = time.time()
