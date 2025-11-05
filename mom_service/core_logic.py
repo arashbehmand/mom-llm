@@ -103,7 +103,8 @@ async def _perform_fanout_calls(
                 current_usage_info = UsageInfo.from_litellm_usage(
                     current_res_obj_fanout.usage,
                     response_obj=current_res_obj_fanout,
-                    is_cached=is_cached
+                    is_cached=is_cached,
+                    pricing_config=ld_fanout.pricing
                 )
             else:
                 content_str = f"Warning: Call to {ld_fanout.model} returned an empty or malformed response."

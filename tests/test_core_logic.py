@@ -156,7 +156,7 @@ class TestPrepareConcludingMessages:
 
         # Should have original message + failure notification
         assert len(result) >= 2
-        assert "all initial LLM consultations failed" in result[1]["content"].lower()
+        assert "all initial llm consultations failed or returned no usable content" in result[1]["content"].lower()
 
     def test_prepare_messages_with_empty_context(self, sample_mom_config):
         """Test message preparation with no intermediate context"""

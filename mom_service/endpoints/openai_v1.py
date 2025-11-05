@@ -74,9 +74,8 @@ async def chat_completions_openai(
     req_data: OpenAIChatCompletionRequest, request: Request
 ):
     check_token(request)
-    model_conf_check = next(
-        (m for m in config.models if m.name == req_data.model), None
-    )
+    from ..main import get_mom_model_config
+    model_conf_check = get_mom_model_config(req_data.model)
     if not model_conf_check:
         raise HTTPException(
             status_code=404,

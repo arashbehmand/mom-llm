@@ -17,7 +17,13 @@ class UsageInfo(BaseModel):
     cost: Optional[float] = None
 
     @classmethod
-    def from_litellm_usage(cls, usage: Any, response_obj: Any = None, is_cached: bool = False) -> "UsageInfo":
+    def from_litellm_usage(
+        cls,
+        usage: Any,
+        response_obj: Any = None,
+        is_cached: bool = False,
+        pricing_config: Any = None
+    ) -> "UsageInfo":
         """
         Create UsageInfo from LiteLLM usage object or response.
 
@@ -25,6 +31,7 @@ class UsageInfo(BaseModel):
             usage: LiteLLM usage object or dict
             response_obj: Optional full LiteLLM response object for cost calculation
             is_cached: Whether this is a cached response (cost should be 0.0)
+            pricing_config: Optional PricingConfig to override default LiteLLM pricing
 
         Returns:
             UsageInfo instance with tokens and cost
@@ -48,6 +55,9 @@ class UsageInfo(BaseModel):
         if is_cached:
             # Cached responses have zero cost
             cost = 0.0
+        elif pricing_config is not None:
+            # Use custom pricing configuration
+            cost = pricing_config.calculate_cost(prompt_tokens, completion_tokens)
         elif response_obj is not None:
             try:
                 import litellm

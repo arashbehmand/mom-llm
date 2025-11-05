@@ -240,7 +240,8 @@ async def _call_lite_llm(
                 usage_info = UsageInfo.from_litellm_usage(
                     response.usage,
                     response_obj=response,
-                    is_cached=False
+                    is_cached=False,
+                    pricing_config=llm_def.pricing
                 )
 
                 metrics_db.insert_metric_record(

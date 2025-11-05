@@ -175,16 +175,20 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         exc_info=True,
         extra={'request_id': request_id}
     )
+    
+    error_message = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
+
     error_detail = OpenAIErrorDetail(
-        message=exc.detail,
+        message=error_message,
         type="invalid_request_error",
         param=None,
         code=None,
     )
+    
     return JSONResponse(
         status_code=exc.status_code,
-        content=OpenAIErrorResponse(error=error_detail).model_dump(),
-        headers={"X-Request-ID": request_id}
+        content={"error": error_detail.model_dump(exclude_none=True)},
+        headers={'X-Request-ID': request_id}
     )
 
 @app.exception_handler(Exception)
@@ -457,7 +461,8 @@ async def _process_mom_chat_request(
             concluding_llm_usage_info = UsageInfo.from_litellm_usage(
                 concluding_llm_response.usage,
                 response_obj=concluding_llm_response,
-                is_cached=is_cached
+                is_cached=is_cached,
+                pricing_config=concl_def.pricing
             )
 
         total_request_cost = _calculate_and_log_costs(
@@ -492,6 +497,21 @@ async def _process_mom_chat_request(
             thinking_was_embedded_in_content,
             None,
         )
+
+
+def get_mom_model_config(model_name: str):
+    """Get configuration for a specific MoM model"""
+    model_conf = next((m for m in config.models if m.name == model_name), None)
+    if not model_conf:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": f"Model '{model_name}' not found.",
+                "type": "invalid_request_error",
+            },
+        )
+    return model_conf
+
 
 app.include_router(openai_router)
 app.include_router(metrics_router)

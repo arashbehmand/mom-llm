@@ -82,30 +82,48 @@ MoM Service uses an elegant **fan-out, fan-in architecture** for parallel proces
 - **🎭 Multi-Model Orchestration**: Query multiple LLMs in parallel with intelligent synthesis
 - **⚡ Real-Time Streaming**: Stream synthesized responses back to clients with low latency
 - **⚙️ Configuration-Driven**: Define everything in a single `config.yaml` file—no code changes needed
-- **📊 Langfuse Integration**: Built-in observability and tracing for production monitoring
+- **📊 Advanced Observability**:
+  - Built-in Langfuse integration for distributed tracing
+  - Comprehensive metrics API with cost tracking and usage analytics
+  - Detailed health check endpoints for monitoring system components
 - **🔒 Enterprise Security**: Bearer token authentication and flexible CORS policies
-- **🐳 Docker Ready**: One-command deployment with included `Dockerfile`
+- **🐳 Production Ready**:
+  - Multi-stage Docker builds with non-root users
+  - Docker Compose for local development
+  - Advanced health checks for orchestration
 - **💾 Response Caching**: Automatic LLM response caching to reduce costs and latency
+- **🧪 Comprehensive Testing**: Full test suite with pytest for reliability
 
 ## 📁 Project Structure
 
 ```
 mom-llm/
-├── 📄 Dockerfile              # Container configuration for deployment
+├── 📄 Dockerfile              # Multi-stage Docker build for production
+├── 🐳 docker-compose.yml      # Docker Compose for local development
 ├── ⚙️  config.yaml            # Main configuration (gitignored - use template)
 ├── 📋 config.yaml_template    # Configuration template with examples
 ├── 📦 requirements.txt        # Python dependencies
 ├── 📝 LICENSE                 # MIT License
 ├── 🔒 .env                    # Environment variables (gitignored)
-└── 📂 mom_service/
-    ├── 🎯 main.py            # FastAPI application & middleware
-    ├── ⚙️  config.py         # Configuration loader & models
-    ├── 🧠 core_logic.py      # Fan-out & synthesis engine
-    ├── 📞 llm_calls.py       # LLM communication via LiteLLM
-    └── 📂 endpoints/
-        ├── 📊 models.py      # Pydantic request/response models
-        ├── 🔌 openai_v1.py   # OpenAI-compatible endpoints
-        └── 🦙 ollama_api.py  # Ollama-compatible endpoints
+├── 📂 mom_service/
+│   ├── 🎯 main.py            # FastAPI application & middleware
+│   ├── ⚙️  config.py         # Configuration loader & models
+│   ├── 🧠 core_logic.py      # Fan-out & synthesis engine
+│   ├── 📞 llm_calls.py       # LLM communication via LiteLLM
+│   ├── 📊 metrics_db.py      # Metrics persistence & analytics
+│   ├── 🏥 health.py          # Health check utilities
+│   └── 📂 endpoints/
+│       ├── 📋 models.py      # Pydantic request/response models
+│       ├── 🔌 openai_v1.py   # OpenAI-compatible endpoints
+│       ├── 🦙 ollama_api.py  # Ollama-compatible endpoints
+│       └── 📈 metrics_api.py # Usage metrics API
+└── 📂 tests/
+    ├── ⚙️  conftest.py       # Pytest fixtures & configuration
+    ├── 🧪 test_config.py     # Configuration tests
+    ├── 🧪 test_core_logic.py # Core logic tests
+    ├── 🧪 test_llm_calls.py  # LLM integration tests
+    ├── 🧪 test_endpoints.py  # API endpoint tests
+    └── 🧪 test_health.py     # Health check tests
 ```
 
 ## 🚀 Quick Start
@@ -171,6 +189,21 @@ mom-llm/
 
 ### 🐳 Docker Deployment
 
+**Using Docker Compose (Recommended):**
+
+```bash
+# Start the service
+docker-compose up -d
+
+# View logs
+docker-compose logs -f mom-service
+
+# Stop the service
+docker-compose down
+```
+
+**Using Docker directly:**
+
 ```bash
 # Build the image
 docker build -t mom-service .
@@ -181,6 +214,7 @@ docker run -d \
   -p 8000:8000 \
   --env-file .env \
   -v $(pwd)/config.yaml:/app/config.yaml \
+  -v $(pwd)/data:/app/data \
   mom-service
 ```
 
@@ -337,6 +371,78 @@ Compatible with Ollama client applications.
 }
 ```
 
+### Metrics & Observability Endpoints
+
+#### `GET /v1/metrics/usage`
+Get aggregated usage metrics with cost tracking.
+
+**Headers:**
+- `Authorization: Bearer YOUR_API_TOKEN`
+
+**Query Parameters:**
+- `model_name` (optional): Filter by MoM model name
+- `start_time` (optional): Unix timestamp for time range filtering
+- `end_time` (optional): Unix timestamp for time range filtering
+- `call_type` (optional): Filter by call type (fanout, concluding)
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "filters": {
+    "model_name": "mom-creative",
+    "start_time": 1640000000.0
+  },
+  "metrics": {
+    "total_requests": 150,
+    "total_cost": 12.45,
+    "total_tokens": 125000,
+    "cache_hit_rate": 0.35,
+    "by_model": {
+      "mom-creative": {
+        "requests": 150,
+        "cost": 12.45,
+        "tokens": 125000
+      }
+    }
+  }
+}
+```
+
+#### `GET /v1/metrics/usage/raw`
+Get raw metric records for detailed analysis.
+
+**Headers:**
+- `Authorization: Bearer YOUR_API_TOKEN`
+
+**Query Parameters:**
+- Same as `/v1/metrics/usage`
+- `limit` (optional): Maximum records to return (default: 100)
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "count": 50,
+  "records": [
+    {
+      "timestamp": 1640000000.0,
+      "request_id": "uuid-here",
+      "mom_model_name": "mom-creative",
+      "llm_name": "gpt4",
+      "call_type": "fanout",
+      "prompt_tokens": 100,
+      "completion_tokens": 200,
+      "total_tokens": 300,
+      "cost": 0.015,
+      "duration_ms": 1234.5,
+      "status": "SUCCESS",
+      "cache_hit": false
+    }
+  ]
+}
+```
+
 ## 🎯 Advanced Features
 
 ### Thinking Context
@@ -383,15 +489,54 @@ uvicorn mom_service.main:app --reload --reload-include "config.yaml"
 
 The `--reload-include` flag watches `config.yaml` for changes and automatically reloads the service.
 
-### Health Check
+### Health Checks
 
-Verify the service is up:
-
+**Basic health check (fast):**
 ```bash
 curl http://localhost:8000/health
 ```
 
-### Testing
+**Detailed health check (includes component validation):**
+```bash
+curl http://localhost:8000/health/detailed
+```
+
+**Health check with LLM connectivity test:**
+```bash
+curl http://localhost:8000/health/detailed?check_llm=true
+```
+
+Returns status of:
+- Cache database connectivity
+- Metrics database connectivity
+- Configuration validity
+- LLM API connectivity (optional)
+
+### Running Tests
+
+Run the comprehensive test suite:
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage report
+pytest --cov=mom_service --cov-report=html
+
+# Run specific test file
+pytest tests/test_endpoints.py
+
+# Run with verbose output
+pytest -v
+```
+
+The test suite includes:
+- **Unit tests**: Configuration, core logic, utilities
+- **Integration tests**: LLM calls, caching, metrics
+- **API tests**: All endpoints with authentication
+- **Health check tests**: Component validation
+
+### Manual API Testing
 
 Test with curl:
 ```bash
@@ -434,14 +579,25 @@ for chunk in response:
 
 ## 🤝 Contributing
 
-Contributions are welcome! This project is part of my portfolio, but I'm happy to accept:
+Contributions are welcome! Whether you're fixing bugs, improving documentation, or proposing new features, your help is appreciated.
 
-- Bug fixes
-- Performance improvements
-- Documentation enhancements
-- New feature suggestions
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on:
 
-Please open an issue first to discuss major changes.
+- Setting up your development environment
+- Code style and standards
+- Running tests and quality checks
+- Submitting pull requests
+- Reporting issues
+
+Quick start for contributors:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes with tests
+4. Run the test suite (`pytest`)
+5. Commit your changes
+6. Push to your branch
+7. Open a Pull Request
 
 ## 📄 License
 

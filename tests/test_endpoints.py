@@ -47,20 +47,29 @@ class TestOpenAIEndpoints:
 
         assert response.status_code == 401
 
+    @patch('mom_service.main.get_mom_model_config')
     @patch('mom_service.main._process_mom_chat_request')
     def test_chat_completions_non_streaming(
-        self, mock_process, test_client, auth_headers
+        self, mock_process, mock_get_config, test_client, auth_headers
     ):
         """Test POST /v1/chat/completions for non-streaming"""
         # Mock the response
         mock_process.return_value = (
             "Paris is the capital of France.",  # final_content
             None,  # thinking_context
-            MagicMock(prompt_tokens=10, completion_tokens=20, total_tokens=30, cost=0.001),  # usage
+            {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30, "cost": 0.001},  # usage
             0.001,  # total_cost
             "test-mom-model",  # mom_model_name
             False,  # thinking_embedded
             None,  # trace_obj
+        )
+
+        # Mock the get_mom_model_config function to return a valid config
+        mock_get_config.return_value = MagicMock(
+            name="test-mom-model",
+            llms_to_query=["test-llm"],
+            concluding_llm="test-concluding-llm",
+            include_thinking_context=True
         )
 
         request_data = {

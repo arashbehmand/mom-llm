@@ -13,6 +13,14 @@ llm_definitions:
   - name: "ministral3b"
     model: "openrouter/mistralai/ministral-3b"
     api_key_env: "OPENROUTER_API_KEY"
+  # Example with custom pricing (optional - overrides LiteLLM default pricing)
+  # Useful for self-hosted models, custom agreements, or updating outdated pricing
+  # - name: "custom-llm"
+  #   model: "custom/my-model"
+  #   api_key_env: "CUSTOM_API_KEY"
+  #   pricing:
+  #     prompt_cost_per_token: 0.00001     # $0.01 per 1K prompt tokens
+  #     completion_cost_per_token: 0.00003  # $0.03 per 1K completion tokens
 
 prompt_definitions:
   - name: "synth_default"

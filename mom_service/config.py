@@ -5,11 +5,24 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 
+class PricingConfig(BaseModel):
+    """Custom pricing configuration for an LLM model"""
+    prompt_cost_per_token: Optional[float] = None  # Cost per prompt token (e.g., 0.00003 for $0.03/1K tokens)
+    completion_cost_per_token: Optional[float] = None  # Cost per completion token
+
+    def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
+        """Calculate total cost based on token counts"""
+        prompt_cost = (prompt_tokens * self.prompt_cost_per_token) if self.prompt_cost_per_token else 0.0
+        completion_cost = (completion_tokens * self.completion_cost_per_token) if self.completion_cost_per_token else 0.0
+        return prompt_cost + completion_cost
+
+
 class LLMDefinition(BaseModel):
     name: str  # Unique identifier for this LLM definition
     model: str
     api_key_env: str
     params: Optional[Dict[str, Any]] = None
+    pricing: Optional[PricingConfig] = None  # Custom pricing override
 
 
 class PromptDefinition(BaseModel):
