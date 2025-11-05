@@ -42,12 +42,18 @@ class RequestIDFilter(logging.Filter):
     """Add request_id to all log records"""
 
     def filter(self, record):
-        record.request_id = request_id_var.get("no-request-id")
+        try:
+            record.request_id = request_id_var.get()
+        except LookupError:
+            record.request_id = "startup"
         return True
 
     def get_request_id(self) -> str:
         """Return the current request id for use in tests/logging."""
-        return request_id_var.get("no-request-id")
+        try:
+            return request_id_var.get()
+        except LookupError:
+            return "startup"
 
 
 logging.basicConfig(
