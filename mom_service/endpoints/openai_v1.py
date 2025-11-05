@@ -14,7 +14,6 @@ from .models import (
     OpenAIChatCompletionResponseChoice,
 )
 
-
 config = load_config()
 openai_router = APIRouter(prefix="/v1", tags=["OpenAI"])
 

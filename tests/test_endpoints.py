@@ -7,8 +7,8 @@ Integration tests for mom_service API endpoints
 import os
 from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
