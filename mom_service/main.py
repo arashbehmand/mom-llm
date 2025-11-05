@@ -202,6 +202,9 @@ async def _process_mom_chat_request(
     llm_map = {ld.name: ld for ld in config.llm_definitions}
     thinking_was_embedded_in_content = False
 
+    # Get request_id from request state (set by middleware)
+    request_id = getattr(fastapi_request_obj.state, 'request_id', 'unknown')
+
     trace = None
     if LANGFUSE_CLIENT:
         trace = LANGFUSE_CLIENT.trace(
@@ -211,6 +214,7 @@ async def _process_mom_chat_request(
                 "model_requested": model_conf.name,
                 "num_messages": len(request_messages),
                 "streaming": stream,
+                "request_id": request_id,
             },
             input={
                 "model": mom_model_name,
@@ -222,7 +226,7 @@ async def _process_mom_chat_request(
             fastapi_request_obj.state.trace_obj = trace
 
     fanout_results_generator = _perform_fanout_calls(
-        model_conf, llm_map, request_messages, timeout, config, trace
+        model_conf, llm_map, request_messages, timeout, config, trace, request_id
     )
 
     intermediate_thinking_context: List[ThinkingContextItem] = []
@@ -355,7 +359,10 @@ async def _process_mom_chat_request(
                 options={
                     "trace": trace,
                     "gen_name_concl": gen_name_concl,
+                    "generation_name": gen_name_concl,
                     "stream": True,
+                    "request_id": request_id,
+                    "mom_model_name": mom_model_name,
                 },
             )
 
@@ -395,7 +402,10 @@ async def _process_mom_chat_request(
             options={
                 "trace": trace,
                 "gen_name_concl": gen_name_concl,
+                "generation_name": gen_name_concl,
                 "stream": False,
+                "request_id": request_id,
+                "mom_model_name": mom_model_name,
             },
         )
 

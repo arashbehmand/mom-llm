@@ -20,6 +20,7 @@ async def _perform_fanout_calls(
     timeout: int,
     config: MoMConfig,
     trace: Optional[Any] = None,
+    request_id: str = "unknown",
 ) -> AsyncGenerator[ThinkingContextItem, None]:
     """
     Perform fan-out LLM calls and yield intermediate thinking context items as they complete.
@@ -62,6 +63,8 @@ async def _perform_fanout_calls(
                 "trace": trace,
                 "generation_name": gen_name,
                 "stream": False,
+                "request_id": request_id,
+                "mom_model_name": model_conf.name,
             },
         )
         task = asyncio.create_task(call_and_return_with_def(ld, llm_call_coroutine))
@@ -177,6 +180,10 @@ async def _execute_concluding_call(
     """
     options = options or {}
     stream = options.get("stream", False)
+
+    # Ensure call_type is set for concluding calls
+    if "call_type" not in options:
+        options["call_type"] = "concluding"
 
     llm_call_generator = _call_lite_llm(
         concl_def,
