@@ -1,36 +1,64 @@
 import asyncio
 import html
 import logging
-from typing import Any, Dict, List, Optional, AsyncGenerator, Tuple
 
 # anext is available in Python 3.10+
 from builtins import anext
+from collections.abc import AsyncGenerator
+from typing import Any, Optional
 
-from .config import LLMDefinition, MoMConfig, ModelConfig as MoMModelConfig
-from .endpoints.models import ThinkingContextItem, UsageInfo
+from .config import LLMDefinition
+from .config import ModelConfig as MoMModelConfig
+from .config import MoMConfig
+from .endpoints.models import LLMCallParams, ThinkingContextItem, UsageInfo
 from .llm_calls import _call_lite_llm
 
 logger = logging.getLogger(__name__)
 
 
-async def _perform_fanout_calls(
-    model_conf: "MoMModelConfig",
-    llm_map: Dict[str, LLMDefinition],
-    request_messages: List[Dict[str, Any]],
+async def call_llm(
+    llm_def: LLMDefinition,
+    params_obj: LLMCallParams,
     timeout: int,
     config: MoMConfig,
-    trace: Optional[Any] = None,
-    request_id: str = "unknown",
+    options: Optional[dict] = None,
+) -> AsyncGenerator[Any, None]:
+    """
+    Wrapper that accepts an LLMCallParams object and delegates to the low-level
+    _call_lite_llm function. This reduces the number of positional/keyword
+    arguments passed around in call sites.
+    """
+    options = options or {}
+    # Ensure the stream flag from params_obj is available to the underlying call
+    options = {**options, "stream": params_obj.stream}
+    # Delegate to the low-level call with messages from params_obj
+    return _call_lite_llm(
+        llm_def,
+        params_obj.messages,
+        timeout,
+        config,
+        options=options,
+    )
+
+
+async def _perform_fanout_calls(
+    model_conf: "MoMModelConfig",
+    llm_map: dict[str, LLMDefinition],
+    request_messages: list[dict[str, Any]],
+    timeout: int,
+    config: MoMConfig,
+    options: Optional[dict[str, Any]] = None,
 ) -> AsyncGenerator[ThinkingContextItem, None]:
     """
     Perform fan-out LLM calls and yield intermediate thinking context items as they complete.
     Handles exceptions within the tasks gracefully.
+    options (dict) may contain 'trace' and 'request_id'.
     """
 
     # Helper to wrap the coroutine and capture the LLMDefinition
     async def call_and_return_with_def(
         llm_def: LLMDefinition, call_coroutine: AsyncGenerator[Any, None]
-    ) -> Tuple[LLMDefinition, Any]:
+    ) -> tuple[LLMDefinition, Any]:
         try:
             # For non-streaming fanout, we expect one result or nothing on error
             result = await anext(call_coroutine, None)
@@ -39,6 +67,9 @@ async def _perform_fanout_calls(
             # If the LLM call itself raises an exception, capture it here
             return (llm_def, e)
 
+    options = options or {}
+    trace = options.get("trace")
+    request_id = options.get("request_id", "unknown")
     tasks = []
     for idx, llm_name_to_query in enumerate(model_conf.llms_to_query):
         ld = llm_map.get(llm_name_to_query)
@@ -53,16 +84,24 @@ async def _perform_fanout_calls(
             continue
 
         gen_name = f"fanout-{idx}-{ld.name}" if trace else None
-        llm_call_coroutine = _call_lite_llm(
+        # Use LLMCallParams to encapsulate model/messages/stream settings
+        llm_call_params = LLMCallParams(
+            model=ld.model,
+            messages=request_messages,
+            temperature=ld.params.get("temperature") if isinstance(ld.params, dict) else None,
+            max_tokens=ld.params.get("max_tokens") if isinstance(ld.params, dict) else None,
+            top_p=ld.params.get("top_p") if isinstance(ld.params, dict) else None,
+            stream=False,
+        )
+        llm_call_coroutine = await call_llm(
             ld,
-            request_messages,
+            llm_call_params,
             timeout,
             config,
             options={
                 "call_type": "fanout",
                 "trace": trace,
                 "generation_name": gen_name,
-                "stream": False,
                 "request_id": request_id,
                 "mom_model_name": model_conf.name,
             },
@@ -73,41 +112,44 @@ async def _perform_fanout_calls(
     for future in asyncio.as_completed(tasks):
         ld_fanout, result_or_exception = await future
         content_str = ""
-        cost = None
-        current_usage_info = UsageInfo(
-            prompt_tokens=0, completion_tokens=0, total_tokens=0
-        )
+        current_usage_info = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
 
         if isinstance(result_or_exception, Exception):
             content_str = f"Error: Call to {ld_fanout.model} failed. Details: {html.escape(str(result_or_exception))}"
-            logger.error(
-                f"Fan-out call to {ld_fanout.name} failed: {result_or_exception}"
-            )
+            logger.error(f"Fan-out call to {ld_fanout.name} failed: {result_or_exception}")
         elif result_or_exception is None:
             content_str = f"Error: Call to {ld_fanout.model} returned no response (likely due to an internal error or timeout)."
             logger.error(f"Fan-out call to {ld_fanout.name} returned None.")
         else:
             current_res_obj_fanout = result_or_exception
-            if (
-                hasattr(current_res_obj_fanout, "choices")
-                and current_res_obj_fanout.choices
+            has_choices = hasattr(current_res_obj_fanout, "choices") and bool(
+                current_res_obj_fanout.choices
+            )
+            has_message = (
+                has_choices
                 and hasattr(current_res_obj_fanout.choices[0], "message")
-                and current_res_obj_fanout.choices[0].message
+                and bool(current_res_obj_fanout.choices[0].message)
+            )
+            has_content = (
+                has_message
                 and hasattr(current_res_obj_fanout.choices[0].message, "content")
                 and current_res_obj_fanout.choices[0].message.content is not None
-            ):
+            )
+            if has_choices and has_message and has_content:
                 content_str = current_res_obj_fanout.choices[0].message.content
                 # Use from_litellm_usage helper for consistent cost tracking
                 # Check if response is cached
-                is_cached = getattr(current_res_obj_fanout, '_is_cached', False)
+                is_cached = getattr(current_res_obj_fanout, "_is_cached", False)
                 current_usage_info = UsageInfo.from_litellm_usage(
                     current_res_obj_fanout.usage,
                     response_obj=current_res_obj_fanout,
                     is_cached=is_cached,
-                    pricing_config=ld_fanout.pricing
+                    pricing_config=ld_fanout.pricing,
                 )
             else:
-                content_str = f"Warning: Call to {ld_fanout.model} returned an empty or malformed response."
+                content_str = (
+                    f"Warning: Call to {ld_fanout.model} returned an empty or malformed response."
+                )
 
         yield ThinkingContextItem(
             model=ld_fanout.model, content=str(content_str), usage=current_usage_info
@@ -115,11 +157,11 @@ async def _perform_fanout_calls(
 
 
 def _prepare_concluding_messages(
-    request_messages: List[Dict[str, Any]],
-    intermediate_thinking_context: List[ThinkingContextItem],
+    request_messages: list[dict[str, Any]],
+    intermediate_thinking_context: list[ThinkingContextItem],
     model_conf: "MoMModelConfig",
     config: MoMConfig,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Prepare messages for the concluding LLM.
     """
@@ -128,8 +170,7 @@ def _prepare_concluding_messages(
     successful_fanout_items = [
         item
         for item in intermediate_thinking_context
-        if not item.content.startswith("Error:")
-        and not item.content.startswith("Warning:")
+        if not item.content.startswith("Error:") and not item.content.startswith("Warning:")
     ]
 
     if not successful_fanout_items:
@@ -148,9 +189,7 @@ def _prepare_concluding_messages(
             }
         )
         for item_ctx in successful_fanout_items:
-            concl_msgs_for_llm.append(
-                {"role": "assistant", "content": item_ctx.content}
-            )
+            concl_msgs_for_llm.append({"role": "assistant", "content": item_ctx.content})
 
     if model_conf.concluding_prompt:
         prompt_defs = (
@@ -169,7 +208,7 @@ def _prepare_concluding_messages(
 
 async def _execute_concluding_call(
     concl_def: LLMDefinition,
-    concl_msgs_for_llm: List[Dict[str, Any]],
+    concl_msgs_for_llm: list[dict[str, Any]],
     timeout: int,
     config: MoMConfig,
     options: Optional[dict] = None,
@@ -186,22 +225,28 @@ async def _execute_concluding_call(
     if "call_type" not in options:
         options["call_type"] = "concluding"
 
-    llm_call_generator = _call_lite_llm(
-        concl_def,
-        concl_msgs_for_llm,
-        timeout,
-        config,
-        options=options,
+    # Use LLMCallParams wrapper for concluding calls
+    concl_params = LLMCallParams(
+        model=concl_def.model,
+        messages=concl_msgs_for_llm,
+        temperature=(
+            concl_def.params.get("temperature") if isinstance(concl_def.params, dict) else None
+        ),
+        max_tokens=(
+            concl_def.params.get("max_tokens") if isinstance(concl_def.params, dict) else None
+        ),
+        top_p=concl_def.params.get("top_p") if isinstance(concl_def.params, dict) else None,
+        stream=stream,
     )
+    llm_call_generator = await call_llm(concl_def, concl_params, timeout, config, options=options)
 
     if stream:
         return llm_call_generator
-    else:
-        return await anext(llm_call_generator, None)
+    return await anext(llm_call_generator, None)
 
 
 def _calculate_and_log_costs(
-    fanout_context: List[ThinkingContextItem],
+    fanout_context: list[ThinkingContextItem],
     concluding_llm_usage_info: Optional[UsageInfo],
 ) -> float:
     """

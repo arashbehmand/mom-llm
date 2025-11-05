@@ -2,19 +2,19 @@
 Integration tests for mom_service.llm_calls module
 """
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-import respx
-from httpx import Response
+from unittest.mock import AsyncMock, patch
 
+import pytest
+import respx
+
+from mom_service.core_logic import call_llm
+from mom_service.endpoints.models import LLMCallParams
 from mom_service.llm_calls import (
-    _init_cache_db,
-    _generate_cache_key,
     _cache_response,
+    _generate_cache_key,
     _get_cached_response,
-    _call_lite_llm,
+    _init_cache_db,
 )
-from mom_service.endpoints.models import UsageInfo
 
 
 class TestCacheDatabase:
@@ -63,7 +63,7 @@ class TestCacheOperations:
         cached = _get_cached_response(cache_key)
 
         assert cached is not None
-        assert hasattr(cached, '_is_cached')
+        assert hasattr(cached, "_is_cached")
         assert cached._is_cached is True
         assert cached.id == mock_litellm_response.id
         assert cached.model == mock_litellm_response.model
@@ -81,22 +81,39 @@ class TestCallLiteLLM:
 
     @respx.mock
     async def test_call_litellm_success(
-        self, sample_llm_definition, sample_request_messages, sample_mom_config, mock_litellm_response
+        self,
+        sample_llm_definition,
+        sample_request_messages,
+        sample_mom_config,
+        mock_litellm_response,
     ):
         """Test successful LLM call"""
-        with patch('mom_service.llm_calls.litellm.acompletion', new_callable=AsyncMock) as mock_acompletion:
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion:
             mock_acompletion.return_value = mock_litellm_response
 
-            result_gen = _call_lite_llm(
+            params = LLMCallParams(
+                model=sample_llm_definition.model,
+                messages=sample_request_messages,
+                temperature=(
+                    sample_llm_definition.params.get("temperature")
+                    if isinstance(sample_llm_definition.params, dict)
+                    else None
+                ),
+                stream=False,
+            )
+
+            result_gen = call_llm(
                 sample_llm_definition,
-                sample_request_messages,
+                params,
                 timeout=30,
                 config=sample_mom_config,
                 options={
                     "request_id": "test-request-123",
                     "mom_model_name": "test-model",
                     "call_type": "fanout",
-                }
+                },
             )
 
             result = await anext(result_gen)
@@ -108,33 +125,61 @@ class TestCallLiteLLM:
 
     @respx.mock
     async def test_call_litellm_with_cache_hit(
-        self, sample_llm_definition, sample_request_messages, sample_mom_config, mock_litellm_response
+        self,
+        sample_llm_definition,
+        sample_request_messages,
+        sample_mom_config,
+        mock_litellm_response,
     ):
         """Test LLM call with cache hit"""
         # Enable caching
         sample_mom_config.service.cache_enabled = True
 
         # First call - should cache
-        with patch('mom_service.llm_calls.litellm.acompletion', new_callable=AsyncMock) as mock_acompletion:
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion:
             mock_acompletion.return_value = mock_litellm_response
 
-            result_gen = _call_lite_llm(
+            params1 = LLMCallParams(
+                model=sample_llm_definition.model,
+                messages=sample_request_messages,
+                temperature=(
+                    sample_llm_definition.params.get("temperature")
+                    if isinstance(sample_llm_definition.params, dict)
+                    else None
+                ),
+                stream=False,
+            )
+            result_gen = call_llm(
                 sample_llm_definition,
-                sample_request_messages,
+                params1,
                 timeout=30,
                 config=sample_mom_config,
-                options={"request_id": "test-1", "mom_model_name": "test"}
+                options={"request_id": "test-1", "mom_model_name": "test"},
             )
             await anext(result_gen)
 
         # Second call - should hit cache
-        with patch('mom_service.llm_calls.litellm.acompletion', new_callable=AsyncMock) as mock_acompletion_2:
-            result_gen2 = _call_lite_llm(
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion_2:
+            params2 = LLMCallParams(
+                model=sample_llm_definition.model,
+                messages=sample_request_messages,
+                temperature=(
+                    sample_llm_definition.params.get("temperature")
+                    if isinstance(sample_llm_definition.params, dict)
+                    else None
+                ),
+                stream=False,
+            )
+            result_gen2 = call_llm(
                 sample_llm_definition,
-                sample_request_messages,
+                params2,
                 timeout=30,
                 config=sample_mom_config,
-                options={"request_id": "test-2", "mom_model_name": "test"}
+                options={"request_id": "test-2", "mom_model_name": "test"},
             )
             cached_result = await anext(result_gen2)
 
@@ -142,27 +187,39 @@ class TestCallLiteLLM:
             mock_acompletion_2.assert_not_called()
 
             # Should have the cached flag
-            assert hasattr(cached_result, '_is_cached')
-            assert cached_result._is_cached is True
+            assert hasattr(cached_result, "_is_cached")
+            assert cached_result._is_cached is True  # pylint: disable=protected-access
 
     @respx.mock
     async def test_call_litellm_failure(
         self, sample_llm_definition, sample_request_messages, sample_mom_config
     ):
         """Test LLM call failure handling"""
-        with patch('mom_service.llm_calls.litellm.acompletion', new_callable=AsyncMock) as mock_acompletion:
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion:
             mock_acompletion.side_effect = Exception("API Error")
 
-            result_gen = _call_lite_llm(
+            params = LLMCallParams(
+                model=sample_llm_definition.model,
+                messages=sample_request_messages,
+                temperature=(
+                    sample_llm_definition.params.get("temperature")
+                    if isinstance(sample_llm_definition.params, dict)
+                    else None
+                ),
+                stream=False,
+            )
+            result_gen = call_llm(
                 sample_llm_definition,
-                sample_request_messages,
+                params,
                 timeout=30,
                 config=sample_mom_config,
                 options={
                     "request_id": "test-request-fail",
                     "mom_model_name": "test-model",
                     "call_type": "fanout",
-                }
+                },
             )
 
             with pytest.raises(Exception) as exc_info:
@@ -172,16 +229,32 @@ class TestCallLiteLLM:
 
     @respx.mock
     async def test_call_litellm_with_trace(
-        self, sample_llm_definition, sample_request_messages, sample_mom_config,
-        mock_litellm_response, mock_langfuse_client
+        self,
+        sample_llm_definition,
+        sample_request_messages,
+        sample_mom_config,
+        mock_litellm_response,
+        mock_langfuse_client,
     ):
         """Test LLM call with Langfuse tracing"""
-        with patch('mom_service.llm_calls.litellm.acompletion', new_callable=AsyncMock) as mock_acompletion:
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion:
             mock_acompletion.return_value = mock_litellm_response
 
-            result_gen = _call_lite_llm(
+            params = LLMCallParams(
+                model=sample_llm_definition.model,
+                messages=sample_request_messages,
+                temperature=(
+                    sample_llm_definition.params.get("temperature")
+                    if isinstance(sample_llm_definition.params, dict)
+                    else None
+                ),
+                stream=False,
+            )
+            result_gen = call_llm(
                 sample_llm_definition,
-                sample_request_messages,
+                params,
                 timeout=30,
                 config=sample_mom_config,
                 options={
@@ -190,7 +263,7 @@ class TestCallLiteLLM:
                     "call_type": "fanout",
                     "trace": mock_langfuse_client.trace.return_value,
                     "generation_name": "test-generation",
-                }
+                },
             )
 
             result = await anext(result_gen)
@@ -204,5 +277,8 @@ class TestCallLiteLLM:
 try:
     from builtins import anext
 except ImportError:
+
     async def anext(ait):
-        return await ait.__anext__()
+        # Use getattr to avoid a direct dunder call which pylint flags as unnecessary-dunder-call
+        func = ait.__anext__
+        return await func()

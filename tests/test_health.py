@@ -2,10 +2,9 @@
 Tests for health check endpoints and utilities
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-import os
-import sqlite3
-from unittest.mock import patch, AsyncMock, MagicMock
 
 from mom_service.health import (
     check_database_health,
@@ -56,7 +55,9 @@ class TestLLMConnectivity:
     @pytest.mark.asyncio
     async def test_check_llm_connectivity_success(self, sample_mom_config, mock_litellm_response):
         """Test successful LLM connectivity check"""
-        with patch('mom_service.health.litellm.acompletion', new_callable=AsyncMock) as mock_completion:
+        with patch(
+            "mom_service.health.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_completion:
             mock_completion.return_value = mock_litellm_response
 
             result = await check_llm_connectivity(sample_mom_config, timeout=10)
@@ -70,7 +71,9 @@ class TestLLMConnectivity:
     @pytest.mark.asyncio
     async def test_check_llm_connectivity_failure(self, sample_mom_config):
         """Test LLM connectivity check with API failure"""
-        with patch('mom_service.health.litellm.acompletion', new_callable=AsyncMock) as mock_completion:
+        with patch(
+            "mom_service.health.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_completion:
             mock_completion.side_effect = Exception("API connection failed")
 
             result = await check_llm_connectivity(sample_mom_config, timeout=10)
@@ -82,7 +85,9 @@ class TestLLMConnectivity:
     @pytest.mark.asyncio
     async def test_check_llm_connectivity_empty_response(self, sample_mom_config):
         """Test LLM connectivity check with empty response"""
-        with patch('mom_service.health.litellm.acompletion', new_callable=AsyncMock) as mock_completion:
+        with patch(
+            "mom_service.health.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_completion:
             # Create a response with no choices
             empty_response = MagicMock()
             empty_response.choices = []
@@ -98,11 +103,7 @@ class TestLLMConnectivity:
         """Test LLM connectivity check when no LLMs are configured"""
         from mom_service.config import MoMConfig, ServiceConfig
 
-        empty_config = MoMConfig(
-            llm_definitions=[],
-            models=[],
-            service=ServiceConfig()
-        )
+        empty_config = MoMConfig(llm_definitions=[], models=[], service=ServiceConfig())
 
         result = await check_llm_connectivity(empty_config)
 
@@ -116,9 +117,11 @@ class TestComprehensiveHealthCheck:
     @pytest.mark.asyncio
     async def test_comprehensive_health_check_without_llm(self, sample_mom_config, temp_metrics_db):
         """Test comprehensive health check without LLM connectivity test"""
-        with patch('mom_service.health.os.path.join') as mock_join:
+        with patch("mom_service.health.os.path.join") as mock_join:
             # Mock database paths to use our test database
-            mock_join.side_effect = lambda *args: temp_metrics_db if "metrics" in str(args) else temp_metrics_db
+            mock_join.side_effect = lambda *args: (
+                temp_metrics_db if "metrics" in str(args) else temp_metrics_db
+            )
 
             result = await perform_comprehensive_health_check(sample_mom_config, check_llm=False)
 
@@ -131,10 +134,16 @@ class TestComprehensiveHealthCheck:
             assert "llm_connectivity" not in result["checks"]
 
     @pytest.mark.asyncio
-    async def test_comprehensive_health_check_with_llm(self, sample_mom_config, temp_metrics_db, mock_litellm_response):
+    async def test_comprehensive_health_check_with_llm(
+        self, sample_mom_config, temp_metrics_db, mock_litellm_response
+    ):
         """Test comprehensive health check with LLM connectivity test"""
-        with patch('mom_service.health.os.path.join') as mock_join, \
-             patch('mom_service.health.litellm.acompletion', new_callable=AsyncMock) as mock_completion:
+        with (
+            patch("mom_service.health.os.path.join") as mock_join,
+            patch(
+                "mom_service.health.litellm.acompletion", new_callable=AsyncMock
+            ) as mock_completion,
+        ):
 
             mock_join.side_effect = lambda *args: temp_metrics_db
             mock_completion.return_value = mock_litellm_response
@@ -148,12 +157,14 @@ class TestComprehensiveHealthCheck:
     @pytest.mark.asyncio
     async def test_comprehensive_health_check_degraded_status(self, sample_mom_config):
         """Test that degraded status is returned when a component is unhealthy"""
-        with patch('mom_service.health.check_database_health', new_callable=AsyncMock) as mock_db_check:
+        with patch(
+            "mom_service.health.check_database_health", new_callable=AsyncMock
+        ) as mock_db_check:
             # Simulate unhealthy cache database
             mock_db_check.return_value = {
                 "status": "unhealthy",
                 "name": "cache",
-                "error": "Connection failed"
+                "error": "Connection failed",
             }
 
             result = await perform_comprehensive_health_check(sample_mom_config, check_llm=False)
@@ -165,10 +176,12 @@ class TestHealthEndpoints:
     """Tests for health check HTTP endpoints"""
 
     @pytest.fixture
-    def test_client(self, mock_env_vars):
+    def test_client(self):
         """Fixture providing a test client for the FastAPI app"""
-        from mom_service.main import app
         from fastapi.testclient import TestClient
+
+        from mom_service.main import app
+
         return TestClient(app)
 
     def test_basic_health_endpoint(self, test_client):
@@ -190,13 +203,13 @@ class TestHealthEndpoints:
 
     def test_detailed_health_with_llm_check(self, test_client):
         """Test GET /health/detailed with LLM check parameter"""
-        with patch('mom_service.main.perform_comprehensive_health_check', new_callable=AsyncMock) as mock_health:
+        with patch(
+            "mom_service.main.perform_comprehensive_health_check", new_callable=AsyncMock
+        ) as mock_health:
             mock_health.return_value = {
                 "status": "healthy",
                 "timestamp": 1234567890,
-                "checks": {
-                    "llm_connectivity": {"status": "healthy"}
-                }
+                "checks": {"llm_connectivity": {"status": "healthy"}},
             }
 
             response = test_client.get("/health/detailed?check_llm=true")

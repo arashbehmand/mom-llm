@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Literal, Optional
+from dataclasses import dataclass
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -7,7 +8,7 @@ from pydantic import BaseModel
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
-    images: Optional[List[str]] = None  # For multimodal models
+    images: Optional[list[str]] = None  # For multimodal models
 
 
 class UsageInfo(BaseModel):
@@ -22,7 +23,7 @@ class UsageInfo(BaseModel):
         usage: Any,
         response_obj: Any = None,
         is_cached: bool = False,
-        pricing_config: Any = None
+        pricing_config: Any = None,
     ) -> "UsageInfo":
         """
         Create UsageInfo from LiteLLM usage object or response.
@@ -37,7 +38,12 @@ class UsageInfo(BaseModel):
             UsageInfo instance with tokens and cost
         """
         if usage is None:
-            return cls(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=0.0 if is_cached else None)
+            return cls(
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                cost=0.0 if is_cached else None,
+            )
 
         # Extract token counts
         if isinstance(usage, dict):
@@ -61,6 +67,7 @@ class UsageInfo(BaseModel):
         elif response_obj is not None:
             try:
                 import litellm
+
                 calculated_cost = litellm.completion_cost(completion_response=response_obj)
                 # Ensure cost is always a number or None, never something else
                 cost = float(calculated_cost) if calculated_cost is not None else 0.0
@@ -74,6 +81,21 @@ class UsageInfo(BaseModel):
             total_tokens=total_tokens,
             cost=cost,
         )
+
+
+@dataclass
+class LLMCallParams:
+    """
+    Dataclass to encapsulate LLM call parameters so they can be passed
+    around as a single object instead of multiple positional arguments.
+    """
+
+    model: str
+    messages: list[dict[str, Any]]
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    top_p: Optional[float] = None
+    stream: bool = False
 
 
 class ThinkingContextItem(BaseModel):
@@ -96,13 +118,13 @@ class OpenAIErrorResponse(BaseModel):
 
 class OpenAIChatCompletionRequest(BaseModel):
     model: str
-    messages: List[ChatMessage]
+    messages: list[ChatMessage]
     max_tokens: Optional[int] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     n: Optional[int] = None
     stream: Optional[bool] = False
-    stop: Optional[List[str]] = None
+    stop: Optional[list[str]] = None
 
 
 class OpenAIChatCompletionResponseChoice(BaseModel):
@@ -116,18 +138,18 @@ class OpenAIChatCompletionResponse(BaseModel):
     object: str = "chat.completion"
     created: int
     model: str
-    choices: List[OpenAIChatCompletionResponseChoice]
+    choices: list[OpenAIChatCompletionResponseChoice]
     usage: Optional[UsageInfo] = None
-    thinking_context: Optional[List[ThinkingContextItem]] = None
+    thinking_context: Optional[list[ThinkingContextItem]] = None
     total_cost_usd: Optional[float] = None
 
 
 # Ollama Specific Models
 class OllamaChatRequest(BaseModel):
     model: str
-    messages: List[ChatMessage]
+    messages: list[ChatMessage]
     format: Optional[Literal["json"]] = None
-    options: Optional[Dict[str, Any]] = None
+    options: Optional[dict[str, Any]] = None
     stream: Optional[bool] = False
     keep_alive: Optional[str] = None
 
@@ -135,7 +157,7 @@ class OllamaChatRequest(BaseModel):
 class OllamaModelDetails(BaseModel):
     format: Optional[str] = "MoM-internal"
     family: Optional[str] = "MoM"
-    families: Optional[List[str]] = ["MoM"]
+    families: Optional[list[str]] = ["MoM"]
     parameter_size: Optional[str] = "N/A"
     quantization_level: Optional[str] = "N/A"
 
@@ -161,7 +183,7 @@ class OllamaShowResponse(BaseModel):
 
 
 class OllamaTagsResponse(BaseModel):
-    models: List[OllamaTagInfo]
+    models: list[OllamaTagInfo]
 
 
 class OllamaChatResponse(BaseModel):

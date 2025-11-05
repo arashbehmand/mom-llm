@@ -70,11 +70,10 @@ async def get_openai_models(request: Request):
 
 
 @openai_router.post("/chat/completions", response_model=OpenAIChatCompletionResponse)
-async def chat_completions_openai(
-    req_data: OpenAIChatCompletionRequest, request: Request
-):
+async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request: Request):
     check_token(request)
     from ..main import get_mom_model_config
+
     model_conf_check = get_mom_model_config(req_data.model)
     if not model_conf_check:
         raise HTTPException(
@@ -89,6 +88,7 @@ async def chat_completions_openai(
 
     # Streaming path
     if req_data.stream:
+
         async def event_stream():
             response_id = f"mom-oai-{req_data.model}-{str(uuid.uuid4())}"
             complete_content = ""
@@ -107,7 +107,11 @@ async def chat_completions_openai(
 
                 async for chunk_dict in the_generator:
                     if isinstance(chunk_dict, dict):
-                        if "choices" in chunk_dict and isinstance(chunk_dict["choices"], list) and len(chunk_dict["choices"]) > 0:
+                        if (
+                            "choices" in chunk_dict
+                            and isinstance(chunk_dict["choices"], list)
+                            and len(chunk_dict["choices"]) > 0
+                        ):
                             choice = chunk_dict["choices"][0]
                             delta = choice.get("delta")
 
@@ -119,9 +123,13 @@ async def chat_completions_openai(
                         elif "error" in chunk_dict:
                             yield f"data: {json.dumps(chunk_dict)}\n\n"
                         else:
-                            logger.warning(f"Skipping unexpected chunk format from _process_mom_chat_request: {chunk_dict}")
+                            logger.warning(
+                                f"Skipping unexpected chunk format from _process_mom_chat_request: {chunk_dict}"
+                            )
                     else:
-                        logger.warning(f"Received unexpected chunk type from _process_mom_chat_request: {type(chunk_dict)}")
+                        logger.warning(
+                            f"Received unexpected chunk type from _process_mom_chat_request: {type(chunk_dict)}"
+                        )
 
                 if trace_obj and complete_content:
                     try:
@@ -132,10 +140,7 @@ async def chat_completions_openai(
                             choices=[
                                 OpenAIChatCompletionResponseChoice(
                                     index=0,
-                                    message=ChatMessage(
-                                        role="assistant",
-                                        content=complete_content
-                                    )
+                                    message=ChatMessage(role="assistant", content=complete_content),
                                 )
                             ],
                         )
@@ -182,8 +187,7 @@ async def chat_completions_openai(
             model=mom_model_name,
             choices=[
                 OpenAIChatCompletionResponseChoice(
-                    index=0,
-                    message=ChatMessage(role="assistant", content=final_content or "")
+                    index=0, message=ChatMessage(role="assistant", content=final_content or "")
                 )
             ],
             usage=usage,

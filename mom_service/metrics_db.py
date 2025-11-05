@@ -9,7 +9,8 @@ import logging
 import os
 import sqlite3
 import time
-from typing import Dict, List, Optional, Any
+from dataclasses import dataclass
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -70,40 +71,39 @@ def _init_metrics_db():
         logger.error(f"Error initializing SQLite metrics database: {e}", exc_info=True)
 
 
-# Initialize the database on module import
-_init_metrics_db()
+# Public alias for tests / external callers to avoid protected-access lint warnings
+init_metrics_db = _init_metrics_db
 
 
-def insert_metric_record(
-    request_id: str,
-    mom_model_name: str,
-    llm_name: str,
-    call_type: str,  # "fanout" or "concluding"
-    prompt_tokens: int = 0,
-    completion_tokens: int = 0,
-    total_tokens: int = 0,
-    cost: Optional[float] = None,
-    duration_ms: Optional[float] = None,
-    status: str = "SUCCESS",  # SUCCESS, FAILED, CACHED
-    error_message: Optional[str] = None,
-    cache_hit: bool = False,
-):
+@dataclass
+class MetricRecord:
+    request_id: str
+    mom_model_name: str
+    llm_name: str
+    call_type: str  # "fanout" or "concluding"
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost: Optional[float] = None
+    duration_ms: Optional[float] = None
+    status: str = "SUCCESS"  # SUCCESS, FAILED, CACHED
+    error_message: Optional[str] = None
+    cache_hit: bool = False
+
+
+@dataclass
+class Timestamps:
+    start_time: Optional[float] = None
+    first_token_time: Optional[float] = None
+    end_time: Optional[float] = None
+
+
+def insert_metric_record(record: MetricRecord) -> None:
     """
-    Insert a metric record into the usage_metrics table.
+    Insert a MetricRecord into the usage_metrics table.
 
     Args:
-        request_id: Unique identifier for the request
-        mom_model_name: Name of the MoM model being used
-        llm_name: Name of the underlying LLM
-        call_type: Type of call ("fanout" or "concluding")
-        prompt_tokens: Number of prompt tokens used
-        completion_tokens: Number of completion tokens generated
-        total_tokens: Total tokens (prompt + completion)
-        cost: Cost in USD
-        duration_ms: Duration of the call in milliseconds
-        status: Status of the call (SUCCESS, FAILED, CACHED)
-        error_message: Error message if call failed
-        cache_hit: Whether this was a cache hit
+        record: MetricRecord instance containing all metric fields.
     """
     try:
         with sqlite3.connect(METRICS_DB_PATH) as conn:
@@ -117,29 +117,29 @@ def insert_metric_record(
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    request_id,
+                    record.request_id,
                     time.time(),
-                    mom_model_name,
-                    llm_name,
-                    call_type,
-                    prompt_tokens,
-                    completion_tokens,
-                    total_tokens,
-                    cost,
-                    duration_ms,
-                    status,
-                    error_message,
-                    1 if cache_hit else 0,
+                    record.mom_model_name,
+                    record.llm_name,
+                    record.call_type,
+                    record.prompt_tokens,
+                    record.completion_tokens,
+                    record.total_tokens,
+                    record.cost,
+                    record.duration_ms,
+                    record.status,
+                    record.error_message,
+                    1 if record.cache_hit else 0,
                 ),
             )
             conn.commit()
             logger.debug(
-                f"Inserted metric record: request_id={request_id}, llm={llm_name}, "
-                f"type={call_type}, status={status}, tokens={total_tokens}, cost=${cost}"
+                f"Inserted metric record: request_id={record.request_id}, llm={record.llm_name}, "
+                f"type={record.call_type}, status={record.status}, tokens={record.total_tokens}, cost=${record.cost}"
             )
     except Exception as e:
         logger.error(
-            f"Error inserting metric record for request_id={request_id}: {e}",
+            f"Error inserting metric record for request_id={getattr(record, 'request_id', None)}: {e}",
             exc_info=True,
         )
 
@@ -150,7 +150,7 @@ def query_metrics(
     model_name: Optional[str] = None,
     call_type: Optional[str] = None,
     limit: int = 1000,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Query metrics from the database.
 
@@ -204,7 +204,7 @@ def get_aggregated_metrics(
     start_time: Optional[float] = None,
     end_time: Optional[float] = None,
     model_name: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get aggregated statistics from the metrics database.
 

@@ -2,13 +2,9 @@
 Pytest configuration and shared fixtures for MoM Service tests
 """
 
-import os
-import tempfile
-from typing import Dict, Any
-from unittest.mock import Mock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
 
 
 @pytest.fixture
@@ -28,37 +24,25 @@ def mock_langfuse_client():
 def sample_llm_definition():
     """Fixture providing a sample LLM definition"""
     from mom_service.config import LLMDefinition
+
     return LLMDefinition(
         name="test-llm",
         model="gpt-3.5-turbo",
         api_key_env="OPENAI_API_KEY",
-        params={"temperature": 0.7}
+        params={"temperature": 0.7},
     )
 
 
 @pytest.fixture
 def sample_mom_config():
     """Fixture providing a sample MoM configuration"""
-    from mom_service.config import (
-        LLMDefinition,
-        ModelConfig,
-        MoMConfig,
-        ServiceConfig,
-    )
+    from mom_service.config import LLMDefinition, ModelConfig, MoMConfig, ServiceConfig
 
     return MoMConfig(
         llm_definitions=[
+            LLMDefinition(name="gpt4", model="gpt-4", api_key_env="OPENAI_API_KEY", params={}),
             LLMDefinition(
-                name="gpt4",
-                model="gpt-4",
-                api_key_env="OPENAI_API_KEY",
-                params={}
-            ),
-            LLMDefinition(
-                name="gpt35",
-                model="gpt-3.5-turbo",
-                api_key_env="OPENAI_API_KEY",
-                params={}
+                name="gpt35", model="gpt-3.5-turbo", api_key_env="OPENAI_API_KEY", params={}
             ),
         ],
         models=[
@@ -66,29 +50,23 @@ def sample_mom_config():
                 name="test-mom-model",
                 llms_to_query=["gpt4", "gpt35"],
                 concluding_llm="gpt4",
-                include_thinking_context=True
+                include_thinking_context=True,
             )
         ],
-        service=ServiceConfig(
-            timeout_seconds=30,
-            cache_enabled=False,
-            max_llm_retries=2
-        )
+        service=ServiceConfig(timeout_seconds=30, cache_enabled=False, max_llm_retries=2),
     )
 
 
 @pytest.fixture
 def sample_request_messages():
     """Fixture providing sample chat messages"""
-    return [
-        {"role": "user", "content": "What is the capital of France?"}
-    ]
+    return [{"role": "user", "content": "What is the capital of France?"}]
 
 
 @pytest.fixture
 def mock_litellm_response():
     """Fixture providing a mocked LiteLLM response"""
-    from litellm.utils import ModelResponse, Choices, Message, Usage
+    from litellm.utils import Choices, Message, ModelResponse, Usage
 
     return ModelResponse(
         id="test-response-id",
@@ -96,20 +74,13 @@ def mock_litellm_response():
             Choices(
                 finish_reason="stop",
                 index=0,
-                message=Message(
-                    content="Paris is the capital of France.",
-                    role="assistant"
-                )
+                message=Message(content="Paris is the capital of France.", role="assistant"),
             )
         ],
         created=1234567890,
         model="gpt-4",
-        usage=Usage(
-            prompt_tokens=10,
-            completion_tokens=20,
-            total_tokens=30
-        ),
-        object="chat.completion"
+        usage=Usage(prompt_tokens=10, completion_tokens=20, total_tokens=30),
+        object="chat.completion",
     )
 
 
@@ -154,14 +125,15 @@ def mock_env_vars(monkeypatch):
 
 
 @pytest.fixture
-def temp_metrics_db(tmp_path, monkeypatch):
+def temp_metrics_db(tmp_path):
     """Fixture creating a temporary metrics database"""
     db_path = tmp_path / "test_metrics.db"
     # Patch the METRICS_DB_PATH before importing metrics_db
-    import mom_service.metrics_db as metrics_db
+    from mom_service import metrics_db
+
     original_path = metrics_db.METRICS_DB_PATH
     metrics_db.METRICS_DB_PATH = str(db_path)
-    metrics_db._init_metrics_db()
+    metrics_db.init_metrics_db()
 
     yield str(db_path)
 

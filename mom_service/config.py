@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -7,13 +7,22 @@ from pydantic import BaseModel, ValidationError
 
 class PricingConfig(BaseModel):
     """Custom pricing configuration for an LLM model"""
-    prompt_cost_per_token: Optional[float] = None  # Cost per prompt token (e.g., 0.00003 for $0.03/1K tokens)
+
+    prompt_cost_per_token: Optional[float] = (
+        None  # Cost per prompt token (e.g., 0.00003 for $0.03/1K tokens)
+    )
     completion_cost_per_token: Optional[float] = None  # Cost per completion token
 
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         """Calculate total cost based on token counts"""
-        prompt_cost = (prompt_tokens * self.prompt_cost_per_token) if self.prompt_cost_per_token else 0.0
-        completion_cost = (completion_tokens * self.completion_cost_per_token) if self.completion_cost_per_token else 0.0
+        prompt_cost = (
+            (prompt_tokens * self.prompt_cost_per_token) if self.prompt_cost_per_token else 0.0
+        )
+        completion_cost = (
+            (completion_tokens * self.completion_cost_per_token)
+            if self.completion_cost_per_token
+            else 0.0
+        )
         return prompt_cost + completion_cost
 
 
@@ -21,7 +30,7 @@ class LLMDefinition(BaseModel):
     name: str  # Unique identifier for this LLM definition
     model: str
     api_key_env: str
-    params: Optional[Dict[str, Any]] = None
+    params: Optional[dict[str, Any]] = None
     pricing: Optional[PricingConfig] = None  # Custom pricing override
 
 
@@ -32,7 +41,7 @@ class PromptDefinition(BaseModel):
 
 class ModelConfig(BaseModel):
     name: str
-    llms_to_query: List[str]
+    llms_to_query: list[str]
     concluding_llm: str
     concluding_prompt: Optional[str] = None  # Name of the PromptDefinition to use
     include_thinking_context: bool = False  # Default to false if not specified
@@ -40,12 +49,12 @@ class ModelConfig(BaseModel):
 
 class ServiceConfig(BaseModel):
     timeout_seconds: int = 30
-    exposed_apis: List[str] = ["openai"]  # Default to only openai if not specified
-    cache_enabled: bool = False # Add cache enabled flag
-    max_retries: int = 3 # Add max retries for LLM calls (legacy - for backward compat)
-    retry_delay_seconds: int = 5 # Add delay between retries (legacy - for backward compat)
-    max_llm_retries: int = 3 # Max retries for individual LLM calls
-    llm_retry_delay_seconds: int = 2 # Delay between LLM call retries
+    exposed_apis: list[str] = ["openai"]  # Default to only openai if not specified
+    cache_enabled: bool = False  # Add cache enabled flag
+    max_retries: int = 3  # Add max retries for LLM calls (legacy - for backward compat)
+    retry_delay_seconds: int = 5  # Add delay between retries (legacy - for backward compat)
+    max_llm_retries: int = 3  # Max retries for individual LLM calls
+    llm_retry_delay_seconds: int = 2  # Delay between LLM call retries
 
 
 class LangfuseConfig(BaseModel):
@@ -55,9 +64,9 @@ class LangfuseConfig(BaseModel):
 
 
 class MoMConfig(BaseModel):
-    llm_definitions: List[LLMDefinition]
-    prompt_definitions: Optional[List[PromptDefinition]] = None
-    models: List[ModelConfig]
+    llm_definitions: list[LLMDefinition]
+    prompt_definitions: Optional[list[PromptDefinition]] = None
+    models: list[ModelConfig]
     service: ServiceConfig
     langfuse: Optional[LangfuseConfig] = None
 
@@ -76,12 +85,14 @@ def load_config(config_path: str = None) -> MoMConfig:
         # Default search paths
         search_paths = [
             os.path.join(os.getcwd(), "config.yaml"),
-            os.path.join(os.path.dirname(__file__), "..", "config.yaml"), # Adjusted for being in mom_service/
+            os.path.join(
+                os.path.dirname(__file__), "..", "config.yaml"
+            ),  # Adjusted for being in mom_service/
         ]
 
     for path in search_paths:
         if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 raw = yaml.safe_load(f)
             try:
                 config = MoMConfig(**raw)

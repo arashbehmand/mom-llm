@@ -4,13 +4,14 @@ import logging
 import os
 import sqlite3
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any, Optional
 
 import litellm
 from litellm.utils import Choices, Message, ModelResponse, Usage
 
-from .config import LLMDefinition, MoMConfig
 from . import metrics_db
+from .config import LLMDefinition, MoMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,8 @@ _init_cache_db()
 
 def _generate_cache_key(
     llm_cfg: LLMDefinition,
-    messages: List[Dict[str, Any]],
-    params: Optional[Dict[str, Any]],
+    messages: list[dict[str, Any]],
+    params: Optional[dict[str, Any]],
 ) -> str:
     """Generates a unique cache key based on LLM config, messages, and parameters."""
     key_data = {
@@ -111,19 +112,14 @@ def _get_cached_response(cache_key: str) -> Optional[ModelResponse]:
             usage=usage,
             object=response_data.get("object"),
         )
-        # Add a custom attribute to mark this as a cached response
-        model_response._is_cached = True
+        model_response.is_cached = True
         return model_response
     except Exception as e:
-        logger.error(
-            f"Error retrieving or reconstructing cached response for key {cache_key}: {e}"
-        )
+        logger.error(f"Error retrieving or reconstructing cached response for key {cache_key}: {e}")
         return None
 
 
-def _cache_response(
-    cache_key: str, messages: List[Dict[str, Any]], response_obj: Any
-):
+def _cache_response(cache_key: str, messages: list[dict[str, Any]], response_obj: Any):
     """Caches a response in the SQLite database."""
     try:
         with sqlite3.connect(CACHE_DB_PATH) as conn:
@@ -142,10 +138,10 @@ def _cache_response(
 
 async def _call_lite_llm(
     llm_def: LLMDefinition,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     timeout: int,
     config: MoMConfig,
-    options: Optional[Dict[str, Any]] = None,
+    options: Optional[dict[str, Any]] = None,
 ) -> AsyncGenerator[Any, None]:
     """
     Calls the LiteLLM completion endpoint with retry logic, caching, and metrics recording.
@@ -170,28 +166,28 @@ async def _call_lite_llm(
     }
 
     cache_key = _generate_cache_key(llm_def, messages, params)
-    cache_hit = False
     if config.service.cache_enabled:
         cached_response = _get_cached_response(cache_key)
         if cached_response:
-            cache_hit = True
             logger.info(f"Cache hit for {llm_def.name} with key {cache_key[:8]}...")
 
             # Record metrics for cache hit
             if cached_response.usage:
                 metrics_db.insert_metric_record(
-                    request_id=request_id,
-                    mom_model_name=mom_model_name,
-                    llm_name=llm_def.name,
-                    call_type=call_type,
-                    prompt_tokens=getattr(cached_response.usage, 'prompt_tokens', 0),
-                    completion_tokens=getattr(cached_response.usage, 'completion_tokens', 0),
-                    total_tokens=getattr(cached_response.usage, 'total_tokens', 0),
-                    cost=0.0,  # Cached responses have zero cost
-                    duration_ms=0.0,  # Cache retrieval is essentially instant
-                    status="CACHED",
-                    error_message=None,
-                    cache_hit=True,
+                    metrics_db.MetricRecord(
+                        request_id=request_id,
+                        mom_model_name=mom_model_name,
+                        llm_name=llm_def.name,
+                        call_type=call_type,
+                        prompt_tokens=getattr(cached_response.usage, "prompt_tokens", 0),
+                        completion_tokens=getattr(cached_response.usage, "completion_tokens", 0),
+                        total_tokens=getattr(cached_response.usage, "total_tokens", 0),
+                        cost=0.0,  # Cached responses have zero cost
+                        duration_ms=0.0,  # Cache retrieval is essentially instant
+                        status="CACHED",
+                        error_message=None,
+                        cache_hit=True,
+                    )
                 )
 
             yield cached_response
@@ -224,7 +220,7 @@ async def _call_lite_llm(
                 generation.end(
                     output={"status": "streaming_completed"},
                     level="DEFAULT",
-                    status_message="Streaming response completed successfully"
+                    status_message="Streaming response completed successfully",
                 )
         else:
             response = await litellm.acompletion(**params)
@@ -237,26 +233,29 @@ async def _call_lite_llm(
             # Record metrics for successful non-streaming call
             if response.usage:
                 from .endpoints.models import UsageInfo
+
                 usage_info = UsageInfo.from_litellm_usage(
                     response.usage,
                     response_obj=response,
                     is_cached=False,
-                    pricing_config=llm_def.pricing
+                    pricing_config=llm_def.pricing,
                 )
 
                 metrics_db.insert_metric_record(
-                    request_id=request_id,
-                    mom_model_name=mom_model_name,
-                    llm_name=llm_def.name,
-                    call_type=call_type,
-                    prompt_tokens=usage_info.prompt_tokens or 0,
-                    completion_tokens=usage_info.completion_tokens or 0,
-                    total_tokens=usage_info.total_tokens or 0,
-                    cost=usage_info.cost,
-                    duration_ms=duration_ms,
-                    status="SUCCESS",
-                    error_message=None,
-                    cache_hit=False,
+                    metrics_db.MetricRecord(
+                        request_id=request_id,
+                        mom_model_name=mom_model_name,
+                        llm_name=llm_def.name,
+                        call_type=call_type,
+                        prompt_tokens=usage_info.prompt_tokens or 0,
+                        completion_tokens=usage_info.completion_tokens or 0,
+                        total_tokens=usage_info.total_tokens or 0,
+                        cost=usage_info.cost,
+                        duration_ms=duration_ms,
+                        status="SUCCESS",
+                        error_message=None,
+                        cache_hit=False,
+                    )
                 )
 
             # End Langfuse generation with comprehensive output and metadata
@@ -266,11 +265,15 @@ async def _call_lite_llm(
                     output=output_dict,
                     level="DEFAULT",
                     status_message="LLM call completed successfully",
-                    usage={
-                        "input": response.usage.prompt_tokens if response.usage else 0,
-                        "output": response.usage.completion_tokens if response.usage else 0,
-                        "total": response.usage.total_tokens if response.usage else 0,
-                    } if response.usage else None
+                    usage=(
+                        {
+                            "input": response.usage.prompt_tokens if response.usage else 0,
+                            "output": response.usage.completion_tokens if response.usage else 0,
+                            "total": response.usage.total_tokens if response.usage else 0,
+                        }
+                        if response.usage
+                        else None
+                    ),
                 )
 
             yield response
@@ -283,18 +286,20 @@ async def _call_lite_llm(
 
         # Record metrics for failed call
         metrics_db.insert_metric_record(
-            request_id=request_id,
-            mom_model_name=mom_model_name,
-            llm_name=llm_def.name,
-            call_type=call_type,
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0,
-            cost=0.0,
-            duration_ms=duration_ms,
-            status="FAILED",
-            error_message=str(e)[:500],  # Truncate error message to avoid DB bloat
-            cache_hit=False,
+            metrics_db.MetricRecord(
+                request_id=request_id,
+                mom_model_name=mom_model_name,
+                llm_name=llm_def.name,
+                call_type=call_type,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                cost=0.0,
+                duration_ms=duration_ms,
+                status="FAILED",
+                error_message=str(e)[:500],  # Truncate error message to avoid DB bloat
+                cache_hit=False,
+            )
         )
 
         if generation:

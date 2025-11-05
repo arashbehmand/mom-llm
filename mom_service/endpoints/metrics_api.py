@@ -9,9 +9,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..config import load_config
 from .. import metrics_db
-from .models import OpenAIErrorDetail, OpenAIErrorResponse
+from ..config import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +21,7 @@ metrics_router = APIRouter(prefix="/v1/metrics", tags=["Metrics"])
 def check_metrics_auth(request: Request):
     """Check authentication for metrics endpoints (same as main API token)"""
     import os
+
     api_token = os.getenv("API_TOKEN")
     if not api_token:
         raise HTTPException(
@@ -62,9 +62,7 @@ async def get_usage_metrics(
     end_time: Optional[float] = Query(
         None, description="End timestamp (Unix time) for filtering metrics"
     ),
-    model_name: Optional[str] = Query(
-        None, description="Filter by MoM model name"
-    ),
+    model_name: Optional[str] = Query(None, description="Filter by MoM model name"),
 ):
     """
     Get aggregated usage metrics.
@@ -121,15 +119,11 @@ async def get_raw_usage_metrics(
     end_time: Optional[float] = Query(
         None, description="End timestamp (Unix time) for filtering metrics"
     ),
-    model_name: Optional[str] = Query(
-        None, description="Filter by MoM model name"
-    ),
+    model_name: Optional[str] = Query(None, description="Filter by MoM model name"),
     call_type: Optional[str] = Query(
         None, description="Filter by call type (fanout or concluding)"
     ),
-    limit: int = Query(
-        1000, description="Maximum number of records to return (default: 1000)"
-    ),
+    limit: int = Query(1000, description="Maximum number of records to return (default: 1000)"),
 ):
     """
     Get raw usage metrics records.

@@ -1,57 +1,55 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 import contextvars
 import html
 import logging
 import os
 import sys
-import uuid
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import Any
+import uuid
 
-import litellm
 from dotenv import load_dotenv
-from fastapi import (
-    FastAPI,
-    HTTPException,
-    Request,
-)
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langfuse import Langfuse
+import litellm
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from .config import (
-    MoMConfig,
-    load_config,
-)
+from .config import MoMConfig, load_config
 from .core_logic import (
     _calculate_and_log_costs,
     _execute_concluding_call,
     _perform_fanout_calls,
     _prepare_concluding_messages,
 )
-
-from .endpoints.models import (
-    OpenAIErrorDetail,
-    OpenAIErrorResponse,
-    ThinkingContextItem,
-    UsageInfo,
-)
-from .endpoints.openai_v1 import openai_router
 from .endpoints.metrics_api import metrics_router
+from .endpoints.models import OpenAIErrorDetail, OpenAIErrorResponse, ThinkingContextItem, UsageInfo
+from .endpoints.openai_v1 import openai_router
 from .health import perform_comprehensive_health_check
+
 
 load_dotenv()
 
 # Context variable for request ID
-request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='no-request-id')
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "request_id", default="no-request-id"
+)
+
 
 class RequestIDFilter(logging.Filter):
     """Add request_id to all log records"""
+
     def filter(self, record):
-        record.request_id = request_id_var.get('no-request-id')
+        record.request_id = request_id_var.get("no-request-id")
         return True
+
+    def get_request_id(self) -> str:
+        """Return the current request id for use in tests/logging."""
+        return request_id_var.get("no-request-id")
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,9 +63,7 @@ logger.info("--- mom_service.main.py: Logging configured ---")
 
 LITELLM_VERBOSE_ENV = os.getenv("LITELLM_VERBOSE", "false").lower()
 litellm.set_verbose = LITELLM_VERBOSE_ENV in ("true", "1", "yes")
-logger.info(
-    f"--- LiteLLM verbose logging {'ENABLED' if litellm.set_verbose else 'DISABLED'} ---"
-)
+logger.info(f"--- LiteLLM verbose logging {'ENABLED' if litellm.set_verbose else 'DISABLED'} ---")
 
 try:
     config: MoMConfig = load_config()
@@ -91,12 +87,18 @@ if config.langfuse:
 
 app = FastAPI()
 
+
 # Request ID Middleware
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Middleware to generate and attach a unique request_id to each request"""
+
+    def generate_request_id(self) -> str:
+        """Generate a new request id (public helper used by dispatch)."""
+        return str(uuid.uuid4())
+
     async def dispatch(self, request: Request, call_next):
         # Generate unique request ID
-        request_id = str(uuid.uuid4())
+        request_id = self.generate_request_id()
 
         # Store in request state
         request.state.request_id = request_id
@@ -109,6 +111,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = request_id
 
         return response
+
 
 # Add Request ID middleware (must be added before other middlewares for proper ordering)
 app.add_middleware(RequestIDMiddleware)
@@ -130,6 +133,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get("/health")
 async def health_check():
@@ -166,16 +170,16 @@ async def detailed_health_check(check_llm: bool = False):
 
     return JSONResponse(content=health_data, status_code=status_code)
 
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     """Enhanced HTTP exception handler with request_id and stack trace logging"""
-    request_id = getattr(request.state, 'request_id', 'unknown')
+    request_id = getattr(request.state, "request_id", "unknown")
     logger.error(
         f"HTTP Exception occurred - Status: {exc.status_code}, Detail: {exc.detail}",
         exc_info=True,
-        extra={'request_id': request_id}
+        extra={"request_id": request_id},
     )
-    
     error_message = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
 
     error_detail = OpenAIErrorDetail(
@@ -184,21 +188,19 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         param=None,
         code=None,
     )
-    
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": error_detail.model_dump(exclude_none=True)},
-        headers={'X-Request-ID': request_id}
+        headers={"X-Request-ID": request_id},
     )
+
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     """Enhanced generic exception handler with request_id and stack trace logging"""
-    request_id = getattr(request.state, 'request_id', 'unknown')
+    request_id = getattr(request.state, "request_id", "unknown")
     logger.error(
-        f"Unhandled exception occurred: {str(exc)}",
-        exc_info=True,
-        extra={'request_id': request_id}
+        f"Unhandled exception occurred: {str(exc)}", exc_info=True, extra={"request_id": request_id}
     )
     error_detail = OpenAIErrorDetail(
         message=str(exc),
@@ -209,26 +211,19 @@ async def generic_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content=OpenAIErrorResponse(error=error_detail).model_dump(),
-        headers={"X-Request-ID": request_id}
+        headers={"X-Request-ID": request_id},
     )
+
 
 async def _process_mom_chat_request(
     mom_model_name: str,
-    request_messages: List[Dict[str, Any]],
+    request_messages: list[dict[str, Any]],
     fastapi_request_obj: Request,
     stream: bool = False,
-) -> Union[
-    Tuple[
-        str,
-        Optional[List[ThinkingContextItem]],
-        Optional[UsageInfo],
-        float,
-        str,
-        bool,
-        Optional[Any],
-    ],
-    AsyncGenerator[Dict[str, Any], None],
-]:
+) -> (
+    tuple[str, list[ThinkingContextItem] | None, UsageInfo | None, float, str, bool, Any | None]
+    | AsyncGenerator[dict[str, Any], None]
+):
     logger.info(f"--- _process_mom_chat_request received model name: {mom_model_name} ---")
     timeout = config.service.timeout_seconds
     model_conf = next((m for m in config.models if m.name == mom_model_name), None)
@@ -240,7 +235,7 @@ async def _process_mom_chat_request(
     thinking_was_embedded_in_content = False
 
     # Get request_id from request state (set by middleware)
-    request_id = getattr(fastapi_request_obj.state, 'request_id', 'unknown')
+    request_id = getattr(fastapi_request_obj.state, "request_id", "unknown")
 
     trace = None
     if LANGFUSE_CLIENT:
@@ -266,7 +261,7 @@ async def _process_mom_chat_request(
         model_conf, llm_map, request_messages, timeout, config, trace, request_id
     )
 
-    intermediate_thinking_context: List[ThinkingContextItem] = []
+    intermediate_thinking_context: list[ThinkingContextItem] = []
 
     if stream:
         logger.info("_process_mom_chat_request: Handling streaming request.")
@@ -298,11 +293,11 @@ async def _process_mom_chat_request(
                         yield open_tag_data
                         thinking_block_open = True
 
-                    item_content_cleaned = thinking_item.content.replace("<think>", "[inner_think]").replace("</think>", "[/inner_think]")
+                    item_content_cleaned = thinking_item.content.replace(
+                        "<think>", "[inner_think]"
+                    ).replace("</think>", "[/inner_think]")
                     escaped_item_content = html.escape(item_content_cleaned)
-                    thinking_chunk_content = (
-                        f"Model: {html.escape(thinking_item.model)}\nContent: {escaped_item_content}\n---\n"
-                    )
+                    thinking_chunk_content = f"Model: {html.escape(thinking_item.model)}\nContent: {escaped_item_content}\n---\n"
                     data = {
                         "id": response_id,
                         "object": "chat.completion.chunk",
@@ -355,7 +350,10 @@ async def _process_mom_chat_request(
                         "object": "chat.completion.chunk",
                         "created": int(time.time()),
                         "model": mom_model_name,
-                        "error": {"message": "All fan-out calls failed or returned no usable content.", "type": "internal_server_error"},
+                        "error": {
+                            "message": "All fan-out calls failed or returned no usable content.",
+                            "type": "internal_server_error",
+                        },
                     }
                     yield error_data
                     return
@@ -366,9 +364,7 @@ async def _process_mom_chat_request(
 
             concl_def = llm_map.get(model_conf.concluding_llm)
             if not concl_def:
-                logger.error(
-                    f"Concluding LLMDefinition '{model_conf.concluding_llm}' not found."
-                )
+                logger.error(f"Concluding LLMDefinition '{model_conf.concluding_llm}' not found.")
                 if trace:
                     trace.update(
                         level="ERROR",
@@ -379,7 +375,10 @@ async def _process_mom_chat_request(
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
                     "model": mom_model_name,
-                    "error": {"message": f"Concluding LLM definition '{model_conf.concluding_llm}' not found.", "type": "internal_server_error"},
+                    "error": {
+                        "message": f"Concluding LLM definition '{model_conf.concluding_llm}' not found.",
+                        "type": "internal_server_error",
+                    },
                 }
                 yield error_data
                 return
@@ -403,9 +402,7 @@ async def _process_mom_chat_request(
                 },
             )
 
-            logger.info(
-                "Streaming concluding LLM response..."
-            )
+            logger.info("Streaming concluding LLM response...")
             final_content_streamed = ""
             async for chunk in the_concluding_generator:
                 if chunk.choices[0].delta.content:
@@ -418,85 +415,93 @@ async def _process_mom_chat_request(
 
         return streaming_response_generator()
 
-    else: # Non-streaming
-        async for item in fanout_results_generator:
-            intermediate_thinking_context.append(item)
+    # Non-streaming branch (de-indented since the streaming branch returns above)
+    async for item in fanout_results_generator:
+        intermediate_thinking_context.append(item)
 
-        concl_msgs_for_llm = _prepare_concluding_messages(
-            request_messages, intermediate_thinking_context, model_conf, config
+    concl_msgs_for_llm = _prepare_concluding_messages(
+        request_messages, intermediate_thinking_context, model_conf, config
+    )
+
+    concl_def = llm_map.get(model_conf.concluding_llm)
+    if not concl_def:
+        raise ValueError(f"Concluding LLM '{model_conf.concluding_llm}' not found.")
+
+    gen_name_concl = f"concluding-{concl_def.name}" if trace else None
+    concluding_llm_response = await _execute_concluding_call(
+        concl_def,
+        concl_msgs_for_llm,
+        timeout,
+        config,
+        options={
+            "trace": trace,
+            "gen_name_concl": gen_name_concl,
+            "generation_name": gen_name_concl,
+            "stream": False,
+            "request_id": request_id,
+            "mom_model_name": mom_model_name,
+        },
+    )
+
+    final_content = ""
+    if (
+        concluding_llm_response
+        and concluding_llm_response.choices
+        and concluding_llm_response.choices[0].message
+    ):
+        final_content = concluding_llm_response.choices[0].message.content
+
+    concluding_llm_usage_info = None
+    if concluding_llm_response and concluding_llm_response.usage:
+        # Check if concluding response is cached
+        is_cached = getattr(concluding_llm_response, "_is_cached", False)
+        concluding_llm_usage_info = UsageInfo.from_litellm_usage(
+            concluding_llm_response.usage,
+            response_obj=concluding_llm_response,
+            is_cached=is_cached,
+            pricing_config=concl_def.pricing,
         )
 
-        concl_def = llm_map.get(model_conf.concluding_llm)
-        if not concl_def:
-            raise ValueError(f"Concluding LLM '{model_conf.concluding_llm}' not found.")
+    total_request_cost = _calculate_and_log_costs(
+        intermediate_thinking_context, concluding_llm_usage_info
+    )
+    if concluding_llm_usage_info:
+        logger.info(
+            f"Concluding LLM usage: {concluding_llm_usage_info.total_tokens} tokens, cost ${total_request_cost:.6f}"
+        )
 
-        gen_name_concl = f"concluding-{concl_def.name}" if trace else None
-        concluding_llm_response = await _execute_concluding_call(
-            concl_def,
-            concl_msgs_for_llm,
-            timeout,
-            config,
-            options={
-                "trace": trace,
-                "gen_name_concl": gen_name_concl,
-                "generation_name": gen_name_concl,
-                "stream": False,
-                "request_id": request_id,
-                "mom_model_name": mom_model_name,
+    if trace:
+        trace.update(
+            output={
+                "final_content": final_content,
+                "thinking_context_count": len(intermediate_thinking_context),
             },
+            metadata={
+                "total_request_cost": total_request_cost,
+                "total_prompt_tokens": (
+                    concluding_llm_usage_info.prompt_tokens if concluding_llm_usage_info else 0
+                ),
+                "total_completion_tokens": (
+                    concluding_llm_usage_info.completion_tokens if concluding_llm_usage_info else 0
+                ),
+                "total_tokens": (
+                    concluding_llm_usage_info.total_tokens if concluding_llm_usage_info else 0
+                ),
+                "num_fanout_calls": len(intermediate_thinking_context),
+            },
+            level="DEFAULT",
+            status_message="MoM request completed successfully",
         )
 
-        final_content = ""
-        if (
-            concluding_llm_response
-            and concluding_llm_response.choices
-            and concluding_llm_response.choices[0].message
-        ):
-            final_content = concluding_llm_response.choices[0].message.content
-
-        concluding_llm_usage_info = None
-        if concluding_llm_response and concluding_llm_response.usage:
-            # Check if concluding response is cached
-            is_cached = getattr(concluding_llm_response, '_is_cached', False)
-            concluding_llm_usage_info = UsageInfo.from_litellm_usage(
-                concluding_llm_response.usage,
-                response_obj=concluding_llm_response,
-                is_cached=is_cached,
-                pricing_config=concl_def.pricing
-            )
-
-        total_request_cost = _calculate_and_log_costs(
-            intermediate_thinking_context, concluding_llm_usage_info
-        )
-        if concluding_llm_usage_info:
-            logger.info(f"Concluding LLM usage: {concluding_llm_usage_info.total_tokens} tokens, cost ${total_request_cost:.6f}")
-
-        if trace:
-            trace.update(
-                output={
-                    "final_content": final_content,
-                    "thinking_context_count": len(intermediate_thinking_context),
-                },
-                metadata={
-                    "total_request_cost": total_request_cost,
-                    "total_prompt_tokens": concluding_llm_usage_info.prompt_tokens if concluding_llm_usage_info else 0,
-                    "total_completion_tokens": concluding_llm_usage_info.completion_tokens if concluding_llm_usage_info else 0,
-                    "total_tokens": concluding_llm_usage_info.total_tokens if concluding_llm_usage_info else 0,
-                    "num_fanout_calls": len(intermediate_thinking_context),
-                },
-                level="DEFAULT",
-                status_message="MoM request completed successfully"
-            )
-
-        return (
-            final_content,
-            intermediate_thinking_context if model_conf.include_thinking_context else None,
-            concluding_llm_usage_info,
-            total_request_cost,
-            mom_model_name,
-            thinking_was_embedded_in_content,
-            None,
-        )
+    return (
+        final_content,
+        intermediate_thinking_context if model_conf.include_thinking_context else None,
+        concluding_llm_usage_info,
+        total_request_cost,
+        mom_model_name,
+        thinking_was_embedded_in_content,
+        None,
+    )
 
 
 def get_mom_model_config(model_name: str):

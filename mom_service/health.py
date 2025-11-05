@@ -6,7 +6,7 @@ import logging
 import os
 import sqlite3
 import time
-from typing import Dict, Any, Optional
+from typing import Any
 
 import litellm
 from litellm.utils import ModelResponse
@@ -16,7 +16,7 @@ from .config import MoMConfig
 logger = logging.getLogger(__name__)
 
 
-async def check_database_health(db_path: str, db_name: str) -> Dict[str, Any]:
+async def check_database_health(db_path: str, db_name: str) -> dict[str, Any]:
     """
     Check SQLite database connectivity and basic health.
 
@@ -36,7 +36,7 @@ async def check_database_health(db_path: str, db_name: str) -> Dict[str, Any]:
                 "status": "unavailable",
                 "name": db_name,
                 "error": "Database file does not exist",
-                "path": db_path
+                "path": db_path,
             }
 
         # Try to connect and execute a simple query
@@ -46,7 +46,9 @@ async def check_database_health(db_path: str, db_name: str) -> Dict[str, Any]:
             cursor.fetchone()
 
             # Get database size
-            cursor.execute("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()")
+            cursor.execute(
+                "SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()"
+            )
             size_bytes = cursor.fetchone()[0]
 
         duration_ms = (time.time() - start_time) * 1000
@@ -56,19 +58,14 @@ async def check_database_health(db_path: str, db_name: str) -> Dict[str, Any]:
             "name": db_name,
             "path": db_path,
             "size_bytes": size_bytes,
-            "response_time_ms": round(duration_ms, 2)
+            "response_time_ms": round(duration_ms, 2),
         }
     except Exception as e:
         logger.error(f"Database health check failed for {db_name}: {e}")
-        return {
-            "status": "unhealthy",
-            "name": db_name,
-            "error": str(e),
-            "path": db_path
-        }
+        return {"status": "unhealthy", "name": db_name, "error": str(e), "path": db_path}
 
 
-async def check_llm_connectivity(config: MoMConfig, timeout: int = 10) -> Dict[str, Any]:
+async def check_llm_connectivity(config: MoMConfig, timeout: int = 10) -> dict[str, Any]:
     """
     Test LLM connectivity by attempting a simple completion call.
     Uses the first available LLM definition from config.
@@ -81,10 +78,7 @@ async def check_llm_connectivity(config: MoMConfig, timeout: int = 10) -> Dict[s
         Dict with status and details
     """
     if not config.llm_definitions:
-        return {
-            "status": "skipped",
-            "reason": "No LLM definitions configured"
-        }
+        return {"status": "skipped", "reason": "No LLM definitions configured"}
 
     # Use the first LLM definition for testing
     test_llm = config.llm_definitions[0]
@@ -98,7 +92,7 @@ async def check_llm_connectivity(config: MoMConfig, timeout: int = 10) -> Dict[s
             messages=[{"role": "user", "content": "Hi"}],
             max_tokens=5,
             timeout=timeout,
-            **test_llm.params
+            **test_llm.params,
         )
 
         duration_ms = (time.time() - start_time) * 1000
@@ -109,15 +103,14 @@ async def check_llm_connectivity(config: MoMConfig, timeout: int = 10) -> Dict[s
                 "status": "healthy",
                 "llm_tested": test_llm.name,
                 "model": test_llm.model,
-                "response_time_ms": round(duration_ms, 2)
+                "response_time_ms": round(duration_ms, 2),
             }
-        else:
-            return {
-                "status": "unhealthy",
-                "llm_tested": test_llm.name,
-                "model": test_llm.model,
-                "error": "Empty or invalid response from LLM"
-            }
+        return {
+            "status": "unhealthy",
+            "llm_tested": test_llm.name,
+            "model": test_llm.model,
+            "error": "Empty or invalid response from LLM",
+        }
 
     except Exception as e:
         logger.error(f"LLM connectivity check failed for {test_llm.name}: {e}")
@@ -125,14 +118,13 @@ async def check_llm_connectivity(config: MoMConfig, timeout: int = 10) -> Dict[s
             "status": "unhealthy",
             "llm_tested": test_llm.name,
             "model": test_llm.model,
-            "error": str(e)[:200]  # Truncate long error messages
+            "error": str(e)[:200],  # Truncate long error messages
         }
 
 
 async def perform_comprehensive_health_check(
-    config: MoMConfig,
-    check_llm: bool = False
-) -> Dict[str, Any]:
+    config: MoMConfig, check_llm: bool = False
+) -> dict[str, Any]:
     """
     Perform a comprehensive health check of all system components.
 
@@ -143,11 +135,7 @@ async def perform_comprehensive_health_check(
     Returns:
         Dict with overall status and component details
     """
-    health_data = {
-        "status": "healthy",
-        "timestamp": time.time(),
-        "checks": {}
-    }
+    health_data = {"status": "healthy", "timestamp": time.time(), "checks": {}}
 
     # Check cache database
     cache_db_path = os.path.join(os.path.dirname(__file__), "llm_cache.db")
@@ -174,10 +162,7 @@ async def perform_comprehensive_health_check(
             "cache_enabled": config.service.cache_enabled,
         }
     except Exception as e:
-        config_check = {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+        config_check = {"status": "unhealthy", "error": str(e)}
         health_data["status"] = "unhealthy"
 
     health_data["checks"]["configuration"] = config_check

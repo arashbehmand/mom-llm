@@ -2,20 +2,10 @@
 Unit tests for mom_service.config module
 """
 
-import os
-import tempfile
-from pathlib import Path
-
 import pytest
 from pydantic import ValidationError
 
-from mom_service.config import (
-    LLMDefinition,
-    ModelConfig,
-    MoMConfig,
-    ServiceConfig,
-    load_config,
-)
+from mom_service.config import LLMDefinition, ModelConfig, MoMConfig, ServiceConfig, load_config
 
 
 class TestLLMDefinition:
@@ -27,7 +17,7 @@ class TestLLMDefinition:
             name="test-llm",
             model="gpt-4",
             api_key_env="OPENAI_API_KEY",
-            params={"temperature": 0.7}
+            params={"temperature": 0.7},
         )
         assert llm_def.name == "test-llm"
         assert llm_def.model == "gpt-4"
@@ -36,11 +26,7 @@ class TestLLMDefinition:
 
     def test_llm_definition_without_params(self):
         """Test LLM definition with no params (should default to None)"""
-        llm_def = LLMDefinition(
-            name="test-llm",
-            model="gpt-4",
-            api_key_env="OPENAI_API_KEY"
-        )
+        llm_def = LLMDefinition(name="test-llm", model="gpt-4", api_key_env="OPENAI_API_KEY")
         assert llm_def.params is None
 
     def test_invalid_llm_definition_missing_required_field(self):
@@ -59,7 +45,7 @@ class TestModelConfig:
             llms_to_query=["gpt4", "gpt35"],
             concluding_llm="gpt4",
             concluding_prompt="synthesis-prompt",
-            include_thinking_context=True
+            include_thinking_context=True,
         )
         assert model_config.name == "test-model"
         assert model_config.llms_to_query == ["gpt4", "gpt35"]
@@ -68,11 +54,7 @@ class TestModelConfig:
 
     def test_model_config_defaults(self):
         """Test default values for optional fields"""
-        model_config = ModelConfig(
-            name="test-model",
-            llms_to_query=["gpt4"],
-            concluding_llm="gpt4"
-        )
+        model_config = ModelConfig(name="test-model", llms_to_query=["gpt4"], concluding_llm="gpt4")
         assert model_config.concluding_prompt is None
         assert model_config.include_thinking_context is False
 
@@ -91,11 +73,7 @@ class TestServiceConfig:
 
     def test_service_config_custom_values(self):
         """Test custom service configuration values"""
-        service_config = ServiceConfig(
-            timeout_seconds=60,
-            cache_enabled=True,
-            max_llm_retries=5
-        )
+        service_config = ServiceConfig(timeout_seconds=60, cache_enabled=True, max_llm_retries=5)
         assert service_config.timeout_seconds == 60
         assert service_config.cache_enabled is True
         assert service_config.max_llm_retries == 5
@@ -143,14 +121,16 @@ class TestLoadConfig:
     def test_load_config_invalid_schema(self, tmp_path):
         """Test that RuntimeError is raised for invalid schema"""
         invalid_config = tmp_path / "invalid_schema.yaml"
-        invalid_config.write_text("""
+        invalid_config.write_text(
+            """
 llm_definitions:
   - name: test
     # Missing required fields
 models: []
 service:
   timeout_seconds: 30
-""")
+"""
+        )
 
         with pytest.raises(RuntimeError) as exc_info:
             load_config(config_path=str(invalid_config))

@@ -2,13 +2,7 @@
 Unit tests for mom_service.core_logic module
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-
-from mom_service.core_logic import (
-    _calculate_and_log_costs,
-    _prepare_concluding_messages,
-)
+from mom_service.core_logic import _calculate_and_log_costs, _prepare_concluding_messages
 from mom_service.endpoints.models import ThinkingContextItem, UsageInfo
 
 
@@ -21,12 +15,16 @@ class TestCalculateAndLogCosts:
             ThinkingContextItem(
                 model="gpt-4",
                 content="Response 1",
-                usage=UsageInfo(prompt_tokens=10, completion_tokens=20, total_tokens=30, cost=0.001)
+                usage=UsageInfo(
+                    prompt_tokens=10, completion_tokens=20, total_tokens=30, cost=0.001
+                ),
             ),
             ThinkingContextItem(
                 model="gpt-3.5",
                 content="Response 2",
-                usage=UsageInfo(prompt_tokens=15, completion_tokens=25, total_tokens=40, cost=0.0005)
+                usage=UsageInfo(
+                    prompt_tokens=15, completion_tokens=25, total_tokens=40, cost=0.0005
+                ),
             ),
         ]
         concluding_usage = UsageInfo(
@@ -43,12 +41,14 @@ class TestCalculateAndLogCosts:
             ThinkingContextItem(
                 model="gpt-4",
                 content="Response 1",
-                usage=UsageInfo(prompt_tokens=10, completion_tokens=20, total_tokens=30, cost=None)
+                usage=UsageInfo(prompt_tokens=10, completion_tokens=20, total_tokens=30, cost=None),
             ),
             ThinkingContextItem(
                 model="gpt-3.5",
                 content="Response 2",
-                usage=UsageInfo(prompt_tokens=15, completion_tokens=25, total_tokens=40, cost=0.001)
+                usage=UsageInfo(
+                    prompt_tokens=15, completion_tokens=25, total_tokens=40, cost=0.001
+                ),
             ),
         ]
         concluding_usage = UsageInfo(
@@ -64,7 +64,7 @@ class TestCalculateAndLogCosts:
             ThinkingContextItem(
                 model="gpt-4",
                 content="Response 1",
-                usage=UsageInfo(prompt_tokens=10, completion_tokens=20, total_tokens=30, cost=0.0)
+                usage=UsageInfo(prompt_tokens=10, completion_tokens=20, total_tokens=30, cost=0.0),
             ),
         ]
         concluding_usage = UsageInfo(
@@ -90,7 +90,9 @@ class TestCalculateAndLogCosts:
             ThinkingContextItem(
                 model="gpt-4",
                 content="Response 1",
-                usage=UsageInfo(prompt_tokens=10, completion_tokens=20, total_tokens=30, cost=0.002)
+                usage=UsageInfo(
+                    prompt_tokens=10, completion_tokens=20, total_tokens=30, cost=0.002
+                ),
             ),
         ]
 
@@ -103,19 +105,17 @@ class TestPrepareConcludingMessages:
 
     def test_prepare_messages_with_successful_fanout(self, sample_mom_config):
         """Test message preparation with successful fanout responses"""
-        request_messages = [
-            {"role": "user", "content": "What is AI?"}
-        ]
+        request_messages = [{"role": "user", "content": "What is AI?"}]
         intermediate_context = [
             ThinkingContextItem(
                 model="gpt-4",
                 content="AI stands for Artificial Intelligence.",
-                usage=UsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15)
+                usage=UsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15),
             ),
             ThinkingContextItem(
                 model="gpt-3.5",
                 content="AI is a branch of computer science.",
-                usage=UsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15)
+                usage=UsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15),
             ),
         ]
 
@@ -133,19 +133,17 @@ class TestPrepareConcludingMessages:
 
     def test_prepare_messages_with_failed_fanout(self, sample_mom_config):
         """Test message preparation when all fanout calls failed"""
-        request_messages = [
-            {"role": "user", "content": "What is AI?"}
-        ]
+        request_messages = [{"role": "user", "content": "What is AI?"}]
         intermediate_context = [
             ThinkingContextItem(
                 model="gpt-4",
                 content="Error: Call to gpt-4 failed.",
-                usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
             ),
             ThinkingContextItem(
                 model="gpt-3.5",
                 content="Warning: Call to gpt-3.5 returned empty response.",
-                usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
             ),
         ]
 
@@ -156,13 +154,14 @@ class TestPrepareConcludingMessages:
 
         # Should have original message + failure notification
         assert len(result) >= 2
-        assert "all initial llm consultations failed or returned no usable content" in result[1]["content"].lower()
+        assert (
+            "all initial llm consultations failed or returned no usable content"
+            in result[1]["content"].lower()
+        )
 
     def test_prepare_messages_with_empty_context(self, sample_mom_config):
         """Test message preparation with no intermediate context"""
-        request_messages = [
-            {"role": "user", "content": "What is AI?"}
-        ]
+        request_messages = [{"role": "user", "content": "What is AI?"}]
         intermediate_context = []
 
         model_conf = sample_mom_config.models[0]
@@ -176,19 +175,17 @@ class TestPrepareConcludingMessages:
 
     def test_prepare_messages_with_mixed_results(self, sample_mom_config):
         """Test message preparation with both successful and failed responses"""
-        request_messages = [
-            {"role": "user", "content": "What is AI?"}
-        ]
+        request_messages = [{"role": "user", "content": "What is AI?"}]
         intermediate_context = [
             ThinkingContextItem(
                 model="gpt-4",
                 content="AI stands for Artificial Intelligence.",
-                usage=UsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15)
+                usage=UsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15),
             ),
             ThinkingContextItem(
                 model="gpt-3.5",
                 content="Error: Call failed.",
-                usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+                usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0),
             ),
         ]
 
@@ -206,25 +203,22 @@ class TestPrepareConcludingMessages:
 
     def test_prepare_messages_with_concluding_prompt(self):
         """Test message preparation with a custom concluding prompt"""
-        from mom_service.config import ModelConfig, MoMConfig, ServiceConfig, PromptDefinition
+        from mom_service.config import ModelConfig, MoMConfig, PromptDefinition, ServiceConfig
 
         config = MoMConfig(
             llm_definitions=[],
             prompt_definitions=[
-                PromptDefinition(
-                    name="synthesis",
-                    content="Please synthesize the responses."
-                )
+                PromptDefinition(name="synthesis", content="Please synthesize the responses.")
             ],
             models=[
                 ModelConfig(
                     name="test-model",
                     llms_to_query=["gpt4"],
                     concluding_llm="gpt4",
-                    concluding_prompt="synthesis"
+                    concluding_prompt="synthesis",
                 )
             ],
-            service=ServiceConfig()
+            service=ServiceConfig(),
         )
 
         request_messages = [{"role": "user", "content": "Test"}]
@@ -232,7 +226,7 @@ class TestPrepareConcludingMessages:
             ThinkingContextItem(
                 model="gpt-4",
                 content="Response",
-                usage=UsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15)
+                usage=UsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15),
             ),
         ]
 

@@ -64,9 +64,7 @@ def check_token(request: Request):
     token = auth_header.split(" ", 1)[1]
 
     if token != service_api_token:
-        raise HTTPException(
-            status_code=401, detail={"error": "Invalid or missing API token."}
-        )
+        raise HTTPException(status_code=401, detail={"error": "Invalid or missing API token."})
 
 
 # Primary chat endpoint
@@ -74,9 +72,7 @@ def check_token(request: Request):
 async def chat_completions_ollama(req_data: OllamaChatRequest, request: Request):
     try:
         check_token(request)
-        model_conf_check = next(
-            (m for m in config.models if m.name == req_data.model), None
-        )
+        model_conf_check = next((m for m in config.models if m.name == req_data.model), None)
         if not model_conf_check:
             raise HTTPException(
                 status_code=404,
@@ -115,16 +111,12 @@ async def chat_completions_ollama(req_data: OllamaChatRequest, request: Request)
             done=True,
             total_duration=total_duration,
             load_duration=0,  # MoM doesn't load models in the same way
-            prompt_eval_count=(
-                concluding_usage.prompt_tokens if concluding_usage else None
-            ),
+            prompt_eval_count=(concluding_usage.prompt_tokens if concluding_usage else None),
             prompt_eval_duration=(
                 int(total_duration * 0.3) if concluding_usage else None
             ),  # Estimate
             eval_count=concluding_usage.completion_tokens if concluding_usage else None,
-            eval_duration=(
-                int(total_duration * 0.7) if concluding_usage else None
-            ),  # Estimate
+            eval_duration=(int(total_duration * 0.7) if concluding_usage else None),  # Estimate
         )
 
         if trace_obj:
@@ -142,6 +134,7 @@ async def chat_completions_ollama(req_data: OllamaChatRequest, request: Request)
     except Exception as e:
         return format_ollama_error(500, f"Unexpected server error: {str(e)}")
 
+
 # Alias to match common Ollama client path: POST /ollama/api/chat
 @ollama_router.post("/api/chat", response_model=OllamaChatResponse)
 async def chat_alias(req_data: OllamaChatRequest, request: Request):
@@ -158,9 +151,7 @@ async def get_ollama_models_list(request: Request):
         models_data = []
         for m_config in config.models:
             # Create a unique digest based on the model name
-            model_digest = (
-                f"sha256:{hashlib.sha256(m_config.name.encode()).hexdigest()}"
-            )
+            model_digest = f"sha256:{hashlib.sha256(m_config.name.encode()).hexdigest()}"
 
             models_data.append(
                 OllamaTagInfo(
@@ -176,6 +167,7 @@ async def get_ollama_models_list(request: Request):
         return format_ollama_error(exc.status_code, exc.detail)
     except Exception as e:
         return format_ollama_error(500, f"Unexpected server error: {str(e)}")
+
 
 # Alias to match common Ollama client path: GET /ollama/api/tags
 @ollama_router.get("/api/tags", response_model=OllamaTagsResponse)
