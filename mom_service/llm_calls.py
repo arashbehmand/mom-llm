@@ -218,7 +218,6 @@ async def _call_lite_llm(
 
                 # End generation immediately for cache hit with usage info
                 if cached_response.usage:
-                    import litellm
                     from .pricing_utils import calculate_normalized_tokens
 
                     output_dict = litellm.utils.convert_to_dict(cached_response)
