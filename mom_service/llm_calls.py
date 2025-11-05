@@ -218,6 +218,14 @@ async def _call_lite_llm(
                 yield chunk
             # For streaming, we don't have full usage info until the end
             # Metrics recording for streaming will be handled at a higher level
+
+            # End Langfuse generation for streaming with proper status
+            if generation:
+                generation.end(
+                    output={"status": "streaming_completed"},
+                    level="DEFAULT",
+                    status_message="Streaming response completed successfully"
+                )
         else:
             response = await litellm.acompletion(**params)
             if config.service.cache_enabled:
@@ -250,13 +258,21 @@ async def _call_lite_llm(
                     cache_hit=False,
                 )
 
-            yield response
+            # End Langfuse generation with comprehensive output and metadata
+            if generation:
+                output_dict = litellm.utils.convert_to_dict(response)
+                generation.end(
+                    output=output_dict,
+                    level="DEFAULT",
+                    status_message="LLM call completed successfully",
+                    usage={
+                        "input": response.usage.prompt_tokens if response.usage else 0,
+                        "output": response.usage.completion_tokens if response.usage else 0,
+                        "total": response.usage.total_tokens if response.usage else 0,
+                    } if response.usage else None
+                )
 
-        if generation:
-            output = (
-                litellm.utils.convert_to_dict(response) if not stream else "STREAMED"
-            )
-            generation.end(output=output)
+            yield response
 
     except Exception as e:
         end_time = time.time()

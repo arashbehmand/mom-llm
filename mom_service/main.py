@@ -436,10 +436,19 @@ async def _process_mom_chat_request(
 
         if trace:
             trace.update(
-                output={"final_content": final_content},
+                output={
+                    "final_content": final_content,
+                    "thinking_context_count": len(intermediate_thinking_context),
+                },
                 metadata={
                     "total_request_cost": total_request_cost,
+                    "total_prompt_tokens": concluding_llm_usage_info.prompt_tokens if concluding_llm_usage_info else 0,
+                    "total_completion_tokens": concluding_llm_usage_info.completion_tokens if concluding_llm_usage_info else 0,
+                    "total_tokens": concluding_llm_usage_info.total_tokens if concluding_llm_usage_info else 0,
+                    "num_fanout_calls": len(intermediate_thinking_context),
                 },
+                level="DEFAULT",
+                status_message="MoM request completed successfully"
             )
 
         return (
