@@ -80,14 +80,26 @@ class UsageInfo(BaseModel):
             # Try to calculate cost using model name and token counts
             try:
                 import litellm
+                import logging
+                logger = logging.getLogger(__name__)
+
+                logger.info(
+                    f"Attempting cost calculation for {model_name}: "
+                    f"input={prompt_tokens}, output={completion_tokens}"
+                )
 
                 calculated_cost = litellm.completion_cost(
                     model=model_name,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
+
+                logger.info(f"LiteLLM returned cost: {calculated_cost} (type: {type(calculated_cost)})")
                 cost = float(calculated_cost) if calculated_cost is not None else 0.0
-            except Exception:
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Cost calculation failed for {model_name}: {e}", exc_info=True)
                 # Cost calculation failed, default to 0.0 for safety
                 cost = 0.0
 

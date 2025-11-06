@@ -309,6 +309,9 @@ async def _call_lite_llm(
                 # Only use it if it has non-zero values (final chunk)
                 if "usage" in chunk_dict and chunk_dict["usage"]:
                     usage_dict = chunk_dict["usage"]
+                    # Log the full usage dict to see what Gemini is actually sending
+                    logger.info(f"[{llm_def.name}] Chunk {chunk_count} raw usage: {usage_dict}")
+
                     # Only accept usage if it has actual token counts
                     if usage_dict.get("total_tokens", 0) > 0:
                         # Always overwrite with latest usage (final chunk should have complete usage)
