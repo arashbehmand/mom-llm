@@ -15,7 +15,6 @@ graph TB
 
         subgraph "Endpoints"
             OpenAI[OpenAI v1 API]
-            Ollama[Ollama API]
             Metrics[Metrics API]
             Health[Health Checks]
         end
@@ -47,12 +46,10 @@ graph TB
     ReqID --> API
 
     API --> OpenAI
-    API --> Ollama
     API --> Metrics
     API --> Health
 
     OpenAI --> Config
-    Ollama --> Config
     Config --> Fanout
     Fanout --> LLMCalls
     LLMCalls -->|Parallel Calls| Concluding
@@ -173,9 +170,6 @@ sequenceDiagram
 - `POST /v1/chat/completions` - Chat completion with streaming
   - Supports multimodal content (OpenAI Vision API format)
   - Automatically filters models based on content type
-
-#### Ollama API (`endpoints/ollama_api.py`)
-- `POST /ollama/api/chat` - Ollama-compatible chat
 
 #### Metrics API (`endpoints/metrics_api.py`)
 - `GET /v1/metrics/usage` - Aggregated usage statistics
