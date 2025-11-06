@@ -1,6 +1,6 @@
 # Multi-stage build for smaller image size
 # Stage 1: Build dependencies
-FROM python:3.9-slim-buster as builder
+FROM python:3.12-slim-bookworm AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Stage 2: Production image
-FROM python:3.9-slim-buster
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
