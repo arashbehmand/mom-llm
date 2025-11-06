@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # Multimodal Content Models (OpenAI Vision API format)
@@ -44,7 +44,9 @@ class ChatMessage(BaseModel):
 
     role: Literal["system", "user", "assistant"]
     content: Union[str, list[ContentPart]]
-    images: Optional[list[str]] = None  # For alternative multimodal format
+    images: list[str] = Field(
+        default_factory=list
+    )  # For alternative multimodal format (empty list by default)
 
 
 class UsageInfo(BaseModel):

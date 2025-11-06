@@ -1,3 +1,16 @@
+"""
+OpenAI-compatible API endpoints for the MoM service.
+
+This module provides REST endpoints that follow the OpenAI Chat Completion API format,
+making the MoM service compatible with existing OpenAI client libraries and tools.
+
+Endpoints:
+- GET /v1/models: List available MoM models
+- POST /v1/chat/completions: Create a chat completion (supports streaming)
+
+All endpoints require Bearer token authentication via the Authorization header.
+"""
+
 import json
 import os
 import time
@@ -6,6 +19,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from ..auth import verify_bearer_token
 from ..config import load_config
 from .models import (
     ChatMessage,
@@ -18,41 +32,9 @@ config = load_config()
 openai_router = APIRouter(prefix="/v1", tags=["OpenAI"])
 
 
-def check_token(request: Request):
-    api_token = os.getenv("API_TOKEN")
-    if not api_token:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": "Service API token not configured by administrator.",
-                "type": "service_unavailable",
-            },
-        )
-
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "message": "Invalid authentication scheme. Use Bearer token.",
-                "type": "authentication_error",
-            },
-        )
-
-    token = auth_header.split(" ", 1)[1]
-    if token != api_token:
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "message": "Invalid or missing API token.",
-                "type": "authentication_error",
-            },
-        )
-
-
 @openai_router.get("/models")
 async def get_openai_models(request: Request):
-    check_token(request)
+    verify_bearer_token(request)
     data = []
     for m_config in config.models:
         data.append(
@@ -71,7 +53,7 @@ async def get_openai_models(request: Request):
 
 @openai_router.post("/chat/completions", response_model=OpenAIChatCompletionResponse)
 async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request: Request):
-    check_token(request)
+    verify_bearer_token(request)
     from ..main import get_mom_model_config
 
     model_conf_check = get_mom_model_config(req_data.model)

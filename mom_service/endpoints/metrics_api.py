@@ -10,47 +10,13 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from .. import metrics_db
+from ..auth import verify_bearer_token
 from ..config import load_config
 
 logger = logging.getLogger(__name__)
 
 config = load_config()
 metrics_router = APIRouter(prefix="/v1/metrics", tags=["Metrics"])
-
-
-def check_metrics_auth(request: Request):
-    """Check authentication for metrics endpoints (same as main API token)"""
-    import os
-
-    api_token = os.getenv("API_TOKEN")
-    if not api_token:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": "Service API token not configured by administrator.",
-                "type": "service_unavailable",
-            },
-        )
-
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "message": "Invalid authentication scheme. Use Bearer token.",
-                "type": "authentication_error",
-            },
-        )
-
-    token = auth_header.split(" ", 1)[1]
-    if token != api_token:
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "message": "Invalid or missing API token.",
-                "type": "authentication_error",
-            },
-        )
 
 
 @metrics_router.get("/usage")
@@ -81,7 +47,7 @@ async def get_usage_metrics(
 
     Requires Bearer token authentication.
     """
-    check_metrics_auth(request)
+    verify_bearer_token(request)
 
     try:
         aggregated_stats = metrics_db.get_aggregated_metrics(
@@ -141,7 +107,7 @@ async def get_raw_usage_metrics(
 
     Requires Bearer token authentication.
     """
-    check_metrics_auth(request)
+    verify_bearer_token(request)
 
     try:
         raw_metrics = metrics_db.query_metrics(
