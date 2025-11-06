@@ -1,14 +1,50 @@
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+# Multimodal Content Models (OpenAI Vision API format)
+class TextContentPart(BaseModel):
+    """Text content part for multimodal messages"""
+
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ImageUrlDetail(BaseModel):
+    """Image URL with optional detail level"""
+
+    url: str
+    detail: Optional[Literal["auto", "low", "high"]] = "auto"
+
+
+class ImageContentPart(BaseModel):
+    """Image content part for multimodal messages"""
+
+    type: Literal["image_url"] = "image_url"
+    image_url: ImageUrlDetail
+
+
+# Union of all content part types
+ContentPart = Union[TextContentPart, ImageContentPart]
 
 
 # Shared Models
 class ChatMessage(BaseModel):
+    """
+    Chat message supporting both simple text and multimodal content.
+
+    For simple text messages:
+        content: str
+
+    For multimodal messages (OpenAI Vision API format):
+        content: list[ContentPart]
+    """
+
     role: Literal["system", "user", "assistant"]
-    content: str
-    images: Optional[list[str]] = None  # For multimodal models
+    content: Union[str, list[ContentPart]]
+    images: Optional[list[str]] = None  # For alternative multimodal format
 
 
 class UsageInfo(BaseModel):
