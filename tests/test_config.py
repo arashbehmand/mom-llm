@@ -6,7 +6,14 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from mom_service.config import LLMDefinition, ModelConfig, MoMConfig, ServiceConfig, load_config
+from mom_service.config import (
+    LLMDefinition,
+    ModelConfig,
+    MoMConfig,
+    PricingConfig,
+    ServiceConfig,
+    load_config,
+)
 
 
 class TestLLMDefinition:
@@ -143,3 +150,203 @@ service:
         config = load_config()
         assert config is not None
         assert len(config.llm_definitions) == 1
+
+
+class TestPricingConfig:
+    """Tests for PricingConfig model"""
+
+    def test_pricing_config_with_all_costs(self):
+        """Test PricingConfig with all cost fields specified"""
+        pricing = PricingConfig(
+            prompt_cost_per_token=0.00003,
+            completion_cost_per_token=0.00006,
+            reasoning_cost_per_token=0.0001,
+        )
+        assert pricing.prompt_cost_per_token == 0.00003
+        assert pricing.completion_cost_per_token == 0.00006
+        assert pricing.reasoning_cost_per_token == 0.0001
+
+    def test_pricing_config_optional_fields(self):
+        """Test that pricing config fields are optional"""
+        pricing = PricingConfig()
+        assert pricing.prompt_cost_per_token is None
+        assert pricing.completion_cost_per_token is None
+        assert pricing.reasoning_cost_per_token is None
+
+    def test_pricing_config_partial_specification(self):
+        """Test PricingConfig with only some fields specified"""
+        pricing = PricingConfig(
+            prompt_cost_per_token=0.00001,
+            completion_cost_per_token=0.00002,
+        )
+        assert pricing.prompt_cost_per_token == 0.00001
+        assert pricing.completion_cost_per_token == 0.00002
+        assert pricing.reasoning_cost_per_token is None
+
+    def test_calculate_cost_standard_completion(self):
+        """Test cost calculation for standard completion (no reasoning)"""
+        pricing = PricingConfig(
+            prompt_cost_per_token=0.00003,
+            completion_cost_per_token=0.00006,
+        )
+
+        total_cost, cost_breakdown = pricing.calculate_cost(
+            prompt_tokens=1000,
+            completion_tokens=500,
+        )
+
+        # 1000 * 0.00003 + 500 * 0.00006 = 0.03 + 0.03 = 0.06
+        assert total_cost == pytest.approx(0.06, rel=1e-6)
+        assert cost_breakdown == {"input": pytest.approx(0.03), "output": pytest.approx(0.03)}
+
+    def test_calculate_cost_with_reasoning_breakdown(self):
+        """Test cost calculation with reasoning token breakdown"""
+        pricing = PricingConfig(
+            prompt_cost_per_token=0.15 / 1_000_000,  # $0.15/1M
+            completion_cost_per_token=0.60 / 1_000_000,  # $0.60/1M
+            reasoning_cost_per_token=3.50 / 1_000_000,  # $3.50/1M
+        )
+
+        total_cost, cost_breakdown = pricing.calculate_cost(
+            prompt_tokens=1000,
+            completion_tokens=825,
+            reasoning_tokens=764,
+            text_tokens=61,
+        )
+
+        # Input: 1000 * 0.15/1M = 0.00015
+        # Text: 61 * 0.60/1M = 0.0000366
+        # Reasoning: 764 * 3.50/1M = 0.002674
+        assert total_cost == pytest.approx(0.0028606, rel=1e-4)
+        assert "input" in cost_breakdown
+        assert "output_text" in cost_breakdown
+        assert "output_reasoning" in cost_breakdown
+
+    def test_calculate_cost_with_zero_tokens(self):
+        """Test cost calculation with zero tokens"""
+        pricing = PricingConfig(
+            prompt_cost_per_token=0.001,
+            completion_cost_per_token=0.002,
+        )
+
+        total_cost, cost_breakdown = pricing.calculate_cost(
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+        assert total_cost == 0.0
+        assert cost_breakdown == {"input": 0.0, "output": 0.0}
+
+    def test_calculate_cost_only_reasoning_tokens(self):
+        """Test cost calculation when all output is reasoning tokens"""
+        pricing = PricingConfig(
+            prompt_cost_per_token=0.001 / 1_000_000,
+            completion_cost_per_token=0.01 / 1_000_000,
+            reasoning_cost_per_token=0.1 / 1_000_000,
+        )
+
+        total_cost, cost_breakdown = pricing.calculate_cost(
+            prompt_tokens=100,
+            completion_tokens=1000,
+            reasoning_tokens=1000,
+            text_tokens=0,
+        )
+
+        # All output cost should come from reasoning
+        assert total_cost > 0
+        assert cost_breakdown["output_text"] == 0.0
+        assert cost_breakdown["output_reasoning"] > 0
+
+    def test_calculate_cost_without_reasoning_pricing(self):
+        """Test that standard pricing is used when no reasoning pricing configured"""
+        pricing = PricingConfig(
+            prompt_cost_per_token=0.001,
+            completion_cost_per_token=0.002,
+            # No reasoning_cost_per_token
+        )
+
+        total_cost, cost_breakdown = pricing.calculate_cost(
+            prompt_tokens=100,
+            completion_tokens=200,
+            reasoning_tokens=50,  # These will be ignored
+            text_tokens=150,
+        )
+
+        # Should use standard completion pricing for all output tokens
+        assert total_cost == pytest.approx(0.5, rel=1e-6)  # 100*0.001 + 200*0.002
+        assert "input" in cost_breakdown
+        assert "output" in cost_breakdown
+        assert "output_text" not in cost_breakdown  # No reasoning breakdown
+
+    def test_calculate_cost_with_none_costs(self):
+        """Test cost calculation with None values"""
+        pricing = PricingConfig(
+            prompt_cost_per_token=None,
+            completion_cost_per_token=None,
+        )
+
+        total_cost, cost_breakdown = pricing.calculate_cost(
+            prompt_tokens=1000,
+            completion_tokens=500,
+        )
+
+        assert total_cost == 0.0
+        assert cost_breakdown == {"input": 0.0, "output": 0.0}
+
+    def test_llm_definition_with_pricing(self):
+        """Test LLMDefinition with pricing configuration"""
+        pricing = PricingConfig(
+            prompt_cost_per_token=0.00003,
+            completion_cost_per_token=0.00006,
+        )
+
+        llm_def = LLMDefinition(
+            name="test-llm",
+            model="gpt-4",
+            api_key_env="OPENAI_API_KEY",
+            pricing=pricing,
+        )
+
+        assert llm_def.pricing is not None
+        assert llm_def.pricing.prompt_cost_per_token == 0.00003
+
+    def test_llm_definition_without_pricing(self):
+        """Test LLMDefinition without pricing (should default to None)"""
+        llm_def = LLMDefinition(
+            name="test-llm",
+            model="gpt-4",
+            api_key_env="OPENAI_API_KEY",
+        )
+
+        assert llm_def.pricing is None
+
+    def test_pricing_config_from_yaml(self, tmp_path):
+        """Test loading PricingConfig from YAML"""
+        config_content = """
+llm_definitions:
+  - name: test-gpt4
+    model: gpt-4
+    api_key_env: OPENAI_API_KEY
+    pricing:
+      prompt_cost_per_token: 0.00003
+      completion_cost_per_token: 0.00006
+      reasoning_cost_per_token: 0.0001
+
+models:
+  - name: test-model
+    llms_to_query:
+      - test-gpt4
+    concluding_llm: test-gpt4
+
+service:
+  timeout_seconds: 30
+"""
+        config_file = tmp_path / "config_with_pricing.yaml"
+        config_file.write_text(config_content)
+
+        config = load_config(config_path=str(config_file))
+
+        assert config.llm_definitions[0].pricing is not None
+        assert config.llm_definitions[0].pricing.prompt_cost_per_token == 0.00003
+        assert config.llm_definitions[0].pricing.completion_cost_per_token == 0.00006
+        assert config.llm_definitions[0].pricing.reasoning_cost_per_token == 0.0001

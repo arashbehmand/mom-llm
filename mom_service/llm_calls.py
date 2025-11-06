@@ -146,6 +146,7 @@ async def _call_lite_llm(
     """
     Calls the LiteLLM completion endpoint with retry logic, caching, and metrics recording.
     Yields the response object.
+    For streaming, yields chunks and finally a special dict with usage info.
     """
     options = options or {}
     trace = options.get("trace")
@@ -164,6 +165,10 @@ async def _call_lite_llm(
         "num_retries": config.service.max_llm_retries,  # LiteLLM retry parameter
         **(llm_def.params or {}),  # LLM-specific params can override defaults (guard against None)
     }
+
+    # For streaming, request usage info in the stream
+    if stream:
+        params["stream_options"] = {"include_usage": True}
 
     cache_key = _generate_cache_key(llm_def, messages, params)
     if config.service.cache_enabled:
@@ -190,6 +195,60 @@ async def _call_lite_llm(
                     )
                 )
 
+            # Create Langfuse generation for cache hit
+            if trace:
+                # Filter params for Langfuse
+                langfuse_params = {}
+                for k, v in params.items():
+                    if k == "messages":
+                        continue
+                    if isinstance(v, (str, int, float, bool, list)):
+                        langfuse_params[k] = v
+                    elif isinstance(v, dict):
+                        langfuse_params[k] = json.dumps(v)
+
+                generation = trace.generation(
+                    name=generation_name,
+                    metadata={"call_type": call_type, "llm_name": llm_def.name, "cached": True},
+                    input=messages,
+                    model=llm_def.model,
+                    model_parameters=langfuse_params,
+                )
+
+                # End generation immediately for cache hit with usage info
+                if cached_response.usage:
+                    output_dict = litellm.utils.convert_to_dict(cached_response)
+
+                    # For cache hits, report actual tokens and $0 cost
+                    actual_input = getattr(cached_response.usage, "prompt_tokens", 0)
+                    actual_output = getattr(cached_response.usage, "completion_tokens", 0)
+
+                    generation.end(
+                        output=output_dict,
+                        level="DEFAULT",
+                        status_message="Cache hit - instant response (cost: $0)",
+                        usage={
+                            "input": actual_input,
+                            "output": actual_output,
+                            "total": actual_input + actual_output,
+                        },
+                        metadata={"cached": True},
+                    )
+
+                    # Cache hits have $0 cost
+                    generation.update(
+                        cost_details={
+                            "total": 0.0,
+                        }
+                    )
+                else:
+                    generation.end(
+                        output=litellm.utils.convert_to_dict(cached_response),
+                        level="DEFAULT",
+                        status_message="Cache hit - instant response (cost: $0)",
+                        metadata={"cached": True},
+                    )
+
             yield cached_response
             return
 
@@ -197,12 +256,25 @@ async def _call_lite_llm(
 
     generation = None
     if trace:
+        # Filter out complex types that Langfuse can't handle (dicts, objects)
+        # Only include primitive types: str, int, float, bool, list
+        langfuse_params = {}
+        for k, v in params.items():
+            if k == "messages":
+                continue  # Skip messages as they're passed separately
+            # Only include primitive types that Langfuse accepts
+            if isinstance(v, (str, int, float, bool, list)):
+                langfuse_params[k] = v
+            elif isinstance(v, dict):
+                # Convert dicts to JSON string for Langfuse
+                langfuse_params[k] = json.dumps(v)
+
         generation = trace.generation(
             name=generation_name,
             metadata={"call_type": call_type, "llm_name": llm_def.name},
             input=messages,
             model=llm_def.model,
-            model_parameters={k: v for k, v in params.items() if k != "messages"},
+            model_parameters=langfuse_params,
         )
 
     start_time = time.time()
@@ -210,7 +282,12 @@ async def _call_lite_llm(
     try:
         if stream:
             response_stream = await litellm.acompletion(**params)
+            accumulated_usage = None
+            complete_content = ""
+            chunk_count = 0
+
             async for chunk in response_stream:
+                chunk_count += 1
                 # Convert LiteLLM streaming chunk objects to plain dicts so callers
                 # (and the OpenAI-compatible endpoint) can consume them uniformly.
                 try:
@@ -226,18 +303,140 @@ async def _call_lite_llm(
                     except Exception:
                         chunk_dict = {"choices": [{"delta": {"content": str(chunk)}}]}
 
+                # Capture usage info if present in chunk (final chunk contains usage)
+                # Only use it if it has non-zero values (final chunk)
+                if "usage" in chunk_dict and chunk_dict["usage"]:
+                    usage_dict = chunk_dict["usage"]
+                    # Log the full usage dict to see what Gemini is actually sending
+                    logger.info(f"[{llm_def.name}] Chunk {chunk_count} raw usage: {usage_dict}")
+
+                    # Only accept usage if it has actual token counts
+                    if usage_dict.get("total_tokens", 0) > 0:
+                        # Always overwrite with latest usage (final chunk should have complete usage)
+                        accumulated_usage = usage_dict
+                        logger.info(
+                            f"[{llm_def.name}] Chunk {chunk_count} usage: "
+                            f"input={usage_dict.get('prompt_tokens')}, "
+                            f"output={usage_dict.get('completion_tokens')}, "
+                            f"total={usage_dict.get('total_tokens')}"
+                        )
+
+                # Accumulate content for Langfuse
+                if "choices" in chunk_dict and chunk_dict["choices"]:
+                    for choice in chunk_dict["choices"]:
+                        if "delta" in choice and "content" in choice["delta"]:
+                            content = choice["delta"]["content"]
+                            if content:
+                                complete_content += content
+
                 yield chunk_dict
 
-            # For streaming, we don't have full usage info until the end
-            # Metrics recording for streaming will be handled at a higher level
+            logger.info(
+                f"Streaming completed for {llm_def.name}: {chunk_count} chunks, "
+                f"content_length={len(complete_content)}, usage_captured={accumulated_usage is not None}"
+            )
 
-            # End Langfuse generation for streaming with proper status
-            if generation:
-                generation.end(
-                    output={"status": "streaming_completed"},
-                    level="DEFAULT",
-                    status_message="Streaming response completed successfully",
+            if accumulated_usage:
+                logger.info(
+                    f"Captured usage for {llm_def.name}: "
+                    f"input={accumulated_usage.get('prompt_tokens')}, "
+                    f"output={accumulated_usage.get('completion_tokens')}, "
+                    f"total={accumulated_usage.get('total_tokens')}"
                 )
+
+                # Check for detailed token breakdown (reasoning vs text)
+                completion_details = accumulated_usage.get("completion_tokens_details", {})
+                prompt_details = accumulated_usage.get("prompt_tokens_details", {})
+
+                if completion_details or prompt_details:
+                    logger.info(
+                        f"Token details for {llm_def.name}: "
+                        f"completion_details={completion_details}, "
+                        f"prompt_details={prompt_details}"
+                    )
+
+            end_time = time.time()
+            duration_ms = (end_time - start_time) * 1000
+
+            # Record metrics for streaming call with accumulated usage
+            if accumulated_usage:
+                from .cost_calculation import calculate_detailed_cost
+
+                # Extract token counts and details
+                prompt_tokens = accumulated_usage.get("prompt_tokens", 0)
+                completion_tokens = accumulated_usage.get("completion_tokens", 0)
+                total_tokens = accumulated_usage.get("total_tokens", 0)
+                completion_details = accumulated_usage.get("completion_tokens_details", {})
+                prompt_details = accumulated_usage.get("prompt_tokens_details", {})
+
+                # Calculate detailed cost (with custom pricing if configured)
+                total_cost, cost_breakdown = calculate_detailed_cost(
+                    model_name=llm_def.model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    completion_tokens_details=completion_details,
+                    pricing_config=llm_def.pricing,  # Use custom pricing from config
+                )
+
+                metrics_db.insert_metric_record(
+                    metrics_db.MetricRecord(
+                        request_id=request_id,
+                        mom_model_name=mom_model_name,
+                        llm_name=llm_def.name,
+                        call_type=call_type,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        cost=total_cost,
+                        duration_ms=duration_ms,
+                        status="SUCCESS",
+                        error_message=None,
+                        cache_hit=False,
+                    )
+                )
+
+                # End Langfuse generation with detailed tokens and costs
+                if generation:
+                    # Build detailed usage dict with flattened token details
+                    usage_dict = {
+                        "input": prompt_tokens,
+                        "output": completion_tokens,
+                        "total": total_tokens,
+                    }
+
+                    # Add flattened completion_tokens_details (Langfuse style)
+                    if completion_details:
+                        for key, value in completion_details.items():
+                            usage_dict[f"output_{key}"] = value
+
+                    # Add flattened prompt_tokens_details
+                    if prompt_details:
+                        for key, value in prompt_details.items():
+                            usage_dict[f"input_{key}"] = value
+
+                    # Update with granular cost details BEFORE ending
+                    if cost_breakdown:
+                        generation.update(cost_details=cost_breakdown)
+                        logger.info(
+                            f"Updated Langfuse with detailed costs for {llm_def.name}: {cost_breakdown}"
+                        )
+
+                    # Report detailed tokens and costs
+                    generation.end(
+                        output={"content": complete_content, "status": "streaming_completed"},
+                        level="DEFAULT",
+                        status_message="Streaming response completed successfully",
+                        usage=usage_dict,
+                    )
+            else:
+                logger.warning(f"No usage info received in streaming response for {llm_def.name}")
+                # End Langfuse generation without usage
+                if generation:
+                    generation.end(
+                        output={"content": complete_content, "status": "streaming_completed"},
+                        level="DEFAULT",
+                        status_message="Streaming response completed (no usage info)",
+                    )
         else:
             response = await litellm.acompletion(**params)
             if config.service.cache_enabled:
@@ -248,13 +447,55 @@ async def _call_lite_llm(
 
             # Record metrics for successful non-streaming call
             if response.usage:
-                from .endpoints.models import UsageInfo
+                from .cost_calculation import calculate_detailed_cost
 
-                usage_info = UsageInfo.from_litellm_usage(
-                    response.usage,
-                    response_obj=response,
-                    is_cached=False,
-                    pricing_config=llm_def.pricing,
+                # Extract token counts from response.usage
+                prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
+                completion_tokens = getattr(response.usage, "completion_tokens", 0)
+                total_tokens = getattr(response.usage, "total_tokens", 0)
+
+                # Extract detailed token breakdown if available
+                # LiteLLM returns wrapper objects, convert to dicts
+                completion_details_obj = getattr(response.usage, "completion_tokens_details", None)
+                prompt_details_obj = getattr(response.usage, "prompt_tokens_details", None)
+
+                # Convert wrapper objects to dicts (filter out None values)
+                completion_details = {}
+                if completion_details_obj:
+                    try:
+                        completion_details = {
+                            k: v for k, v in vars(completion_details_obj).items() if v is not None
+                        }
+                    except (TypeError, AttributeError):
+                        # If conversion fails, try as dict
+                        if isinstance(completion_details_obj, dict):
+                            completion_details = completion_details_obj
+
+                prompt_details = {}
+                if prompt_details_obj:
+                    try:
+                        prompt_details = {
+                            k: v for k, v in vars(prompt_details_obj).items() if v is not None
+                        }
+                    except (TypeError, AttributeError):
+                        # If conversion fails, try as dict
+                        if isinstance(prompt_details_obj, dict):
+                            prompt_details = prompt_details_obj
+
+                if completion_details or prompt_details:
+                    logger.info(
+                        f"Non-streaming token details for {llm_def.name}: "
+                        f"completion_details={completion_details}, "
+                        f"prompt_details={prompt_details}"
+                    )
+
+                # Calculate detailed cost (with custom pricing if configured)
+                total_cost, cost_breakdown = calculate_detailed_cost(
+                    model_name=llm_def.model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    completion_tokens_details=completion_details,
+                    pricing_config=llm_def.pricing,  # Use custom pricing from config
                 )
 
                 metrics_db.insert_metric_record(
@@ -263,10 +504,10 @@ async def _call_lite_llm(
                         mom_model_name=mom_model_name,
                         llm_name=llm_def.name,
                         call_type=call_type,
-                        prompt_tokens=usage_info.prompt_tokens or 0,
-                        completion_tokens=usage_info.completion_tokens or 0,
-                        total_tokens=usage_info.total_tokens or 0,
-                        cost=usage_info.cost,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        cost=total_cost,
                         duration_ms=duration_ms,
                         status="SUCCESS",
                         error_message=None,
@@ -274,23 +515,48 @@ async def _call_lite_llm(
                     )
                 )
 
-            # End Langfuse generation with comprehensive output and metadata
+            # End Langfuse generation with actual tokens and detailed costs
             if generation:
                 output_dict = litellm.utils.convert_to_dict(response)
-                generation.end(
-                    output=output_dict,
-                    level="DEFAULT",
-                    status_message="LLM call completed successfully",
-                    usage=(
-                        {
-                            "input": response.usage.prompt_tokens if response.usage else 0,
-                            "output": response.usage.completion_tokens if response.usage else 0,
-                            "total": response.usage.total_tokens if response.usage else 0,
-                        }
-                        if response.usage
-                        else None
-                    ),
-                )
+
+                # Report actual tokens with detailed breakdown
+                if response.usage:
+                    # Build detailed usage dict with flattened token details
+                    usage_dict = {
+                        "input": prompt_tokens,
+                        "output": completion_tokens,
+                        "total": total_tokens,
+                    }
+
+                    # Add flattened completion_tokens_details (Langfuse style)
+                    if completion_details:
+                        for key, value in completion_details.items():
+                            usage_dict[f"output_{key}"] = value
+
+                    # Add flattened prompt_tokens_details
+                    if prompt_details:
+                        for key, value in prompt_details.items():
+                            usage_dict[f"input_{key}"] = value
+
+                    # Update with granular cost details BEFORE ending
+                    if cost_breakdown:
+                        generation.update(cost_details=cost_breakdown)
+                        logger.info(
+                            f"Updated Langfuse with detailed costs for {llm_def.name}: {cost_breakdown}"
+                        )
+
+                    generation.end(
+                        output=output_dict,
+                        level="DEFAULT",
+                        status_message="LLM call completed successfully",
+                        usage=usage_dict,
+                    )
+                else:
+                    generation.end(
+                        output=output_dict,
+                        level="DEFAULT",
+                        status_message="LLM call completed successfully",
+                    )
 
             yield response
 

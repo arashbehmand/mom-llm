@@ -1,14 +1,50 @@
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel
 
 
+# Multimodal Content Models (OpenAI Vision API format)
+class TextContentPart(BaseModel):
+    """Text content part for multimodal messages"""
+
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ImageUrlDetail(BaseModel):
+    """Image URL with optional detail level"""
+
+    url: str
+    detail: Optional[Literal["auto", "low", "high"]] = "auto"
+
+
+class ImageContentPart(BaseModel):
+    """Image content part for multimodal messages"""
+
+    type: Literal["image_url"] = "image_url"
+    image_url: ImageUrlDetail
+
+
+# Union of all content part types
+ContentPart = Union[TextContentPart, ImageContentPart]
+
+
 # Shared Models
 class ChatMessage(BaseModel):
+    """
+    Chat message supporting both simple text and multimodal content.
+
+    For simple text messages:
+        content: str
+
+    For multimodal messages (OpenAI Vision API format):
+        content: list[ContentPart]
+    """
+
     role: Literal["system", "user", "assistant"]
-    content: str
-    images: Optional[list[str]] = None  # For multimodal models
+    content: Union[str, list[ContentPart]]
+    images: Optional[list[str]] = None  # For alternative multimodal format
 
 
 class UsageInfo(BaseModel):
@@ -18,13 +54,7 @@ class UsageInfo(BaseModel):
     cost: Optional[float] = None
 
     @classmethod
-    def from_litellm_usage(
-        cls,
-        usage: Any,
-        response_obj: Any = None,
-        is_cached: bool = False,
-        pricing_config: Any = None,
-    ) -> "UsageInfo":
+    def from_litellm_usage(cls, usage: Any, **kwargs) -> "UsageInfo":
         """
         Create UsageInfo from LiteLLM usage object or response.
 
@@ -33,10 +63,17 @@ class UsageInfo(BaseModel):
             response_obj: Optional full LiteLLM response object for cost calculation
             is_cached: Whether this is a cached response (cost should be 0.0)
             pricing_config: Optional PricingConfig to override default LiteLLM pricing
+            model_name: Optional model name for cost calculation when response_obj is not available
 
         Returns:
             UsageInfo instance with tokens and cost
         """
+        # Extract optional parameters from kwargs for backward compatibility
+        response_obj = kwargs.get("response_obj")
+        is_cached = kwargs.get("is_cached", False)
+        pricing_config = kwargs.get("pricing_config")
+        model_name = kwargs.get("model_name")
+
         if usage is None:
             return cls(
                 prompt_tokens=0,
@@ -72,6 +109,41 @@ class UsageInfo(BaseModel):
                 # Ensure cost is always a number or None, never something else
                 cost = float(calculated_cost) if calculated_cost is not None else 0.0
             except Exception:
+                # Cost calculation failed, default to 0.0 for safety
+                cost = 0.0
+        elif model_name is not None:
+            # Try to calculate cost using model name and token counts
+            try:
+                import logging
+
+                import litellm
+
+                logger = logging.getLogger(__name__)
+
+                logger.info(
+                    f"Attempting cost calculation for {model_name}: "
+                    f"input={prompt_tokens}, output={completion_tokens}"
+                )
+
+                # Use cost_per_token which returns (prompt_cost, completion_cost)
+                prompt_cost_usd, completion_cost_usd = litellm.cost_per_token(
+                    model=model_name,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+
+                calculated_cost = (prompt_cost_usd or 0.0) + (completion_cost_usd or 0.0)
+
+                logger.info(
+                    f"LiteLLM cost_per_token returned: prompt=${prompt_cost_usd:.6f}, "
+                    f"completion=${completion_cost_usd:.6f}, total=${calculated_cost:.6f}"
+                )
+                cost = float(calculated_cost) if calculated_cost is not None else 0.0
+            except Exception as e:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.error(f"Cost calculation failed for {model_name}: {e}", exc_info=True)
                 # Cost calculation failed, default to 0.0 for safety
                 cost = 0.0
 

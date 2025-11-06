@@ -79,8 +79,14 @@ MoM Service uses an elegant **fan-out, fan-in architecture** for parallel proces
 
 - **🔌 OpenAI-Compatible API**: Drop-in replacement with `/v1/chat/completions` and `/v1/models` endpoints
 - **🎭 Multi-Model Orchestration**: Query multiple LLMs in parallel with intelligent synthesis
+- **🖼️ Multimodal Vision Support**: Send images alongside text using OpenAI Vision API format (GPT-4o, Claude-3, Gemini)
 - **⚡ Real-Time Streaming**: Stream synthesized responses back to clients with low latency
 - **⚙️ Configuration-Driven**: Define everything in a single `config.yaml` file—no code changes needed
+- **💰 Advanced Pricing & Cost Tracking**:
+  - Custom pricing configurations for reasoning tokens (Gemini 2.5, Claude Sonnet 4.5, o1)
+  - Automatic model filtering based on multimodal capabilities
+  - Detailed cost breakdowns with normalized token reporting
+  - LiteLLM fallback pricing for all models
 - **📊 Advanced Observability**:
   - Built-in Langfuse integration for distributed tracing
   - Comprehensive metrics API with cost tracking and usage analytics
@@ -238,6 +244,38 @@ curl http://localhost:8000/v1/chat/completions \
   }'
 ```
 Note: Set "stream": false to get a single JSON response instead of an SSE stream.
+
+**Send an image (multimodal vision request):**
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-secret-bearer-token" \
+  -d '{
+    "model": "mom",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What'\''s in this image?"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://example.com/image.jpg",
+              "detail": "high"
+            }
+          }
+        ]
+      }
+    ],
+    "stream": false
+  }'
+```
+
+**Note**: Vision requests automatically filter to multimodal-capable models (GPT-4o, Claude-3, Gemini, etc.). Non-capable models are skipped.
+
 ## ⚙️ Configuration
 
 The entire service is configured through `config.yaml`. Here's a breakdown of the key sections:
@@ -253,11 +291,18 @@ llm_definitions:
     api_key_env: "OPENAI_API_KEY"
     params:
       temperature: 0.7
-  
+
   - name: "gemini-flash"
-    model: "gemini/gemini-2.5-flash-preview-04-17"
+    model: "gemini/gemini-2.5-flash"
     api_key_env: "GOOGLE_API_KEY"
+    # Custom pricing for reasoning tokens (optional)
+    pricing:
+      prompt_cost_per_token: 0.00000015      # $0.15 per 1M tokens
+      completion_cost_per_token: 0.00000060  # $0.60 per 1M text tokens
+      reasoning_cost_per_token: 0.00000350   # $3.50 per 1M reasoning tokens
 ```
+
+**Note**: Custom pricing is optional. If not specified, LiteLLM's default pricing is used. For models with reasoning tokens (Gemini 2.5, Claude Sonnet 4.5, o1), custom pricing enables accurate cost tracking.
 
 ### Synthesis Prompts
 

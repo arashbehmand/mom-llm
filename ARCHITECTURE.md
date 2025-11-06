@@ -168,16 +168,110 @@ sequenceDiagram
 #### OpenAI v1 API (`endpoints/openai_v1.py`)
 - `GET /v1/models` - List available MoM models
 - `POST /v1/chat/completions` - Chat completion with streaming
+  - Supports multimodal content (OpenAI Vision API format)
+  - Automatically filters models based on content type
 
 #### Metrics API (`endpoints/metrics_api.py`)
 - `GET /v1/metrics/usage` - Aggregated usage statistics
 - `GET /v1/metrics/usage/raw` - Raw metric records
+
+#### Request/Response Models (`endpoints/models.py`)
+
+**Multimodal Message Support**:
+```python
+ChatMessage:
+  role: "user" | "assistant" | "system"
+  content: Union[str, List[ContentPart]]  # NEW: Supports multimodal
+
+ContentPart = Union[TextContentPart, ImageContentPart]
+
+TextContentPart:
+  type: "text"
+  text: str
+
+ImageContentPart:
+  type: "image_url"
+  image_url:
+    url: str
+    detail: "auto" | "low" | "high"  # Optional detail level
+```
+
+**Backward Compatibility**: Simple string content still supported for text-only messages.
 
 #### Health Checks (`health.py`)
 - `GET /health` - Basic liveness check
 - `GET /health/detailed` - Component health validation
 
 ### 3. Core Logic Layer
+
+#### Multimodal Support (`multimodal_utils.py`)
+
+**Capabilities**:
+- Detects multimodal content in messages (images, files, etc.)
+- Identifies models with vision/multimodal capabilities
+- Automatically filters LLMs based on request type
+- Supports OpenAI Vision API format
+
+**Content Detection**:
+```python
+# Detects these multimodal formats:
+- content: [{"type": "text"}, {"type": "image_url", "image_url": {...}}]
+- images: ["url1", "url2"]
+- attachments: [...]
+- files: [...]
+```
+
+**Model Filtering Flow**:
+```
+1. Check if request has multimodal content
+2. If yes, filter llms_to_query to only multimodal-capable models
+3. Skip non-capable models (e.g., GPT-3.5, text-only models)
+4. Log which models are used/skipped
+```
+
+**Supported Multimodal Models**:
+- OpenAI: gpt-4o, gpt-4-turbo, gpt-4-vision
+- Anthropic: claude-3-* (opus, sonnet, haiku)
+- Google: gemini-1.5-*, gemini-2.*
+- Automatic detection via LiteLLM's supports_vision() when available
+
+#### Pricing & Cost Tracking
+
+**Pricing Utilities (`pricing_utils.py`)**:
+- Converts actual costs to normalized tokens (unified pricing model)
+- Unified rates: $1/1M input tokens, $10/1M output tokens
+- Preserves actual costs while providing consistent token reporting
+- Handles rounding from integer token counts
+
+**Cost Calculation (`cost_calculation.py`)**:
+- Detailed cost breakdown with reasoning token support
+- Custom pricing configs for models with differential pricing
+- Fallback to LiteLLM pricing when custom pricing unavailable
+- Separate tracking for input, text output, and reasoning output
+
+**Reasoning Token Support**:
+```yaml
+Models with reasoning tokens:
+- Gemini 2.5 Flash/Pro: reasoning_tokens + text_tokens
+- Claude Sonnet 4.5: reasoning_tokens in completion_details
+- OpenAI o1/o4: reasoning_tokens in token details
+
+Custom pricing example:
+pricing:
+  prompt_cost_per_token: 0.00000015     # Input tokens
+  completion_cost_per_token: 0.00000060 # Text output
+  reasoning_cost_per_token: 0.00000350  # Reasoning output (higher cost)
+```
+
+**Cost Tracking Flow**:
+```
+1. Extract token counts from LLM response
+2. Check for custom pricing config
+3. If present: calculate with reasoning token breakdown
+4. If absent: fall back to LiteLLM pricing
+5. Record detailed cost breakdown in metrics
+6. Update Langfuse with cost details
+```
 
 #### Configuration System (`config.py`)
 ```python
@@ -186,7 +280,11 @@ MoMConfig
 │   ├── name: str
 │   ├── model: str
 │   ├── api_key_env: str
-│   └── params: Dict
+│   ├── params: Dict
+│   └── pricing: Optional[PricingConfig]  # NEW: Custom pricing
+│       ├── prompt_cost_per_token: Optional[float]
+│       ├── completion_cost_per_token: Optional[float]
+│       └── reasoning_cost_per_token: Optional[float]
 ├── prompt_definitions: List[PromptDefinition]
 ├── models: List[ModelConfig]
 │   ├── name: str
