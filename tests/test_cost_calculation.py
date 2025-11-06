@@ -214,26 +214,28 @@ class TestCalculateDetailedCostErrorHandling:
 
     def test_no_pricing_available(self):
         """Test when no pricing is available (neither custom nor LiteLLM)"""
-        with patch(
-            "mom_service.cost_calculation.litellm.cost_per_token",
-            side_effect=Exception("No pricing available"),
+        with (
+            patch(
+                "mom_service.cost_calculation.litellm.cost_per_token",
+                side_effect=Exception("No pricing available"),
+            ),
+            patch("mom_service.cost_calculation.logger.warning") as mock_warning,
         ):
-            with patch("mom_service.cost_calculation.logger.warning") as mock_warning:
-                total_cost, cost_breakdown = calculate_detailed_cost(
-                    model_name="unknown-model",
-                    prompt_tokens=1000,
-                    completion_tokens=500,
-                    pricing_config=None,
-                )
+            total_cost, cost_breakdown = calculate_detailed_cost(
+                model_name="unknown-model",
+                prompt_tokens=1000,
+                completion_tokens=500,
+                pricing_config=None,
+            )
 
-                # Should return $0 cost
-                assert total_cost == 0.0
-                assert cost_breakdown == {}
+            # Should return $0 cost
+            assert total_cost == 0.0
+            assert cost_breakdown == {}
 
-                # Should log warning
-                assert mock_warning.called
-                warning_msg = mock_warning.call_args[0][0]
-                assert "failed" in warning_msg.lower()
+            # Should log warning
+            assert mock_warning.called
+            warning_msg = mock_warning.call_args[0][0]
+            assert "failed" in warning_msg.lower()
 
     def test_zero_tokens(self):
         """Test cost calculation with zero tokens"""
