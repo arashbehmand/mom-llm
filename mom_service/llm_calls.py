@@ -346,26 +346,38 @@ async def _call_lite_llm(
                     f"total={accumulated_usage.get('total_tokens')}"
                 )
 
+                # Check for detailed token breakdown (reasoning vs text)
+                completion_details = accumulated_usage.get('completion_tokens_details', {})
+                prompt_details = accumulated_usage.get('prompt_tokens_details', {})
+
+                if completion_details or prompt_details:
+                    logger.info(
+                        f"Token details for {llm_def.name}: "
+                        f"completion_details={completion_details}, "
+                        f"prompt_details={prompt_details}"
+                    )
+
             end_time = time.time()
             duration_ms = (end_time - start_time) * 1000
 
             # Record metrics for streaming call with accumulated usage
             if accumulated_usage:
-                from .endpoints.models import UsageInfo
-                from .pricing_utils import calculate_normalized_tokens
+                from .cost_calculation import calculate_detailed_cost
 
-                usage_info = UsageInfo.from_litellm_usage(
-                    accumulated_usage,
-                    response_obj=None,  # No full response object for streaming
-                    is_cached=False,
-                    pricing_config=llm_def.pricing,
-                    model_name=llm_def.model,  # Pass model name for cost calculation
-                )
+                # Extract token counts and details
+                prompt_tokens = accumulated_usage.get('prompt_tokens', 0)
+                completion_tokens = accumulated_usage.get('completion_tokens', 0)
+                total_tokens = accumulated_usage.get('total_tokens', 0)
+                completion_details = accumulated_usage.get('completion_tokens_details', {})
+                prompt_details = accumulated_usage.get('prompt_tokens_details', {})
 
-                logger.info(
-                    f"Calculated usage_info for {llm_def.name}: "
-                    f"input={usage_info.prompt_tokens}, output={usage_info.completion_tokens}, "
-                    f"total={usage_info.total_tokens}, cost=${usage_info.cost:.6f if usage_info.cost else 0}"
+                # Calculate detailed cost
+                total_cost, cost_breakdown = calculate_detailed_cost(
+                    model_name=llm_def.model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    completion_tokens_details=completion_details,
+                    prompt_tokens_details=prompt_details,
                 )
 
                 metrics_db.insert_metric_record(
@@ -374,10 +386,10 @@ async def _call_lite_llm(
                         mom_model_name=mom_model_name,
                         llm_name=llm_def.name,
                         call_type=call_type,
-                        prompt_tokens=usage_info.prompt_tokens or 0,
-                        completion_tokens=usage_info.completion_tokens or 0,
-                        total_tokens=usage_info.total_tokens or 0,
-                        cost=usage_info.cost,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        cost=total_cost,
                         duration_ms=duration_ms,
                         status="SUCCESS",
                         error_message=None,
@@ -385,27 +397,38 @@ async def _call_lite_llm(
                     )
                 )
 
-                # End Langfuse generation with actual tokens and cost
+                # End Langfuse generation with detailed tokens and costs
                 if generation:
-                    # Update with cost details BEFORE ending (must be called first)
-                    if usage_info.cost and usage_info.cost > 0:
-                        generation.update(
-                            cost_details={
-                                "total": usage_info.cost,  # USD cost for this generation
-                            }
-                        )
-                        logger.info(f"Updated Langfuse with cost: ${usage_info.cost:.6f} for {llm_def.name}")
+                    # Build detailed usage dict with flattened token details
+                    usage_dict = {
+                        "input": prompt_tokens,
+                        "output": completion_tokens,
+                        "total": total_tokens,
+                    }
 
-                    # Report actual tokens in usage for proper aggregation
+                    # Add flattened completion_tokens_details (Langfuse style)
+                    if completion_details:
+                        for key, value in completion_details.items():
+                            usage_dict[f"output_{key}"] = value
+
+                    # Add flattened prompt_tokens_details
+                    if prompt_details:
+                        for key, value in prompt_details.items():
+                            usage_dict[f"input_{key}"] = value
+
+                    # Update with granular cost details BEFORE ending
+                    if cost_breakdown:
+                        generation.update(cost_details=cost_breakdown)
+                        logger.info(
+                            f"Updated Langfuse with detailed costs for {llm_def.name}: {cost_breakdown}"
+                        )
+
+                    # Report detailed tokens and costs
                     generation.end(
                         output={"content": complete_content, "status": "streaming_completed"},
                         level="DEFAULT",
                         status_message="Streaming response completed successfully",
-                        usage={
-                            "input": usage_info.prompt_tokens or 0,
-                            "output": usage_info.completion_tokens or 0,
-                            "total": usage_info.total_tokens or 0,
-                        },
+                        usage=usage_dict,
                     )
             else:
                 logger.warning(f"No usage info received in streaming response for {llm_def.name}")
