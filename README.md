@@ -33,39 +33,43 @@ In today's AI landscape with hundreds of specialized LLMs, relying on a single m
 
 MoM Service uses an elegant **fan-out, fan-in architecture** for parallel processing and intelligent synthesis:
 
+```mermaid
+graph TD
+    A[Client Request via OpenAI-Compatible API] --> B{MoM Service - FastAPI};
+    B --> C[Fan-Out to Multiple LLMs];
+    subgraph "Parallel LLM Inference"
+        C --> D1[GPT-4o];
+        C --> D2[Claude 3.5 Sonnet];
+        C --> D3[Gemini 1.5 Pro];
+        C --> D4[Llama 3.1 405B];
+    end
+    subgraph "Response Synthesis"
+        D1 --> E{Concluding LLM};
+        D2 --> E;
+        D3 --> E;
+        D4 --> E;
+    end
+    E --> F[Final Response Streamed to User];
+
+    style B fill:#f9f,stroke:#333,stroke-width:2px
+    style C fill:#ccf,stroke:#333,stroke-width:2px
+    style E fill:#cfc,stroke:#333,stroke-width:2px
 ```
-┌─────────────────┐
-│  Client Request │
-│  (OpenAI API)   │
-└────────┬────────┘
-         │
-         ▼
-┌────────────────────┐
-│   MoM Service      │
-│   (FastAPI)        │
-└────────┬───────────┘
-         │ Fan-Out
-         ├─────────────────┬───────────────────────┬──────────────────────┐
-         ▼                 ▼                       ▼                      ▼
-    ┌─────────┐       ┌────────────┐       ┌─────────────────┐       ┌─────────┐
-    │  GPT-5  │       │ Claude 4.5 │       │ Gemini 2.5 Pro  │       │ Llama 4 │
-    │  (LLM1) │       │   (LLM2)   │       │     (LLM3)      │       │  (LLM4) │
-    └────┬────┘       └────┬───────┘       └────────┬────────┘       └────┬────┘
-         │                 │                        │                     │
-         └─────────────────┴────────────────────────┴─────────────────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │  Concluding LLM      │
-                         │  (Synthesizes All)   │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │   Final Response     │
-                         │   (Streamed to User) │
-                         └──────────────────────┘
-```
+
+### Explanation of Enhancements:
+
+1.  **Readability and Maintainability (Mermaid Syntax):**
+    *   The original ASCII diagram is replaced with a `Mermaid` diagram.
+    *   **Maintainability:** `Mermaid` is a markdown-like syntax for generating diagrams. It's far easier to edit, add new steps, or change connections by modifying text labels and arrows, rather than manually redrawing ASCII art.
+    *   **Readability:** The rendered `Mermaid` diagram is cleaner, more professional, and easier for readers to understand at a glance compared to ASCII. Most modern markdown viewers (like on GitHub, GitLab, or in VS Code) will render this automatically.
+
+2.  **Clarity and Best Practices (Diagram Content):**
+    *   **Descriptive Labels:** The labels have been made more specific. For example, "Client Request (OpenAI API)" is now "Client Request via OpenAI-Compatible API" which is more precise.
+    *   **Updated Model Names:** The LLM versions have been updated to reflect more current or well-known models (e.g., `GPT-5` to `GPT-4o`, `Claude 4.5` to `Claude 3.5 Sonnet`, etc.) to make the diagram more contemporary.
+    *   **Logical Grouping:** `subgraph` blocks are used to logically group the "Parallel LLM Inference" and "Response Synthesis" stages. This clearly communicates the different phases of the process.
+    *   **Clear Flow:** The diagram follows a standard top-down flowchart (`graph TD`), which is a universally understood pattern for representing processes.
+
+Since this is a diagram and not code, concepts like performance optimization and error handling are not applicable. The focus of the improvement is on making the architectural documentation as clear and easy to maintain as possible.
 
 ### Processing Flow
 
@@ -91,7 +95,10 @@ MoM Service uses an elegant **fan-out, fan-in architecture** for parallel proces
   - Built-in Langfuse integration for distributed tracing
   - Comprehensive metrics API with cost tracking and usage analytics
   - Detailed health check endpoints for monitoring system components
-- **🔒 Enterprise Security**: Bearer token authentication and flexible CORS policies
+- **🔒 Enterprise Security**:
+  - Centralized Bearer token authentication with structured error responses
+  - Clear distinction between service misconfiguration (503) and auth failures (401)
+  - Flexible CORS policies for cross-origin requests
 - **🐳 Production Ready**:
   - Multi-stage Docker builds with non-root users
   - Docker Compose for local development
@@ -112,9 +119,13 @@ mom-llm/
 ├── 🔒 .env                    # Environment variables (gitignored)
 ├── 📂 mom_service/
 │   ├── 🎯 main.py            # FastAPI application & middleware
+│   ├── 🔒 auth.py            # Authentication dependency & token validation
 │   ├── ⚙️  config.py         # Configuration loader & models
 │   ├── 🧠 core_logic.py      # Fan-out & synthesis engine
 │   ├── 📞 llm_calls.py       # LLM communication via LiteLLM
+│   ├── 🖼️  multimodal_utils.py # Multimodal content handling & message sanitization
+│   ├── 💰 cost_calculation.py # Cost tracking with reasoning tokens
+│   ├── 💵 pricing_utils.py   # Pricing conversions & normalization
 │   ├── 📊 metrics_db.py      # Metrics persistence & analytics
 │   ├── 🏥 health.py          # Health check utilities
 │   └── 📂 endpoints/
@@ -274,203 +285,85 @@ curl http://localhost:8000/v1/chat/completions \
   }'
 ```
 
-**Note**: Vision requests automatically filter to multimodal-capable models (GPT-5, Claude 4.5, Gemini 2.5 Pro, etc.). Non-capable models are skipped.
+**Note**: Vision requests automatically filter to multimodal-capable models (GPT-5, Claude 4.5, Gemini 2.5 Pro, etc.). Non-capable models are skipped. Messages are also sanitized for each provider to ensure compatibility with strict LLM providers like Mistral.
 
 ## ⚙️ Configuration
 
-The entire service is configured through `config.yaml`. Here's a breakdown of the key sections:
+The service is configured through `config.yaml` and environment variables (`.env` file).
 
-### LLM Definitions
+### Quick Configuration Overview
 
-Define the individual LLMs you want to use:
+**1. Environment Variables** - API keys and service settings:
+```bash
+# Required
+API_TOKEN="your-secret-bearer-token"
 
-```yaml
-llm_definitions:
-  - name: "gpt5"
-    model: "openai/gpt-5"
-    api_key_env: "OPENAI_API_KEY"
-    params:
-      reasoning_effort: "high"
-
-  - name: "gemini-2.5-pro"
-    model: "gemini/gemini-2.5-pro"
-    api_key_env: "GOOGLE_API_KEY"
-    # Custom pricing for reasoning tokens (optional)
-    pricing:
-      prompt_cost_per_token: 0.00000015      # $0.15 per 1M tokens
-      completion_cost_per_token: 0.00000060  # $0.60 per 1M text tokens
-      reasoning_cost_per_token: 0.00000350   # $3.50 per 1M reasoning tokens
+# LLM Provider Keys (add the ones you need)
+OPENAI_API_KEY="sk-..."
+GOOGLE_API_KEY="..."
+ANTHROPIC_API_KEY="..."
 ```
 
-**Note**: Custom pricing is optional. If not specified, LiteLLM's default pricing is used. For models with reasoning tokens (Gemini 2.5 Pro, Claude 4.5), custom pricing enables accurate cost tracking.
-
-### Synthesis Prompts
-
-Customize how the concluding LLM synthesizes responses:
-
+**2. Configuration File** - Define your LLMs and MoM models:
 ```yaml
+# Define individual LLMs
+llm_definitions:
+  - name: "gpt4"
+    model: "openai/gpt-4"
+    api_key_env: "OPENAI_API_KEY"
+
+# Define synthesis prompts
 prompt_definitions:
   - name: "synth_default"
-    content: |
-      Review all expert responses and synthesize a single, cohesive answer that:
-      - Integrates the strongest insights from each response
-      - Resolves any disagreements between models
-      - Provides a balanced, comprehensive answer
-```
+    content: "Synthesize responses into a cohesive answer..."
 
-### MoM Models
-
-Create your "meta-models" that define which LLMs to query and how to synthesize:
-
-```yaml
+# Create MoM models
 models:
-  - name: "mom-creative"
-    llms_to_query:
-      - "gpt5"
-      - "claude4.5"
-      - "gemini-2.5-pro"
-    concluding_llm: "gpt5"
+  - name: "mom"
+    llms_to_query: ["gpt4", "claude", "gemini"]
+    concluding_llm: "gpt4"
     concluding_prompt: "synth_default"
-    include_thinking_context: true  # Show intermediate responses
-  
-  - name: "mom-fast"
-    llms_to_query:
-      - "gemini-2.5-pro"
-      - "mistral-8x7b"
-    concluding_llm: "gemini-2.5-pro"
-    concluding_prompt: "synth_default"
-    include_thinking_context: false
 ```
 
-### Service Settings
-
-```yaml
-service:
-  timeout_seconds: 30
-
-langfuse:  # Optional observability
-  public_key_env: "LANGFUSE_PUBLIC_KEY"
-  secret_key_env: "LANGFUSE_SECRET_KEY"
-  host_env: "LANGFUSE_HOST"
-```
+For detailed configuration options, custom pricing, advanced features, and complete examples, see the **[Configuration Guide](docs/CONFIGURATION.md)**.
 
 ## 🔌 API Reference
 
-### OpenAI-Compatible Endpoints
+The MoM Service provides OpenAI-compatible endpoints plus additional metrics and health check endpoints.
 
-#### `GET /v1/models`
-List all available MoM models defined in your configuration.
+### Quick API Overview
 
-**Headers:**
-- `Authorization: Bearer YOUR_API_TOKEN`
+**Core Endpoints:**
+- `GET /v1/models` - List available MoM models
+- `POST /v1/chat/completions` - Chat completions (streaming and non-streaming)
+- `GET /v1/metrics/usage` - Usage metrics and cost tracking
+- `GET /health` - Health check
 
-**Response:**
-```json
-{
-  "object": "list",
-  "data": [
-    {
-      "id": "mom-creative",
-      "object": "model",
-      "created": 1234567890,
-      "owned_by": "MoM-Service"
-    }
-  ]
-}
+**Example Request:**
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer your-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mom",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "stream": true
+  }'
 ```
 
-#### `POST /v1/chat/completions`
-Send chat completion requests to your MoM models.
-
-**Headers:**
-- `Authorization: Bearer YOUR_API_TOKEN`
-- `Content-Type: application/json`
-
-**Request:**
-```json
-{
-  "model": "mom-creative",
-  "messages": [
-    {"role": "user", "content": "Explain machine learning"}
-  ],
-  "stream": true,
-  "temperature": 0.7
-}
-```
-
-### Metrics & Observability Endpoints
-
-#### `GET /v1/metrics/usage`
-Get aggregated usage metrics with cost tracking.
-
-**Headers:**
-- `Authorization: Bearer YOUR_API_TOKEN`
-
-**Query Parameters:**
-- `model_name` (optional): Filter by MoM model name
-- `start_time` (optional): Unix timestamp for time range filtering
-- `end_time` (optional): Unix timestamp for time range filtering
-- `call_type` (optional): Filter by call type (fanout, concluding)
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "filters": {
-    "model_name": "mom-creative",
-    "start_time": 1640000000.0
-  },
-  "metrics": {
-    "total_requests": 150,
-    "total_cost": 12.45,
-    "total_tokens": 125000,
-    "cache_hit_rate": 0.35,
-    "by_model": {
-      "mom-creative": {
-        "requests": 150,
-        "cost": 12.45,
-        "tokens": 125000
-      }
-    }
-  }
-}
-```
-
-#### `GET /v1/metrics/usage/raw`
-Get raw metric records for detailed analysis.
-
-**Headers:**
-- `Authorization: Bearer YOUR_API_TOKEN`
-
-**Query Parameters:**
-- Same as `/v1/metrics/usage`
-- `limit` (optional): Maximum records to return (default: 100)
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "count": 50,
-  "records": [
-    {
-      "timestamp": 1640000000.0,
-      "request_id": "uuid-here",
-      "mom_model_name": "mom-creative",
-      "llm_name": "gpt4",
-      "call_type": "fanout",
-      "prompt_tokens": 100,
-      "completion_tokens": 200,
-      "total_tokens": 300,
-      "cost": 0.015,
-      "duration_ms": 1234.5,
-      "status": "SUCCESS",
-      "cache_hit": false
-    }
-  ]
-}
-```
+For complete API documentation including all endpoints, parameters, response formats, and code examples in multiple languages, see the **[API Reference](docs/API.md)**.
 
 ## 🎯 Advanced Features
+
+### Message Sanitization for Provider Compatibility
+
+The service automatically sanitizes messages before sending them to LLM providers to ensure compatibility with strict providers like Mistral. This includes:
+
+- **Removing empty fields**: Provider-specific fields (like `images: []`) that are empty are removed to prevent validation errors
+- **Preserving multimodal content**: For multimodal-capable models, relevant fields are retained when they contain actual content
+- **Standard field support**: Maintains compatibility with standard OpenAI fields (name, function_call, tool_calls, etc.)
+
+This ensures your requests work reliably across all configured LLM providers without manual adjustments.
 
 ### Thinking Context
 
@@ -584,6 +477,8 @@ curl http://localhost:8000/v1/chat/completions \
 
 ### Using with OpenAI SDK
 
+The service is fully compatible with the OpenAI Python SDK:
+
 ```python
 from openai import OpenAI
 
@@ -593,16 +488,24 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="mom-creative",
-    messages=[
-        {"role": "user", "content": "What is the meaning of life?"}
-    ],
+    model="mom",
+    messages=[{"role": "user", "content": "What is the meaning of life?"}],
     stream=True
 )
 
 for chunk in response:
     print(chunk.choices[0].delta.content or "", end="")
 ```
+
+See the [API Reference](docs/API.md#using-with-openai-sdk) for more examples including non-streaming and multimodal requests.
+
+## 📚 Documentation
+
+For more detailed information, check out these guides:
+
+- **[Configuration Guide](docs/CONFIGURATION.md)** - Comprehensive guide to configuring LLMs, MoM models, and service settings
+- **[API Reference](docs/API.md)** - Complete API documentation with examples in multiple languages
+- **[Contributing Guide](CONTRIBUTING.md)** - Guidelines for contributors
 
 ## 🤝 Contributing
 

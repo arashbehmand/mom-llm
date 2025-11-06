@@ -150,6 +150,15 @@ sequenceDiagram
   - Health check endpoints
   - Startup configuration loading
 
+#### Authentication (`auth.py`)
+- **Responsibility**: Bearer token validation for API endpoints
+- **Key Features**:
+  - Reusable FastAPI dependency function (`verify_bearer_token`)
+  - Validates API_TOKEN environment variable configuration
+  - Checks Authorization header for Bearer scheme
+  - Returns structured error responses (503 for misconfiguration, 401 for auth failures)
+  - Applied to protected endpoints via `dependencies=[Depends(verify_bearer_token)]`
+
 #### Middleware Stack
 ```
 ┌────────────────────────────┐
@@ -157,7 +166,7 @@ sequenceDiagram
 ├────────────────────────────┤
 │   CORSMiddleware          │  Handle cross-origin requests
 ├────────────────────────────┤
-│   Authentication          │  Bearer token validation
+│   Authentication          │  Bearer token validation (auth.py)
 ├────────────────────────────┤
 │   Route Handlers          │  Endpoint logic
 └────────────────────────────┘
@@ -181,7 +190,8 @@ sequenceDiagram
 ```python
 ChatMessage:
   role: "user" | "assistant" | "system"
-  content: Union[str, List[ContentPart]]  # NEW: Supports multimodal
+  content: Union[str, List[ContentPart]]  # Supports multimodal
+  images: List[str] = Field(default_factory=list)  # Alternative multimodal format
 
 ContentPart = Union[TextContentPart, ImageContentPart]
 
@@ -195,6 +205,11 @@ ImageContentPart:
     url: str
     detail: "auto" | "low" | "high"  # Optional detail level
 ```
+
+**Pydantic Model Improvements**:
+- `images` field uses `Field(default_factory=list)` instead of `Optional[list]`
+- Ensures empty list default instead of `None` for better validation
+- Prevents issues with strict providers that reject `None` values
 
 **Backward Compatibility**: Simple string content still supported for text-only messages.
 
@@ -211,6 +226,7 @@ ImageContentPart:
 - Identifies models with vision/multimodal capabilities
 - Automatically filters LLMs based on request type
 - Supports OpenAI Vision API format
+- **NEW**: Sanitizes messages for strict LLM providers (e.g., Mistral)
 
 **Content Detection**:
 ```python
@@ -221,12 +237,25 @@ ImageContentPart:
 - files: [...]
 ```
 
+**Message Sanitization** (`sanitize_messages_for_provider`):
+```
+Purpose: Remove provider-specific fields that cause errors with strict providers
+Process:
+1. Create clean copy of messages with only core fields (role, content)
+2. For multimodal-capable models: Include 'images' field if non-empty
+3. Preserve standard fields: name, function_call, tool_calls, tool_call_id
+4. Return sanitized messages suitable for target provider
+
+Example: Mistral rejects requests with empty 'images' field → sanitizer removes it
+```
+
 **Model Filtering Flow**:
 ```
 1. Check if request has multimodal content
 2. If yes, filter llms_to_query to only multimodal-capable models
 3. Skip non-capable models (e.g., GPT-3.5, text-only models)
-4. Log which models are used/skipped
+4. Sanitize messages for each target provider
+5. Log which models are used/skipped
 ```
 
 **Supported Multimodal Models**:
@@ -274,6 +303,10 @@ pricing:
 ```
 
 #### Configuration System (`config.py`)
+
+**Purpose**: Defines Pydantic models for all configuration entities and loads config.yaml
+
+**Configuration Structure**:
 ```python
 MoMConfig
 ├── llm_definitions: List[LLMDefinition]
@@ -281,7 +314,7 @@ MoMConfig
 │   ├── model: str
 │   ├── api_key_env: str
 │   ├── params: Dict
-│   └── pricing: Optional[PricingConfig]  # NEW: Custom pricing
+│   └── pricing: Optional[PricingConfig]  # Custom pricing config
 │       ├── prompt_cost_per_token: Optional[float]
 │       ├── completion_cost_per_token: Optional[float]
 │       └── reasoning_cost_per_token: Optional[float]
@@ -294,58 +327,94 @@ MoMConfig
 │   └── include_thinking_context: bool
 └── service: ServiceConfig
     ├── timeout_seconds: int
+    ├── exposed_apis: List[str]  # Which APIs to expose (e.g., ["openai"])
     ├── cache_enabled: bool
-    ├── max_llm_retries: int
+    ├── max_llm_retries: int  # Retry configuration for LLM calls
     └── llm_retry_delay_seconds: int
 ```
 
-#### Fan-Out Engine (`core_logic.py::_perform_fanout_calls`)
+**Config Loading Priority**:
+1. Path explicitly provided to `load_config()`
+2. `MOM_CONFIG_PATH` environment variable
+3. `./config.yaml` (current directory)
+4. `../config.yaml` (parent directory)
+
+**Module Documentation**: Comprehensive docstrings explaining all configuration entities and their relationships
+
+#### Fan-Out/Fan-In Orchestration (`core_logic.py`)
+
+**Purpose**: Implements the core MoM pattern for parallel LLM orchestration with aggregation and synthesis
+
+**Module Components**:
+- `_perform_fanout_calls`: Execute parallel LLM queries
+- `_prepare_concluding_messages`: Prepare synthesis prompt with intermediate results
+- `_execute_concluding_call`: Run final synthesis LLM
+- `_calculate_and_log_costs`: Aggregate and log costs from all calls
+
+**Fan-Out Engine** (`_perform_fanout_calls`):
 ```
 Input: Request messages, List of LLM names, Config
 
 Process:
 1. Create async tasks for each LLM
 2. Execute all tasks concurrently (asyncio.gather)
-3. Handle individual failures gracefully
+3. Handle individual failures gracefully (partial failure resilience)
 4. Collect responses into ThinkingContextItem[]
 
 Output: List[ThinkingContextItem]
 ```
 
-#### Concluding Engine (`core_logic.py::_execute_concluding_call`)
+**Concluding Engine** (`_execute_concluding_call`):
 ```
 Input: Original messages, Intermediate responses, Concluding LLM, Config
 
 Process:
 1. Prepare synthesis prompt with all intermediate responses
-2. Call concluding LLM
-3. Stream response back to client
-4. Track usage and costs
+2. Call concluding LLM with aggregated context
+3. Stream response back to client (SSE format)
+4. Track usage and costs for final call
 
 Output: Final synthesized response (streaming)
 ```
 
+**Error Handling**: Gracefully handles partial failures where some fan-out calls succeed while others fail
+
 ### 4. LLM Communication Layer
 
-#### LLM Call Handler (`llm_calls.py::_call_lite_llm`)
+#### LLM Call Handler (`llm_calls.py`)
+
+**Purpose**: Low-level interface for making calls to LLM providers through LiteLLM with caching, retries, and metrics
+
+**Key Functions**:
+- `_call_lite_llm`: Main function for LLM calls with caching/retries
+- `_generate_cache_key`: Creates deterministic SHA256 cache keys
+- `_get_cached_response`: Retrieves responses from SQLite cache
+- `_cache_response`: Stores successful responses in cache
 
 **Features**:
 - Caching with SHA256 key generation
-- Automatic retry with exponential backoff
+- Automatic retry with exponential backoff (configurable)
 - Cost calculation and metrics recording
 - Langfuse tracing integration
-- Streaming support
+- Streaming and non-streaming support
+- **NEW**: Message sanitization before LLM calls
 
 **Flow**:
 ```
-1. Generate cache key from (model, messages, params)
-2. Check cache → Return if hit
-3. Call LiteLLM with retry logic
-4. Record metrics (tokens, cost, duration, status)
-5. Store in cache if successful
-6. Update Langfuse trace
-7. Return response
+1. Sanitize messages for target provider (remove incompatible fields)
+2. Generate cache key from (model, sanitized_messages, params)
+3. Check cache → Return if hit
+4. Call LiteLLM with retry logic (num_retries from config)
+5. Record metrics (tokens, cost, duration, status)
+6. Store in cache if successful (using sanitized messages)
+7. Update Langfuse trace
+8. Return response
 ```
+
+**Message Sanitization Integration**:
+- Applied before cache key generation for consistency
+- Prevents errors with strict providers (e.g., Mistral)
+- Cached using sanitized messages to ensure cache hits work correctly
 
 ### 5. Data Persistence Layer
 
@@ -392,18 +461,27 @@ Indexes:
 ### Authentication Flow
 ```
 1. Client includes: Authorization: Bearer <token>
-2. Middleware extracts token
-3. Compare with API_TOKEN environment variable
-4. Reject (401) if invalid
-5. Allow request to proceed if valid
+2. FastAPI dependency (verify_bearer_token) extracts token
+3. Validate API_TOKEN is configured (503 if missing)
+4. Check Authorization header format (401 if invalid scheme)
+5. Compare token with API_TOKEN environment variable
+6. Reject with structured error (401) if tokens don't match
+7. Allow request to proceed if valid
 ```
+
+**Authentication Module** (`auth.py`):
+- Centralized authentication logic in reusable dependency
+- Structured error responses with error types
+- Clear separation of concerns (503 for misconfiguration vs 401 for auth failure)
+- Applied via `dependencies=[Depends(verify_bearer_token)]` pattern
 
 ### Security Features
 - **Non-root Docker user**: Container runs as `appuser`
 - **No secrets in code**: All keys via environment variables
 - **CORS configuration**: Restrict origins via ALLOWED_CORS_ORIGINS
-- **Token-based auth**: Simple bearer token for API access
+- **Token-based auth**: Simple bearer token for API access with structured error handling
 - **Input validation**: Pydantic models for all requests
+- **Message sanitization**: Prevents injection of malicious fields to strict providers
 
 ## 📈 Observability Architecture
 
@@ -482,6 +560,29 @@ Multi-Stage Build:
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc. - LLM provider keys
 - `LANGFUSE_*` - Observability configuration
 - `ALLOWED_CORS_ORIGINS` - CORS policy
+
+## 📝 Code Documentation
+
+### Module-Level Documentation
+All core modules now include comprehensive docstrings with:
+- Purpose and responsibility of the module
+- Key functions and their roles
+- Data flow explanations
+- Usage examples where applicable
+
+**Documented Modules**:
+- `auth.py`: Authentication dependency and Bearer token validation
+- `config.py`: Configuration entities and loading logic
+- `core_logic.py`: Fan-out/fan-in orchestration pattern
+- `llm_calls.py`: LLM call handling with caching and retries
+- `multimodal_utils.py`: Multimodal content detection and filtering
+
+### Function-Level Documentation
+Key functions include detailed docstrings with:
+- Parameter descriptions and types
+- Return value specifications
+- Raised exceptions
+- Usage examples and patterns
 
 ## 🎯 Design Decisions
 
