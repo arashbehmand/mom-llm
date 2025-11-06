@@ -12,7 +12,6 @@ All endpoints require Bearer token authentication via the Authorization header.
 """
 
 import json
-import os
 import time
 import uuid
 

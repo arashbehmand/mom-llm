@@ -10,17 +10,19 @@ These tests cover:
 
 # pylint: disable=redefined-outer-name,too-many-arguments,too-many-positional-arguments
 
-import asyncio
 import html
+import importlib
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from mom_service.config import LLMDefinition, ModelConfig, MoMConfig, ServiceConfig
+import mom_service.auth
+import mom_service.endpoints.openai_v1
+import mom_service.main
+from mom_service.config import LLMDefinition, ModelConfig
 from mom_service.core_logic import _perform_fanout_calls
-from mom_service.endpoints.models import ThinkingContextItem, UsageInfo
 
 
 # =============================================================================
@@ -40,16 +42,21 @@ class TestSecurityAuthentication:
         # Remove API_TOKEN from environment
         monkeypatch.delenv("API_TOKEN", raising=False)
 
-        # Import after environment variable is removed
-        # Note: We need to reload the module to pick up the new environment
-        import importlib
-        import mom_service.endpoints.openai_v1
+        # Force verify_bearer_token to see missing token even if other fixtures set defaults
+        original_getenv = os.getenv
 
+        def _mock_getenv(key, default=None):
+            if key == "API_TOKEN":
+                return None
+            return original_getenv(key, default)
+
+        monkeypatch.setattr(mom_service.auth.os, "getenv", _mock_getenv)
+
+        # Reload to ensure routes see updated auth behavior
         importlib.reload(mom_service.endpoints.openai_v1)
+        importlib.reload(mom_service.main)
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
 
         # Test /v1/models endpoint
         response = client.get("/v1/models")
@@ -81,14 +88,10 @@ class TestSecurityAuthentication:
         monkeypatch.setenv("API_TOKEN", "")
 
         # Reload module to pick up new environment
-        import importlib
-        import mom_service.endpoints.openai_v1
-
         importlib.reload(mom_service.endpoints.openai_v1)
+        importlib.reload(mom_service.main)
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
         response = client.get("/v1/models")
         assert response.status_code == 503
 
@@ -100,9 +103,7 @@ class TestSecurityAuthentication:
         # Ensure API_TOKEN is set
         monkeypatch.setenv("API_TOKEN", "test-token-12345")
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
         headers = {"Authorization": "bearer test-token-12345"}
         response = client.get("/v1/models", headers=headers)
 
@@ -119,9 +120,7 @@ class TestSecurityAuthentication:
         # Ensure API_TOKEN is set
         monkeypatch.setenv("API_TOKEN", "test-token-12345")
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
         headers = {"Authorization": "Bearer "}
         response = client.get("/v1/models", headers=headers)
 
@@ -136,9 +135,7 @@ class TestSecurityAuthentication:
         # Ensure API_TOKEN is set
         monkeypatch.setenv("API_TOKEN", "test-token-12345")
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
         headers = {"Authorization": "test-token-12345"}
         response = client.get("/v1/models", headers=headers)
 
@@ -153,9 +150,7 @@ class TestSecurityAuthentication:
         # Ensure API_TOKEN is set
         monkeypatch.setenv("API_TOKEN", "test-token-12345")
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
         headers = {"Authorization": "Token test-token-12345"}
         response = client.get("/v1/models", headers=headers)
 
@@ -170,9 +165,7 @@ class TestSecurityAuthentication:
         # Ensure API_TOKEN is set
         monkeypatch.setenv("API_TOKEN", "test-token-12345")
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
         # This should fail because the token with spaces won't match
         headers = {"Authorization": "Bearer  test-token-12345  "}
         response = client.get("/v1/models", headers=headers)
@@ -194,14 +187,9 @@ class TestCORSPolicyEnforcement:
         monkeypatch.setenv("API_TOKEN", "test-token")
 
         # Reload to pick up new CORS settings
-        import importlib
-        import mom_service.main
-
         importlib.reload(mom_service.main)
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
 
         # Test with allowed origin
         response = client.options(
@@ -224,14 +212,9 @@ class TestCORSPolicyEnforcement:
         monkeypatch.setenv("API_TOKEN", "test-token")
 
         # Reload to pick up new CORS settings
-        import importlib
-        import mom_service.main
-
         importlib.reload(mom_service.main)
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
 
         # Test with disallowed origin
         response = client.options(
@@ -255,14 +238,9 @@ class TestCORSPolicyEnforcement:
         monkeypatch.setenv("API_TOKEN", "test-token")
 
         # Reload to pick up new CORS settings
-        import importlib
-        import mom_service.main
-
         importlib.reload(mom_service.main)
 
-        from mom_service.main import app
-
-        client = TestClient(app)
+        client = TestClient(mom_service.main.app)
 
         # Test with first allowed origin
         response = client.options(
@@ -319,30 +297,32 @@ class TestE2EWorkflows:
         # Mock the call_llm function to return success for llm1 and failure for llm2
         with patch("mom_service.core_logic._call_lite_llm") as mock_call:
 
-            def mock_call_lite_llm_side_effect(llm_def, *args, **kwargs):
+            async def success_response(_):
+                """Generate successful response for llm1"""
+                mock_response = MagicMock()
+                mock_response.choices = [MagicMock()]
+                mock_response.choices[0].message = MagicMock()
+                mock_response.choices[0].message.content = "AI is Artificial Intelligence"
+                mock_response.usage = MagicMock()
+                mock_response.usage.prompt_tokens = 10
+                mock_response.usage.completion_tokens = 20
+                mock_response.usage.total_tokens = 30
+                mock_response._is_cached = False  # pylint: disable=protected-access
+                yield mock_response
+
+            class _FailingTimeoutGen:
+                """Async iterator that raises a timeout when consumed"""
+
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    raise TimeoutError("Request timeout")
+
+            def mock_call_lite_llm_side_effect(llm_def, *_, **__):
                 if llm_def.name == "llm1":
-                    # Return successful response for llm1
-                    mock_response = MagicMock()
-                    mock_response.choices = [MagicMock()]
-                    mock_response.choices[0].message = MagicMock()
-                    mock_response.choices[0].message.content = "AI is Artificial Intelligence"
-                    mock_response.usage = MagicMock()
-                    mock_response.usage.prompt_tokens = 10
-                    mock_response.usage.completion_tokens = 20
-                    mock_response.usage.total_tokens = 30
-                    mock_response._is_cached = False
-
-                    async def success_gen():
-                        yield mock_response
-
-                    return success_gen()
-                else:
-                    # Raise exception for llm2
-                    async def failure_gen():
-                        raise TimeoutError("Request timeout")
-                        yield  # Never reached, but makes this a generator
-
-                    return failure_gen()
+                    return success_response(llm_def)
+                return _FailingTimeoutGen()
 
             mock_call.side_effect = mock_call_lite_llm_side_effect
 
@@ -394,14 +374,16 @@ class TestE2EWorkflows:
         # Mock all calls to fail
         with patch("mom_service.core_logic._call_lite_llm") as mock_call:
 
-            def failure_gen_factory(*args, **kwargs):
-                async def failure_gen():
-                    raise Exception("Service unavailable")
-                    yield  # Never reached, but makes this a generator
+            class _FailingRuntimeGen:
+                """Async iterator that raises runtime errors when consumed"""
 
-                return failure_gen()
+                def __aiter__(self):
+                    return self
 
-            mock_call.side_effect = failure_gen_factory
+                async def __anext__(self):
+                    raise RuntimeError("Service unavailable")
+
+            mock_call.side_effect = lambda *_, **__: _FailingRuntimeGen()
 
             # Execute fan-out
             thinking_items = []
@@ -429,9 +411,7 @@ class TestE2EWorkflows:
 
             # Should include failure notification
             message_text = " ".join(str(msg.get("content", "")) for msg in concluding_messages)
-            assert (
-                "failed" in message_text.lower() or "no usable content" in message_text.lower()
-            )
+            assert "failed" in message_text.lower() or "no usable content" in message_text.lower()
 
     def test_core_conclude_fail_001_concluding_llm_fails(self, monkeypatch, sample_mom_config):
         """
@@ -508,7 +488,7 @@ class TestStreamingAndThinkingContext:
 
         with patch("mom_service.core_logic._call_lite_llm") as mock_call:
 
-            async def mock_xss_response(*args, **kwargs):
+            async def mock_xss_response(*_, **__):
                 mock_response = MagicMock()
                 mock_response.choices = [MagicMock()]
                 mock_response.choices[0].message = MagicMock()
@@ -517,7 +497,7 @@ class TestStreamingAndThinkingContext:
                 mock_response.usage.prompt_tokens = 5
                 mock_response.usage.completion_tokens = 10
                 mock_response.usage.total_tokens = 15
-                mock_response._is_cached = False
+                mock_response._is_cached = False  # pylint: disable=protected-access
                 yield mock_response
 
             mock_call.return_value = mock_xss_response()
@@ -574,16 +554,16 @@ class TestStreamingAndThinkingContext:
 
             with patch("mom_service.core_logic._call_lite_llm") as mock_call:
 
-                async def mock_payload_response(*args, **kwargs):
+                async def mock_payload_response(*_, current_payload=payload, **__):
                     mock_response = MagicMock()
                     mock_response.choices = [MagicMock()]
                     mock_response.choices[0].message = MagicMock()
-                    mock_response.choices[0].message.content = payload
+                    mock_response.choices[0].message.content = current_payload
                     mock_response.usage = MagicMock()
                     mock_response.usage.prompt_tokens = 5
                     mock_response.usage.completion_tokens = 10
                     mock_response.usage.total_tokens = 15
-                    mock_response._is_cached = False
+                    mock_response._is_cached = False  # pylint: disable=protected-access
                     yield mock_response
 
                 mock_call.return_value = mock_payload_response()
