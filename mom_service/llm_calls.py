@@ -449,13 +449,31 @@ async def _call_lite_llm(
 
             # Record metrics for successful non-streaming call
             if response.usage:
-                from .endpoints.models import UsageInfo
+                from .cost_calculation import calculate_detailed_cost
 
-                usage_info = UsageInfo.from_litellm_usage(
-                    response.usage,
-                    response_obj=response,
-                    is_cached=False,
-                    pricing_config=llm_def.pricing,
+                # Extract token counts from response.usage
+                prompt_tokens = getattr(response.usage, 'prompt_tokens', 0)
+                completion_tokens = getattr(response.usage, 'completion_tokens', 0)
+                total_tokens = getattr(response.usage, 'total_tokens', 0)
+
+                # Extract detailed token breakdown if available
+                completion_details = getattr(response.usage, 'completion_tokens_details', None) or {}
+                prompt_details = getattr(response.usage, 'prompt_tokens_details', None) or {}
+
+                if completion_details or prompt_details:
+                    logger.info(
+                        f"Non-streaming token details for {llm_def.name}: "
+                        f"completion_details={completion_details}, "
+                        f"prompt_details={prompt_details}"
+                    )
+
+                # Calculate detailed cost
+                total_cost, cost_breakdown = calculate_detailed_cost(
+                    model_name=llm_def.model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    completion_tokens_details=completion_details,
+                    prompt_tokens_details=prompt_details,
                 )
 
                 metrics_db.insert_metric_record(
@@ -464,10 +482,10 @@ async def _call_lite_llm(
                         mom_model_name=mom_model_name,
                         llm_name=llm_def.name,
                         call_type=call_type,
-                        prompt_tokens=usage_info.prompt_tokens or 0,
-                        completion_tokens=usage_info.completion_tokens or 0,
-                        total_tokens=usage_info.total_tokens or 0,
-                        cost=usage_info.cost,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_tokens=total_tokens,
+                        cost=total_cost,
                         duration_ms=duration_ms,
                         status="SUCCESS",
                         error_message=None,
@@ -475,30 +493,41 @@ async def _call_lite_llm(
                     )
                 )
 
-            # End Langfuse generation with actual tokens and cost
+            # End Langfuse generation with actual tokens and detailed costs
             if generation:
                 output_dict = litellm.utils.convert_to_dict(response)
 
-                # Report actual tokens for proper aggregation
-                if response.usage and usage_info:
-                    # Update with cost details BEFORE ending (must be called first)
-                    if usage_info.cost and usage_info.cost > 0:
-                        generation.update(
-                            cost_details={
-                                "total": usage_info.cost,  # USD cost for this generation
-                            }
+                # Report actual tokens with detailed breakdown
+                if response.usage:
+                    # Build detailed usage dict with flattened token details
+                    usage_dict = {
+                        "input": prompt_tokens,
+                        "output": completion_tokens,
+                        "total": total_tokens,
+                    }
+
+                    # Add flattened completion_tokens_details (Langfuse style)
+                    if completion_details:
+                        for key, value in completion_details.items():
+                            usage_dict[f"output_{key}"] = value
+
+                    # Add flattened prompt_tokens_details
+                    if prompt_details:
+                        for key, value in prompt_details.items():
+                            usage_dict[f"input_{key}"] = value
+
+                    # Update with granular cost details BEFORE ending
+                    if cost_breakdown:
+                        generation.update(cost_details=cost_breakdown)
+                        logger.info(
+                            f"Updated Langfuse with detailed costs for {llm_def.name}: {cost_breakdown}"
                         )
-                        logger.info(f"Updated Langfuse with cost: ${usage_info.cost:.6f} for {llm_def.name}")
 
                     generation.end(
                         output=output_dict,
                         level="DEFAULT",
                         status_message="LLM call completed successfully",
-                        usage={
-                            "input": usage_info.prompt_tokens or 0,
-                            "output": usage_info.completion_tokens or 0,
-                            "total": usage_info.total_tokens or 0,
-                        },
+                        usage=usage_dict,
                     )
                 else:
                     generation.end(
