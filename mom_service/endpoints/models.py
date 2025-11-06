@@ -88,13 +88,19 @@ class UsageInfo(BaseModel):
                     f"input={prompt_tokens}, output={completion_tokens}"
                 )
 
-                calculated_cost = litellm.completion_cost(
+                # Use cost_per_token which returns (prompt_cost, completion_cost)
+                prompt_cost_usd, completion_cost_usd = litellm.cost_per_token(
                     model=model_name,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
 
-                logger.info(f"LiteLLM returned cost: {calculated_cost} (type: {type(calculated_cost)})")
+                calculated_cost = (prompt_cost_usd or 0.0) + (completion_cost_usd or 0.0)
+
+                logger.info(
+                    f"LiteLLM cost_per_token returned: prompt=${prompt_cost_usd:.6f}, "
+                    f"completion=${completion_cost_usd:.6f}, total=${calculated_cost:.6f}"
+                )
                 cost = float(calculated_cost) if calculated_cost is not None else 0.0
             except Exception as e:
                 import logging
