@@ -136,9 +136,7 @@ class TestCalculateDetailedCostWithLiteLLMPricing:
 
     def test_litellm_pricing_standard_model(self):
         """Test cost calculation using LiteLLM's pricing database"""
-        with patch(
-            "mom_service.cost_calculation.litellm.cost_per_token"
-        ) as mock_litellm_cost:
+        with patch("mom_service.cost_calculation.litellm.cost_per_token") as mock_litellm_cost:
             # Mock LiteLLM returning costs for GPT-4
             mock_litellm_cost.return_value = (0.03, 0.06)  # $30/1M input, $60/1M output
 
@@ -157,9 +155,7 @@ class TestCalculateDetailedCostWithLiteLLMPricing:
 
     def test_litellm_pricing_with_reasoning_tokens_warning(self):
         """Test that reasoning tokens without custom pricing generates warning"""
-        with patch(
-            "mom_service.cost_calculation.litellm.cost_per_token"
-        ) as mock_litellm_cost:
+        with patch("mom_service.cost_calculation.litellm.cost_per_token") as mock_litellm_cost:
             mock_litellm_cost.return_value = (0.01, 0.02)
 
             with patch("mom_service.cost_calculation.logger.warning") as mock_warning:
@@ -179,9 +175,7 @@ class TestCalculateDetailedCostWithLiteLLMPricing:
 
     def test_litellm_pricing_returns_none(self):
         """Test handling when LiteLLM returns None for costs"""
-        with patch(
-            "mom_service.cost_calculation.litellm.cost_per_token"
-        ) as mock_litellm_cost:
+        with patch("mom_service.cost_calculation.litellm.cost_per_token") as mock_litellm_cost:
             # LiteLLM returns None when pricing is not available
             mock_litellm_cost.return_value = (None, None)
 
@@ -199,9 +193,7 @@ class TestCalculateDetailedCostWithLiteLLMPricing:
 
     def test_litellm_pricing_partial_none(self):
         """Test handling when LiteLLM returns partial None"""
-        with patch(
-            "mom_service.cost_calculation.litellm.cost_per_token"
-        ) as mock_litellm_cost:
+        with patch("mom_service.cost_calculation.litellm.cost_per_token") as mock_litellm_cost:
             # One cost is available, one is None - this will also cause an error in formatting
             mock_litellm_cost.return_value = (0.01, None)
 
@@ -306,13 +298,11 @@ class TestCalculateDetailedCostRealWorldScenarios:
 
     def test_openai_gpt4_typical_call(self):
         """Test typical OpenAI GPT-4 call"""
-        with patch(
-            "mom_service.cost_calculation.litellm.cost_per_token"
-        ) as mock_litellm_cost:
+        with patch("mom_service.cost_calculation.litellm.cost_per_token") as mock_litellm_cost:
             # GPT-4 pricing: $30/1M input, $60/1M output
             mock_litellm_cost.return_value = (0.03, 0.06)
 
-            total_cost, cost_breakdown = calculate_detailed_cost(
+            total_cost, _ = calculate_detailed_cost(
                 model_name="gpt-4",
                 prompt_tokens=1500,
                 completion_tokens=800,
@@ -349,13 +339,11 @@ class TestCalculateDetailedCostRealWorldScenarios:
 
     def test_anthropic_claude_typical_call(self):
         """Test typical Anthropic Claude call"""
-        with patch(
-            "mom_service.cost_calculation.litellm.cost_per_token"
-        ) as mock_litellm_cost:
+        with patch("mom_service.cost_calculation.litellm.cost_per_token") as mock_litellm_cost:
             # Claude pricing varies, but let's use typical values
             mock_litellm_cost.return_value = (0.024, 0.072)
 
-            total_cost, cost_breakdown = calculate_detailed_cost(
+            total_cost, _ = calculate_detailed_cost(
                 model_name="claude-3-opus",
                 prompt_tokens=2500,
                 completion_tokens=1000,
@@ -371,7 +359,7 @@ class TestCalculateDetailedCostRealWorldScenarios:
             completion_cost_per_token=0.01 / 1_000_000,
         )
 
-        total_cost, cost_breakdown = calculate_detailed_cost(
+        total_cost, _ = calculate_detailed_cost(
             model_name="test-model",
             prompt_tokens=10_000_000,  # 10M tokens
             completion_tokens=5_000_000,  # 5M tokens
@@ -388,7 +376,7 @@ class TestCalculateDetailedCostRealWorldScenarios:
             completion_cost_per_token=0.01 / 1_000_000,
         )
 
-        total_cost, cost_breakdown = calculate_detailed_cost(
+        total_cost, _ = calculate_detailed_cost(
             model_name="test-model",
             prompt_tokens=1,
             completion_tokens=1,

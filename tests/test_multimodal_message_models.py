@@ -2,12 +2,14 @@
 Tests for multimodal message models (OpenAI Vision API format)
 """
 
+# Allow small test classes with a single test method
+# pylint: disable=too-few-public-methods
+
 import pytest
 from pydantic import ValidationError
 
 from mom_service.endpoints.models import (
     ChatMessage,
-    ContentPart,
     ImageContentPart,
     ImageUrlDetail,
     TextContentPart,
@@ -109,9 +111,7 @@ class TestChatMessageMultimodalContent:
                 TextContentPart(type="text", text="Analyze this"),
                 ImageContentPart(
                     type="image_url",
-                    image_url=ImageUrlDetail(
-                        url="https://example.com/image.jpg", detail="high"
-                    ),
+                    image_url=ImageUrlDetail(url="https://example.com/image.jpg", detail="high"),
                 ),
             ],
         )

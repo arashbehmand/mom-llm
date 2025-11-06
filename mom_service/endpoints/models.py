@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 # Multimodal Content Models (OpenAI Vision API format)
@@ -54,14 +54,7 @@ class UsageInfo(BaseModel):
     cost: Optional[float] = None
 
     @classmethod
-    def from_litellm_usage(
-        cls,
-        usage: Any,
-        response_obj: Any = None,
-        is_cached: bool = False,
-        pricing_config: Any = None,
-        model_name: str = None,
-    ) -> "UsageInfo":
+    def from_litellm_usage(cls, usage: Any, **kwargs) -> "UsageInfo":
         """
         Create UsageInfo from LiteLLM usage object or response.
 
@@ -75,6 +68,12 @@ class UsageInfo(BaseModel):
         Returns:
             UsageInfo instance with tokens and cost
         """
+        # Extract optional parameters from kwargs for backward compatibility
+        response_obj = kwargs.get("response_obj")
+        is_cached = kwargs.get("is_cached", False)
+        pricing_config = kwargs.get("pricing_config")
+        model_name = kwargs.get("model_name")
+
         if usage is None:
             return cls(
                 prompt_tokens=0,

@@ -281,7 +281,7 @@ class TestFilterMultimodalCapableModels:
         capable, skipped = filter_multimodal_capable_models(llm_names, llm_map, messages)
 
         assert capable == llm_names
-        assert skipped == []
+        assert not skipped
 
     def test_multimodal_content_filters_models(self, llm_map):
         """Test that multimodal content filters out non-capable models"""
@@ -320,7 +320,7 @@ class TestFilterMultimodalCapableModels:
         capable, skipped = filter_multimodal_capable_models(llm_names, llm_map, messages)
 
         assert set(capable) == set(llm_names)
-        assert skipped == []
+        assert not skipped
 
     def test_no_models_capable(self, llm_map):
         """Test when no models are multimodal-capable"""
@@ -364,7 +364,7 @@ class TestFilterMultimodalCapableModels:
         capable, skipped = filter_multimodal_capable_models([], llm_map, messages)
 
         assert capable == []
-        assert skipped == []
+        assert not skipped
 
     def test_logs_info_for_multimodal_detection(self, llm_map):
         """Test that info logs are generated during filtering"""
@@ -389,7 +389,7 @@ class TestFilterMultimodalCapableModels:
         messages = [{"role": "user", "content": "Text only"}]
         llm_names = ["gemini", "gpt4o", "claude3", "gpt35"]
 
-        capable, skipped = filter_multimodal_capable_models(llm_names, llm_map, messages)
+        capable, _ = filter_multimodal_capable_models(llm_names, llm_map, messages)
 
         # Order should be preserved for text-only
         assert capable == llm_names

@@ -256,6 +256,6 @@ class TestRoundTripConversion:
             # Allow rounding tolerance from integer conversion
             # Use relative tolerance of 2% for better accuracy
             tolerance = max(0.00002, original_cost * 0.02)
-            assert abs(calculated_cost - original_cost) < tolerance, (
-                f"Round-trip failed for cost {original_cost}: got {calculated_cost}"
-            )
+            assert (
+                abs(calculated_cost - original_cost) < tolerance
+            ), f"Round-trip failed for cost {original_cost}: got {calculated_cost}"
