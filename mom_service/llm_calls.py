@@ -176,10 +176,15 @@ async def _call_lite_llm(
     request_id = options.get("request_id", "unknown")
     mom_model_name = options.get("mom_model_name", "unknown")
 
+    # Sanitize messages to remove provider-specific fields that may cause errors
+    from .multimodal_utils import sanitize_messages_for_provider
+
+    sanitized_messages = sanitize_messages_for_provider(messages, llm_def.model)
+
     # Build params with retry configuration from service config
     params = {
         "model": llm_def.model,
-        "messages": messages,
+        "messages": sanitized_messages,
         "stream": stream,
         "timeout": timeout,
         "num_retries": config.service.max_llm_retries,  # LiteLLM retry parameter
@@ -190,7 +195,8 @@ async def _call_lite_llm(
     if stream:
         params["stream_options"] = {"include_usage": True}
 
-    cache_key = _generate_cache_key(llm_def, messages, params)
+    # Generate cache key using sanitized messages for consistency
+    cache_key = _generate_cache_key(llm_def, sanitized_messages, params)
     if config.service.cache_enabled:
         cached_response = _get_cached_response(cache_key)
         if cached_response:
@@ -460,7 +466,7 @@ async def _call_lite_llm(
         else:
             response = await litellm.acompletion(**params)
             if config.service.cache_enabled:
-                _cache_response(cache_key, messages, response)
+                _cache_response(cache_key, sanitized_messages, response)
 
             end_time = time.time()
             duration_ms = (end_time - start_time) * 1000

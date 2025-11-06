@@ -14,6 +14,7 @@ from mom_service.multimodal_utils import (
     filter_multimodal_capable_models,
     has_multimodal_content,
     is_model_multimodal_capable,
+    sanitize_messages_for_provider,
 )
 
 
@@ -411,3 +412,178 @@ class TestFilterMultimodalCapableModels:
         assert "gpt4o" in capable
         assert "claude3" in capable
         assert "gpt35" in skipped
+
+
+class TestSanitizeMessagesForProvider:
+    """Tests for sanitize_messages_for_provider function"""
+
+    def test_removes_empty_images_field_for_non_multimodal(self):
+        """Test that empty images field is removed for non-multimodal models"""
+        messages = [
+            {"role": "user", "content": "Hello", "images": []},
+            {"role": "assistant", "content": "Hi there", "images": []},
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "mistral-medium-latest")
+
+        # images field should be removed
+        assert all("images" not in msg for msg in sanitized)
+        assert sanitized[0]["content"] == "Hello"
+        assert sanitized[1]["content"] == "Hi there"
+
+    def test_removes_empty_images_field_for_mistral(self):
+        """Test that empty images field is removed for Mistral models"""
+        messages = [
+            {"role": "user", "content": "What is 2+2?", "images": []},
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "mistral-medium-latest")
+
+        assert "images" not in sanitized[0]
+        assert sanitized[0]["role"] == "user"
+        assert sanitized[0]["content"] == "What is 2+2?"
+
+    def test_keeps_images_field_for_multimodal_with_content(self):
+        """Test that images field with content is kept for multimodal models"""
+        messages = [
+            {
+                "role": "user",
+                "content": "Analyze this",
+                "images": ["https://example.com/image.jpg"],
+            },
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "gpt-4o")
+
+        # images field should be kept for multimodal models with content
+        assert "images" in sanitized[0]
+        assert sanitized[0]["images"] == ["https://example.com/image.jpg"]
+
+    def test_removes_empty_images_even_for_multimodal(self):
+        """Test that empty images field is removed even for multimodal models"""
+        messages = [
+            {"role": "user", "content": "Hello", "images": []},
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "gpt-4o")
+
+        # Empty images field should be removed even for multimodal models
+        assert "images" not in sanitized[0]
+
+    def test_preserves_other_standard_fields(self):
+        """Test that other standard fields are preserved"""
+        messages = [
+            {
+                "role": "user",
+                "content": "Test",
+                "images": [],
+                "name": "user1",
+                "tool_call_id": "call_123",
+            },
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "mistral-medium-latest")
+
+        assert sanitized[0]["role"] == "user"
+        assert sanitized[0]["content"] == "Test"
+        assert sanitized[0]["name"] == "user1"
+        assert sanitized[0]["tool_call_id"] == "call_123"
+        assert "images" not in sanitized[0]
+
+    def test_preserves_function_call_and_tool_calls(self):
+        """Test that function_call and tool_calls are preserved"""
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "images": [],
+                "function_call": {"name": "get_weather", "arguments": '{"city": "NYC"}'},
+                "tool_calls": [{"id": "1", "type": "function"}],
+            },
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "gpt-3.5-turbo")
+
+        assert "function_call" in sanitized[0]
+        assert "tool_calls" in sanitized[0]
+        assert "images" not in sanitized[0]
+
+    def test_does_not_modify_original_messages(self):
+        """Test that original messages are not modified"""
+        original_messages = [
+            {"role": "user", "content": "Hello", "images": []},
+        ]
+
+        sanitize_messages_for_provider(original_messages, "mistral-medium-latest")
+
+        # Original should still have images field
+        assert "images" in original_messages[0]
+
+    def test_handles_multiple_messages(self):
+        """Test sanitization of multiple messages"""
+        messages = [
+            {"role": "system", "content": "You are helpful", "images": []},
+            {"role": "user", "content": "Question 1", "images": []},
+            {"role": "assistant", "content": "Answer 1", "images": []},
+            {"role": "user", "content": "Question 2", "images": []},
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "mistral-medium-latest")
+
+        assert len(sanitized) == 4
+        assert all("images" not in msg for msg in sanitized)
+        assert [msg["content"] for msg in sanitized] == [
+            "You are helpful",
+            "Question 1",
+            "Answer 1",
+            "Question 2",
+        ]
+
+    def test_handles_complex_content_array(self):
+        """Test sanitization with complex content array (multimodal format)"""
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's in this image?"},
+                    {"type": "image_url", "image_url": {"url": "image.jpg"}},
+                ],
+                "images": [],
+            },
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "gpt-4o")
+
+        # Complex content should be preserved
+        assert isinstance(sanitized[0]["content"], list)
+        assert len(sanitized[0]["content"]) == 2
+        # Empty images field should be removed
+        assert "images" not in sanitized[0]
+
+    def test_empty_messages_list(self):
+        """Test sanitization with empty messages list"""
+        sanitized = sanitize_messages_for_provider([], "gpt-4o")
+        assert sanitized == []
+
+    def test_mistral_models_have_strict_schema(self):
+        """Test that various Mistral model names trigger sanitization"""
+        messages = [{"role": "user", "content": "Test", "images": []}]
+
+        for model in ["mistral-medium-latest", "mistral-large", "mistral-small"]:
+            sanitized = sanitize_messages_for_provider(messages, model)
+            assert "images" not in sanitized[0], f"images should be removed for {model}"
+
+    def test_openai_models_keep_images_with_content(self):
+        """Test that OpenAI models keep images when present"""
+        messages = [
+            {
+                "role": "user",
+                "content": "Analyze",
+                "images": ["img1.jpg", "img2.jpg"],
+            },
+        ]
+
+        for model in ["gpt-4o", "gpt-4-turbo", "gpt-4-vision-preview"]:
+            sanitized = sanitize_messages_for_provider(messages, model)
+            assert "images" in sanitized[0], f"images should be kept for {model}"
+            assert len(sanitized[0]["images"]) == 2

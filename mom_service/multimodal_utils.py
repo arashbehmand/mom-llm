@@ -93,6 +93,46 @@ def is_model_multimodal_capable(model_name: str) -> bool:
         return False
 
 
+def sanitize_messages_for_provider(
+    messages: list[dict[str, Any]], model_name: str
+) -> list[dict[str, Any]]:
+    """
+    Remove provider-specific fields from messages that may cause errors with certain LLM providers.
+
+    Some providers (like Mistral) are strict about the message schema and reject requests
+    with extra fields like 'images' even if they're empty. This function creates a clean
+    copy of messages suitable for the target provider.
+
+    Args:
+        messages: List of message dictionaries to sanitize
+        model_name: The target LLM model name (used to determine which fields to keep)
+
+    Returns:
+        A sanitized copy of messages without unsupported fields
+    """
+    sanitized = []
+    multimodal_capable = is_model_multimodal_capable(model_name)
+
+    for msg in messages:
+        # Create a copy to avoid modifying the original
+        clean_msg = {"role": msg["role"], "content": msg["content"]}
+
+        # Only include 'images' field if:
+        # 1. The model supports multimodal content
+        # 2. The field exists and has actual content (not empty list)
+        if multimodal_capable and "images" in msg and msg["images"]:
+            clean_msg["images"] = msg["images"]
+
+        # Copy other standard fields if present
+        for field in ["name", "function_call", "tool_calls", "tool_call_id"]:
+            if field in msg:
+                clean_msg[field] = msg[field]
+
+        sanitized.append(clean_msg)
+
+    return sanitized
+
+
 def filter_multimodal_capable_models(
     llm_names: list[str], llm_map: dict[str, Any], messages: list[dict[str, Any]]
 ) -> tuple[list[str], list[str]]:
