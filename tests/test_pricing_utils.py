@@ -213,10 +213,11 @@ class TestCalculateCostFromNormalizedTokens:
 
     def test_unified_pricing_model(self):
         """Verify the unified pricing constants are correct"""
-        assert UNIFIED_INPUT_COST_PER_TOKEN == pytest.approx(0.000001, rel=1e-9)  # $1/1M
-        assert UNIFIED_OUTPUT_COST_PER_TOKEN == pytest.approx(0.00001, rel=1e-9)  # $10/1M
-        assert UNIFIED_OUTPUT_COST_PER_TOKEN == pytest.approx(
-            10 * UNIFIED_INPUT_COST_PER_TOKEN, rel=1e-9
+        assert pytest.approx(0.000001, rel=1e-9) == UNIFIED_INPUT_COST_PER_TOKEN  # $1/1M
+        assert pytest.approx(0.00001, rel=1e-9) == UNIFIED_OUTPUT_COST_PER_TOKEN  # $10/1M
+        assert (
+            pytest.approx(10 * UNIFIED_INPUT_COST_PER_TOKEN, rel=1e-9)
+            == UNIFIED_OUTPUT_COST_PER_TOKEN
         )
 
 

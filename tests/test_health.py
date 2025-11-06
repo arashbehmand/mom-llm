@@ -144,7 +144,6 @@ class TestComprehensiveHealthCheck:
                 "mom_service.health.litellm.acompletion", new_callable=AsyncMock
             ) as mock_completion,
         ):
-
             mock_join.side_effect = lambda *args: temp_metrics_db
             mock_completion.return_value = mock_litellm_response
 

@@ -15,14 +15,14 @@ import importlib
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 
 import mom_service.auth
-import mom_service.endpoints.openai_v1
-import mom_service.main
 from mom_service.config import LLMDefinition, ModelConfig
 from mom_service.core_logic import _perform_fanout_calls
+import mom_service.endpoints.openai_v1
+import mom_service.main
 
 
 # =============================================================================
