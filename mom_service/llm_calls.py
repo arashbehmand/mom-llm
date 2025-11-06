@@ -371,13 +371,14 @@ async def _call_lite_llm(
                 completion_details = accumulated_usage.get('completion_tokens_details', {})
                 prompt_details = accumulated_usage.get('prompt_tokens_details', {})
 
-                # Calculate detailed cost
+                # Calculate detailed cost (with custom pricing if configured)
                 total_cost, cost_breakdown = calculate_detailed_cost(
                     model_name=llm_def.model,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     completion_tokens_details=completion_details,
                     prompt_tokens_details=prompt_details,
+                    pricing_config=llm_def.pricing,  # Use custom pricing from config
                 )
 
                 metrics_db.insert_metric_record(
@@ -467,13 +468,14 @@ async def _call_lite_llm(
                         f"prompt_details={prompt_details}"
                     )
 
-                # Calculate detailed cost
+                # Calculate detailed cost (with custom pricing if configured)
                 total_cost, cost_breakdown = calculate_detailed_cost(
                     model_name=llm_def.model,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     completion_tokens_details=completion_details,
                     prompt_tokens_details=prompt_details,
+                    pricing_config=llm_def.pricing,  # Use custom pricing from config
                 )
 
                 metrics_db.insert_metric_record(

@@ -21,6 +21,16 @@ llm_definitions:
   #   pricing:
   #     prompt_cost_per_token: 0.00001     # $0.01 per 1K prompt tokens
   #     completion_cost_per_token: 0.00003  # $0.03 per 1K completion tokens
+  #
+  # Example with reasoning token pricing (for models with thinking mode)
+  # Models like Gemini 2.5 Flash, OpenAI o1 charge different rates for reasoning tokens
+  # - name: "gemini-with-pricing"
+  #   model: "gemini/gemini-2.5-flash-preview-04-17"
+  #   api_key_env: "GOOGLE_API_KEY"
+  #   pricing:
+  #     prompt_cost_per_token: 0.00000015           # $0.15 per 1M input tokens
+  #     completion_cost_per_token: 0.0000006        # $0.60 per 1M text output tokens
+  #     reasoning_cost_per_token: 0.0000035         # $3.50 per 1M reasoning tokens (5.8× more!)
 
 prompt_definitions:
   - name: "synth_default"

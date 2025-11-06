@@ -11,19 +11,53 @@ class PricingConfig(BaseModel):
     prompt_cost_per_token: Optional[float] = (
         None  # Cost per prompt token (e.g., 0.00003 for $0.03/1K tokens)
     )
-    completion_cost_per_token: Optional[float] = None  # Cost per completion token
+    completion_cost_per_token: Optional[float] = None  # Cost per completion token (text output)
+    reasoning_cost_per_token: Optional[float] = None  # Cost per reasoning token (thinking/internal reasoning)
 
-    def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
-        """Calculate total cost based on token counts"""
+    def calculate_cost(
+        self,
+        prompt_tokens: int,
+        completion_tokens: int,
+        reasoning_tokens: int = 0,
+        text_tokens: int = 0,
+    ) -> tuple[float, dict[str, float]]:
+        """
+        Calculate total cost based on token counts with optional reasoning token breakdown.
+
+        Args:
+            prompt_tokens: Number of prompt/input tokens
+            completion_tokens: Total completion tokens (used if no text/reasoning breakdown)
+            reasoning_tokens: Number of reasoning tokens (optional, for models with thinking mode)
+            text_tokens: Number of text output tokens (optional, for models with thinking mode)
+
+        Returns:
+            Tuple of (total_cost, cost_breakdown_dict)
+        """
         prompt_cost = (
             (prompt_tokens * self.prompt_cost_per_token) if self.prompt_cost_per_token else 0.0
         )
-        completion_cost = (
-            (completion_tokens * self.completion_cost_per_token)
-            if self.completion_cost_per_token
-            else 0.0
-        )
-        return prompt_cost + completion_cost
+
+        # If reasoning token pricing is configured and we have breakdown, use it
+        if self.reasoning_cost_per_token and (reasoning_tokens > 0 or text_tokens > 0):
+            text_cost = (text_tokens * self.completion_cost_per_token) if self.completion_cost_per_token else 0.0
+            reasoning_cost = (reasoning_tokens * self.reasoning_cost_per_token)
+
+            return prompt_cost + text_cost + reasoning_cost, {
+                "input": prompt_cost,
+                "output_text": text_cost,
+                "output_reasoning": reasoning_cost,
+            }
+        else:
+            # Standard pricing without reasoning breakdown
+            completion_cost = (
+                (completion_tokens * self.completion_cost_per_token)
+                if self.completion_cost_per_token
+                else 0.0
+            )
+            return prompt_cost + completion_cost, {
+                "input": prompt_cost,
+                "output": completion_cost,
+            }
 
 
 class LLMDefinition(BaseModel):

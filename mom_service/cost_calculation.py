@@ -1,19 +1,21 @@
 """
-Utilities for calculating detailed costs including reasoning tokens.
+Cost calculation utilities for LLM calls with support for reasoning tokens.
+
+Some models (e.g., Gemini 2.5 Flash, OpenAI o1) charge different rates for
+reasoning tokens vs text tokens. This module handles granular cost breakdown.
+
+Priority order for pricing:
+1. Custom pricing from model config (llm_def.pricing)
+2. LiteLLM's built-in pricing database
+3. Return $0 if no pricing available
 """
+
 import logging
 from typing import Dict, Optional, Tuple
 
 import litellm
 
 logger = logging.getLogger(__name__)
-
-# Gemini 2.5 Flash pricing (per 1M tokens)
-GEMINI_25_FLASH_PRICES = {
-    "input": 0.15 / 1_000_000,  # $0.15 per 1M tokens
-    "output_text": 0.60 / 1_000_000,  # $0.60 per 1M tokens
-    "output_reasoning": 3.50 / 1_000_000,  # $3.50 per 1M tokens (thinking mode)
-}
 
 
 def calculate_detailed_cost(
@@ -22,79 +24,121 @@ def calculate_detailed_cost(
     completion_tokens: int,
     completion_tokens_details: Optional[Dict] = None,
     prompt_tokens_details: Optional[Dict] = None,
+    pricing_config = None,  # PricingConfig from LLMDefinition
 ) -> Tuple[float, Dict[str, float]]:
     """
-    Calculate detailed cost breakdown for LLM calls, handling reasoning tokens separately.
+    Calculate cost breakdown handling reasoning tokens separately from text tokens.
+
+    For models that support reasoning tokens (internal thinking), calculates separate
+    costs for reasoning vs text output. Uses pricing from:
+    1. Custom pricing config if provided
+    2. LiteLLM's pricing database
+    3. Returns $0 if no pricing available (with warning)
 
     Args:
-        model_name: The LiteLLM model identifier
-        prompt_tokens: Total prompt tokens
+        model_name: LiteLLM model identifier (e.g., "gemini/gemini-2.5-flash")
+        prompt_tokens: Number of input/prompt tokens
         completion_tokens: Total completion tokens
-        completion_tokens_details: Detailed breakdown (e.g., {'reasoning_tokens': X, 'text_tokens': Y})
-        prompt_tokens_details: Detailed prompt breakdown (e.g., {'text_tokens': X})
+        completion_tokens_details: Optional breakdown with 'reasoning_tokens', 'text_tokens'
+        prompt_tokens_details: Optional prompt token breakdown (for future use)
+        pricing_config: Optional PricingConfig from LLMDefinition
 
     Returns:
         Tuple of (total_cost, cost_breakdown_dict)
-        cost_breakdown_dict has keys like: 'input', 'output_text', 'output_reasoning'
+        - total_cost: Total USD cost for this call
+        - cost_breakdown: Dict with keys like 'input', 'output_text', 'output_reasoning'
+
+    Example with custom pricing:
+        >>> pricing = PricingConfig(
+        ...     prompt_cost_per_token=0.15 / 1_000_000,
+        ...     completion_cost_per_token=0.60 / 1_000_000,
+        ...     reasoning_cost_per_token=3.50 / 1_000_000
+        ... )
+        >>> total, breakdown = calculate_detailed_cost(
+        ...     "gemini/gemini-2.5-flash",
+        ...     prompt_tokens=1000,
+        ...     completion_tokens=825,
+        ...     completion_tokens_details={"reasoning_tokens": 764, "text_tokens": 61},
+        ...     pricing_config=pricing
+        ... )
+        >>> print(f"Total: ${total:.6f}")
+        Total: $0.003024
     """
-    cost_breakdown = {}
-
-    # Check if this is a Gemini 2.5 Flash model with reasoning tokens
-    is_gemini_25_flash = "gemini-2.5-flash" in model_name.lower() or "gemini/gemini-2.5-flash" in model_name.lower()
-
-    if is_gemini_25_flash and completion_tokens_details:
-        # Gemini 2.5 Flash with detailed token breakdown
+    # Extract reasoning and text token counts if available
+    reasoning_tokens = 0
+    text_tokens = 0
+    if completion_tokens_details:
         reasoning_tokens = completion_tokens_details.get("reasoning_tokens", 0)
         text_tokens = completion_tokens_details.get("text_tokens", 0)
 
-        logger.info(
-            f"Using Gemini 2.5 Flash pricing for {model_name}: "
-            f"input={prompt_tokens}, text_output={text_tokens}, reasoning_output={reasoning_tokens}"
+        # Validate token counts
+        if reasoning_tokens + text_tokens != completion_tokens:
+            logger.warning(
+                f"Token count mismatch for {model_name}: "
+                f"reasoning({reasoning_tokens}) + text({text_tokens}) != total({completion_tokens})"
+            )
+
+    # Priority 1: Use custom pricing config if provided
+    if pricing_config:
+        try:
+            total_cost, cost_breakdown = pricing_config.calculate_cost(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                reasoning_tokens=reasoning_tokens,
+                text_tokens=text_tokens,
+            )
+
+            logger.info(
+                f"Used custom pricing for {model_name}: "
+                f"prompt={prompt_tokens}, completion={completion_tokens}, "
+                f"reasoning={reasoning_tokens}, text={text_tokens}, "
+                f"total=${total_cost:.6f}"
+            )
+
+            return total_cost, cost_breakdown
+
+        except Exception as e:
+            logger.error(f"Custom pricing calculation failed for {model_name}: {e}")
+            # Fall through to LiteLLM pricing
+
+    # Priority 2: Fall back to LiteLLM's cost_per_token
+    try:
+        prompt_cost_usd, completion_cost_usd = litellm.cost_per_token(
+            model=model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
 
-        # Calculate costs separately
-        input_cost = prompt_tokens * GEMINI_25_FLASH_PRICES["input"]
-        text_output_cost = text_tokens * GEMINI_25_FLASH_PRICES["output_text"]
-        reasoning_output_cost = reasoning_tokens * GEMINI_25_FLASH_PRICES["output_reasoning"]
+        total_cost = (prompt_cost_usd or 0.0) + (completion_cost_usd or 0.0)
 
+        # Build cost breakdown
+        # Note: LiteLLM doesn't separate reasoning vs text, so we report as single output
         cost_breakdown = {
-            "input": input_cost,
-            "output_text": text_output_cost,
-            "output_reasoning": reasoning_output_cost,
+            "input": prompt_cost_usd or 0.0,
+            "output": completion_cost_usd or 0.0,
         }
 
-        total_cost = input_cost + text_output_cost + reasoning_output_cost
+        # If we have reasoning tokens but no custom pricing, warn user
+        if reasoning_tokens > 0 and not pricing_config:
+            logger.warning(
+                f"Model {model_name} has {reasoning_tokens} reasoning tokens "
+                f"but no custom pricing configured. LiteLLM may not apply "
+                f"differential pricing for reasoning tokens. Consider adding "
+                f"'reasoning_cost_per_token' to model config."
+            )
 
-        logger.info(
-            f"Detailed cost for {model_name}: input=${input_cost:.6f}, "
-            f"text_output=${text_output_cost:.6f}, reasoning_output=${reasoning_output_cost:.6f}, "
+        logger.debug(
+            f"LiteLLM pricing for {model_name}: "
+            f"prompt=${prompt_cost_usd:.6f}, "
+            f"completion=${completion_cost_usd:.6f}, "
             f"total=${total_cost:.6f}"
         )
 
-    else:
-        # Fall back to LiteLLM's cost_per_token for models without detailed breakdown
-        try:
-            prompt_cost, completion_cost = litellm.cost_per_token(
-                model=model_name,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-            )
+        return total_cost, cost_breakdown
 
-            cost_breakdown = {
-                "input": prompt_cost or 0.0,
-                "output": completion_cost or 0.0,
-            }
-
-            total_cost = (prompt_cost or 0.0) + (completion_cost or 0.0)
-
-            logger.info(
-                f"Standard cost for {model_name}: input=${prompt_cost:.6f}, "
-                f"output=${completion_cost:.6f}, total=${total_cost:.6f}"
-            )
-
-        except Exception as e:
-            logger.error(f"Cost calculation failed for {model_name}: {e}", exc_info=True)
-            total_cost = 0.0
-            cost_breakdown = {}
-
-    return total_cost, cost_breakdown
+    except Exception as e:
+        logger.warning(
+            f"Cost calculation failed for {model_name} (no pricing available): {e}. "
+            f"Consider adding custom pricing config."
+        )
+        return 0.0, {}
