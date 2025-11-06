@@ -1,3 +1,23 @@
+"""
+LLM call management with caching, retries, and metrics tracking.
+
+This module provides the low-level interface for making calls to various LLM providers
+through LiteLLM, with built-in support for:
+- Request caching (SQLite-based) to reduce costs and latency
+- Automatic retries with exponential backoff for transient failures
+- Comprehensive metrics recording for monitoring and cost tracking
+- Support for both streaming and non-streaming responses
+
+Key functions:
+- _call_lite_llm: Main function for executing LLM calls with caching and retries
+- _generate_cache_key: Creates deterministic cache keys from request parameters
+- _get_cached_response: Retrieves responses from the cache database
+- _cache_response: Stores successful responses in the cache
+
+The cache is implemented using SQLite and stores requests/responses as JSON,
+keyed by a SHA256 hash of the model configuration and messages.
+"""
+
 import hashlib
 import json
 import logging

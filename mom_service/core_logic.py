@@ -1,3 +1,21 @@
+"""
+Core orchestration logic for the Mixture of Models (MoM) service.
+
+This module implements the fan-out/fan-in pattern for LLM orchestration:
+1. Fan-out: Sends requests to multiple LLMs in parallel (query phase)
+2. Aggregation: Collects and processes intermediate responses
+3. Concluding: Synthesizes final response using a concluding LLM
+
+Key functions:
+- _perform_fanout_calls: Execute parallel LLM calls and yield thinking context items
+- _prepare_concluding_messages: Prepare messages for the concluding LLM based on fan-out results
+- _execute_concluding_call: Execute the final synthesis LLM call
+- _calculate_and_log_costs: Aggregate costs from all LLM calls
+
+The module handles error cases gracefully, including partial failures where some
+fan-out calls succeed while others fail, ensuring the service remains resilient.
+"""
+
 import asyncio
 import html
 import logging

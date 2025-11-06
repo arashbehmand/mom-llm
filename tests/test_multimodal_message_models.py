@@ -79,7 +79,9 @@ class TestChatMessageSimpleContent:
         """Test serialization of simple text message"""
         msg = ChatMessage(role="assistant", content="I'm doing well!")
         data = msg.model_dump(exclude_none=True)
-        assert data == {"role": "assistant", "content": "I'm doing well!"}
+        # After changing images from Optional[list] to list with default [],
+        # the images field is now always present (as an empty list)
+        assert data == {"role": "assistant", "content": "I'm doing well!", "images": []}
 
 
 class TestChatMessageMultimodalContent:

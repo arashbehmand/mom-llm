@@ -1,3 +1,23 @@
+"""
+Configuration management for the Mixture of Models (MoM) service.
+
+This module defines Pydantic models for all configuration entities and provides
+the load_config() function to parse and validate the config.yaml file.
+
+Configuration structure:
+- LLMDefinition: Individual LLM provider configurations (model, API keys, parameters)
+- ModelConfig: MoM model definitions (which LLMs to query, concluding LLM, prompts)
+- ServiceConfig: Service-level settings (timeouts, caching, retries, exposed APIs)
+- LangfuseConfig: Optional observability/tracing configuration
+- MoMConfig: Top-level configuration combining all of the above
+
+The configuration file is loaded from one of these locations (in order):
+1. Path explicitly provided to load_config()
+2. MOM_CONFIG_PATH environment variable
+3. ./config.yaml (current directory)
+4. ../config.yaml (parent directory, relative to this module)
+"""
+
 import os
 from typing import Any, Optional
 
@@ -90,8 +110,6 @@ class ServiceConfig(BaseModel):
     timeout_seconds: int = 30
     exposed_apis: list[str] = ["openai"]  # Default to only openai if not specified
     cache_enabled: bool = False  # Add cache enabled flag
-    max_retries: int = 3  # Add max retries for LLM calls (legacy - for backward compat)
-    retry_delay_seconds: int = 5  # Add delay between retries (legacy - for backward compat)
     max_llm_retries: int = 3  # Max retries for individual LLM calls
     llm_retry_delay_seconds: int = 2  # Delay between LLM call retries
 

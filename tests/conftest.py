@@ -7,6 +7,23 @@ from unittest.mock import MagicMock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def setup_default_env(monkeypatch):
+    """
+    Autouse fixture that sets up default environment variables for all tests.
+    Individual tests can override these values using monkeypatch if needed.
+    """
+    # Set default API_TOKEN if not already set
+    import os
+
+    if not os.getenv("API_TOKEN"):
+        monkeypatch.setenv("API_TOKEN", "test-token-default-12345")
+    # Set default OPENAI_API_KEY if not already set
+    if not os.getenv("OPENAI_API_KEY"):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key-default")
+    yield
+
+
 @pytest.fixture
 def mock_langfuse_client():
     """Fixture providing a mocked Langfuse client"""
