@@ -12,7 +12,9 @@ class PricingConfig(BaseModel):
         None  # Cost per prompt token (e.g., 0.00003 for $0.03/1K tokens)
     )
     completion_cost_per_token: Optional[float] = None  # Cost per completion token (text output)
-    reasoning_cost_per_token: Optional[float] = None  # Cost per reasoning token (thinking/internal reasoning)
+    reasoning_cost_per_token: Optional[float] = (
+        None  # Cost per reasoning token (thinking/internal reasoning)
+    )
 
     def calculate_cost(
         self,
@@ -39,25 +41,28 @@ class PricingConfig(BaseModel):
 
         # If reasoning token pricing is configured and we have breakdown, use it
         if self.reasoning_cost_per_token and (reasoning_tokens > 0 or text_tokens > 0):
-            text_cost = (text_tokens * self.completion_cost_per_token) if self.completion_cost_per_token else 0.0
-            reasoning_cost = (reasoning_tokens * self.reasoning_cost_per_token)
+            text_cost = (
+                (text_tokens * self.completion_cost_per_token)
+                if self.completion_cost_per_token
+                else 0.0
+            )
+            reasoning_cost = reasoning_tokens * self.reasoning_cost_per_token
 
             return prompt_cost + text_cost + reasoning_cost, {
                 "input": prompt_cost,
                 "output_text": text_cost,
                 "output_reasoning": reasoning_cost,
             }
-        else:
-            # Standard pricing without reasoning breakdown
-            completion_cost = (
-                (completion_tokens * self.completion_cost_per_token)
-                if self.completion_cost_per_token
-                else 0.0
-            )
-            return prompt_cost + completion_cost, {
-                "input": prompt_cost,
-                "output": completion_cost,
-            }
+        # Standard pricing without reasoning breakdown
+        completion_cost = (
+            (completion_tokens * self.completion_cost_per_token)
+            if self.completion_cost_per_token
+            else 0.0
+        )
+        return prompt_cost + completion_cost, {
+            "input": prompt_cost,
+            "output": completion_cost,
+        }
 
 
 class LLMDefinition(BaseModel):

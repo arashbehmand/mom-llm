@@ -11,7 +11,7 @@ Priority order for pricing:
 """
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Optional
 
 import litellm
 
@@ -22,10 +22,9 @@ def calculate_detailed_cost(
     model_name: str,
     prompt_tokens: int,
     completion_tokens: int,
-    completion_tokens_details: Optional[Dict] = None,
-    prompt_tokens_details: Optional[Dict] = None,
-    pricing_config = None,  # PricingConfig from LLMDefinition
-) -> Tuple[float, Dict[str, float]]:
+    completion_tokens_details: Optional[dict] = None,
+    pricing_config=None,  # PricingConfig from LLMDefinition
+) -> tuple[float, dict[str, float]]:
     """
     Calculate cost breakdown handling reasoning tokens separately from text tokens.
 
@@ -52,14 +51,14 @@ def calculate_detailed_cost(
         >>> pricing = PricingConfig(
         ...     prompt_cost_per_token=0.15 / 1_000_000,
         ...     completion_cost_per_token=0.60 / 1_000_000,
-        ...     reasoning_cost_per_token=3.50 / 1_000_000
+        ...     reasoning_cost_per_token=3.50 / 1_000_000,
         ... )
         >>> total, breakdown = calculate_detailed_cost(
         ...     "gemini/gemini-2.5-flash",
         ...     prompt_tokens=1000,
         ...     completion_tokens=825,
         ...     completion_tokens_details={"reasoning_tokens": 764, "text_tokens": 61},
-        ...     pricing_config=pricing
+        ...     pricing_config=pricing,
         ... )
         >>> print(f"Total: ${total:.6f}")
         Total: $0.003024

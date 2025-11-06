@@ -1,6 +1,7 @@
 """
 Utilities for detecting and handling multimodal content in LLM requests.
 """
+
 import logging
 from typing import Any
 
@@ -24,14 +25,17 @@ def has_multimodal_content(messages: list[dict[str, Any]]) -> bool:
         content = message.get("content")
         if isinstance(content, list):
             for item in content:
-                if isinstance(item, dict):
-                    # Check for image_url, image, file, etc.
-                    if "image_url" in item or "type" in item and item["type"] in [
+                if isinstance(item, dict) and (
+                    "image_url" in item
+                    or "type" in item
+                    and item["type"]
+                    in [
                         "image",
                         "image_url",
                         "file",
-                    ]:
-                        return True
+                    ]
+                ):
+                    return True
 
         # Check for images field (some formats use this)
         if "images" in message and message["images"]:
@@ -68,17 +72,19 @@ def is_model_multimodal_capable(model_name: str) -> bool:
             if keyword in model_lower:
                 return True
 
-        # Additional check: try to get model info from LiteLLM
-        # LiteLLM has a list of vision models
-        if hasattr(litellm, "vision_models") and litellm.vision_models:
-            # Check if any vision model matches our model name
-            for vision_model in litellm.vision_models:
-                if vision_model.lower() in model_lower:
-                    return True
-
         # Check litellm.supports_vision function if available
-        if hasattr(litellm, "supports_vision"):
-            return litellm.supports_vision(model_name)
+        if hasattr(litellm, "supports_vision") and litellm.supports_vision(model_name):
+            return True
+
+        # Fallback check against litellm's model list
+        if hasattr(litellm, "model_list"):
+            for model_info in litellm.model_list:
+                if (
+                    "model_name" in model_info
+                    and model_info["model_name"] == model_name
+                    and model_info.get("litellm_supports_vision")
+                ):
+                    return True
 
         return False
     except Exception as e:

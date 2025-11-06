@@ -1,10 +1,10 @@
+from collections.abc import AsyncGenerator
 import hashlib
 import json
 import logging
 import os
 import sqlite3
 import time
-from collections.abc import AsyncGenerator
 from typing import Any, Optional
 
 import litellm
@@ -12,6 +12,7 @@ from litellm.utils import Choices, Message, ModelResponse, Usage
 
 from . import metrics_db
 from .config import LLMDefinition, MoMConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,6 @@ async def _call_lite_llm(
                     if isinstance(v, (str, int, float, bool, list)):
                         langfuse_params[k] = v
                     elif isinstance(v, dict):
-                        import json
                         langfuse_params[k] = json.dumps(v)
 
                 generation = trace.generation(
@@ -268,7 +268,6 @@ async def _call_lite_llm(
                 langfuse_params[k] = v
             elif isinstance(v, dict):
                 # Convert dicts to JSON string for Langfuse
-                import json
                 langfuse_params[k] = json.dumps(v)
 
         generation = trace.generation(
@@ -347,8 +346,8 @@ async def _call_lite_llm(
                 )
 
                 # Check for detailed token breakdown (reasoning vs text)
-                completion_details = accumulated_usage.get('completion_tokens_details', {})
-                prompt_details = accumulated_usage.get('prompt_tokens_details', {})
+                completion_details = accumulated_usage.get("completion_tokens_details", {})
+                prompt_details = accumulated_usage.get("prompt_tokens_details", {})
 
                 if completion_details or prompt_details:
                     logger.info(
@@ -365,11 +364,11 @@ async def _call_lite_llm(
                 from .cost_calculation import calculate_detailed_cost
 
                 # Extract token counts and details
-                prompt_tokens = accumulated_usage.get('prompt_tokens', 0)
-                completion_tokens = accumulated_usage.get('completion_tokens', 0)
-                total_tokens = accumulated_usage.get('total_tokens', 0)
-                completion_details = accumulated_usage.get('completion_tokens_details', {})
-                prompt_details = accumulated_usage.get('prompt_tokens_details', {})
+                prompt_tokens = accumulated_usage.get("prompt_tokens", 0)
+                completion_tokens = accumulated_usage.get("completion_tokens", 0)
+                total_tokens = accumulated_usage.get("total_tokens", 0)
+                completion_details = accumulated_usage.get("completion_tokens_details", {})
+                prompt_details = accumulated_usage.get("prompt_tokens_details", {})
 
                 # Calculate detailed cost (with custom pricing if configured)
                 total_cost, cost_breakdown = calculate_detailed_cost(
@@ -377,7 +376,6 @@ async def _call_lite_llm(
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     completion_tokens_details=completion_details,
-                    prompt_tokens_details=prompt_details,
                     pricing_config=llm_def.pricing,  # Use custom pricing from config
                 )
 
@@ -453,22 +451,21 @@ async def _call_lite_llm(
                 from .cost_calculation import calculate_detailed_cost
 
                 # Extract token counts from response.usage
-                prompt_tokens = getattr(response.usage, 'prompt_tokens', 0)
-                completion_tokens = getattr(response.usage, 'completion_tokens', 0)
-                total_tokens = getattr(response.usage, 'total_tokens', 0)
+                prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
+                completion_tokens = getattr(response.usage, "completion_tokens", 0)
+                total_tokens = getattr(response.usage, "total_tokens", 0)
 
                 # Extract detailed token breakdown if available
                 # LiteLLM returns wrapper objects, convert to dicts
-                completion_details_obj = getattr(response.usage, 'completion_tokens_details', None)
-                prompt_details_obj = getattr(response.usage, 'prompt_tokens_details', None)
+                completion_details_obj = getattr(response.usage, "completion_tokens_details", None)
+                prompt_details_obj = getattr(response.usage, "prompt_tokens_details", None)
 
                 # Convert wrapper objects to dicts (filter out None values)
                 completion_details = {}
                 if completion_details_obj:
                     try:
                         completion_details = {
-                            k: v for k, v in vars(completion_details_obj).items()
-                            if v is not None
+                            k: v for k, v in vars(completion_details_obj).items() if v is not None
                         }
                     except (TypeError, AttributeError):
                         # If conversion fails, try as dict
@@ -479,8 +476,7 @@ async def _call_lite_llm(
                 if prompt_details_obj:
                     try:
                         prompt_details = {
-                            k: v for k, v in vars(prompt_details_obj).items()
-                            if v is not None
+                            k: v for k, v in vars(prompt_details_obj).items() if v is not None
                         }
                     except (TypeError, AttributeError):
                         # If conversion fails, try as dict
@@ -500,7 +496,6 @@ async def _call_lite_llm(
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     completion_tokens_details=completion_details,
-                    prompt_tokens_details=prompt_details,
                     pricing_config=llm_def.pricing,  # Use custom pricing from config
                 )
 

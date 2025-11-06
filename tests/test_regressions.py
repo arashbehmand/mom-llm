@@ -37,9 +37,9 @@ async def test_llm_params_none_does_not_raise(mock_litellm_response):
         mock_ac.return_value = mock_litellm_response
 
         # Call the internal async generator directly; it should not raise TypeError
-        gen = __import__(
-            "mom_service.llm_calls", fromlist=["_"]
-        )._call_lite_llm(  # pylint: disable=protected-access
+        from mom_service.llm_calls import _call_lite_llm
+
+        gen = _call_lite_llm(  # pylint: disable=protected-access
             llm_def,
             messages,
             timeout=30,

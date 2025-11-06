@@ -5,8 +5,8 @@ This module provides functionality to normalize token counts based on a unified
 pricing model ($1/1M input tokens, $10/1M output tokens) while preserving the
 actual cost of LLM calls.
 """
+
 import logging
-from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ def calculate_normalized_tokens(
     actual_cost: float,
     actual_input_tokens: int,
     actual_output_tokens: int,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """
     Calculate normalized token counts that match the actual cost using unified pricing.
 

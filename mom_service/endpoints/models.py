@@ -79,8 +79,10 @@ class UsageInfo(BaseModel):
         elif model_name is not None:
             # Try to calculate cost using model name and token counts
             try:
-                import litellm
                 import logging
+
+                import litellm
+
                 logger = logging.getLogger(__name__)
 
                 logger.info(
@@ -104,6 +106,7 @@ class UsageInfo(BaseModel):
                 cost = float(calculated_cost) if calculated_cost is not None else 0.0
             except Exception as e:
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.error(f"Cost calculation failed for {model_name}: {e}", exc_info=True)
                 # Cost calculation failed, default to 0.0 for safety

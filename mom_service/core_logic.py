@@ -87,7 +87,7 @@ async def _perform_fanout_calls(
         model_display = skipped_def.model if skipped_def else skipped_llm_name
         yield ThinkingContextItem(
             model=model_display,
-            content=f"Warning: Model skipped due to lack of multimodal support for this request.",
+            content="Warning: Model skipped due to lack of multimodal support for this request.",
             usage=UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0, cost=0.0),
         )
 
