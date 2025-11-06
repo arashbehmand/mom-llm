@@ -458,8 +458,34 @@ async def _call_lite_llm(
                 total_tokens = getattr(response.usage, 'total_tokens', 0)
 
                 # Extract detailed token breakdown if available
-                completion_details = getattr(response.usage, 'completion_tokens_details', None) or {}
-                prompt_details = getattr(response.usage, 'prompt_tokens_details', None) or {}
+                # LiteLLM returns wrapper objects, convert to dicts
+                completion_details_obj = getattr(response.usage, 'completion_tokens_details', None)
+                prompt_details_obj = getattr(response.usage, 'prompt_tokens_details', None)
+
+                # Convert wrapper objects to dicts (filter out None values)
+                completion_details = {}
+                if completion_details_obj:
+                    try:
+                        completion_details = {
+                            k: v for k, v in vars(completion_details_obj).items()
+                            if v is not None
+                        }
+                    except (TypeError, AttributeError):
+                        # If conversion fails, try as dict
+                        if isinstance(completion_details_obj, dict):
+                            completion_details = completion_details_obj
+
+                prompt_details = {}
+                if prompt_details_obj:
+                    try:
+                        prompt_details = {
+                            k: v for k, v in vars(prompt_details_obj).items()
+                            if v is not None
+                        }
+                    except (TypeError, AttributeError):
+                        # If conversion fails, try as dict
+                        if isinstance(prompt_details_obj, dict):
+                            prompt_details = prompt_details_obj
 
                 if completion_details or prompt_details:
                     logger.info(
