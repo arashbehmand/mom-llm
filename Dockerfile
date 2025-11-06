@@ -11,9 +11,9 @@ RUN apt-get update && \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install dependencies
+# Copy requirements and install dependencies (install globally so binaries are available system-wide)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Stage 2: Production image
 FROM python:3.12-slim-bookworm
@@ -26,8 +26,8 @@ RUN apt-get update && \
     libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
+# Copy installed packages from builder (system-wide install under /usr/local)
+COPY --from=builder /usr/local /usr/local
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser && \
@@ -42,7 +42,7 @@ RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
 
 # Set environment variables
 ENV PYTHONPATH=/app \
-    PATH=/root/.local/bin:$PATH \
+    PATH=/usr/local/bin:$PATH \
     PYTHONUNBUFFERED=1
 
 # Switch to non-root user
