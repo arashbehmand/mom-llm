@@ -9,7 +9,7 @@
 
 MoM Service is an OpenAI-compatible API that revolutionizes LLM usage by orchestrating multiple AI models simultaneously. Instead of relying on a single model's perspective, it queries several LLMs in parallel and synthesizes their responses into a single, superior answer using a dedicated "concluding" model.
 
-Think of it as assembling an expert panel: you get the creativity of GPT-4, the speed of Gemini Flash, and the reasoning of Claude—all combined into one comprehensive response that's more reliable and nuanced than any individual model could produce.
+Think of it as assembling an expert panel: you get the creativity of GPT-5, the speed of Gemini 2.5 Pro, and the reasoning of Claude 4.5—all combined into one comprehensive response that's more reliable and nuanced than any individual model could produce.
 
 ## 🌟 Why a Mixture of Models?
 
@@ -45,14 +45,14 @@ MoM Service uses an elegant **fan-out, fan-in architecture** for parallel proces
 │   (FastAPI)        │
 └────────┬───────────┘
          │ Fan-Out
-         ├─────────────────┬─────────────────┬─────────────────┐
-         ▼                 ▼                 ▼                 ▼
-    ┌─────────┐       ┌─────────┐       ┌─────────┐       ┌─────────┐
-    │ GPT-4   │       │ Claude  │       │ Gemini  │       │ Llama   │
-    │  (LLM1) │       │  (LLM2) │       │  (LLM3) │       │  (LLM4) │
-    └────┬────┘       └────┬────┘       └────┬────┘       └────┬────┘
-         │                 │                 │                 │
-         └─────────────────┴─────────────────┴─────────────────┘
+         ├─────────────────┬───────────────────────┬──────────────────────┐
+         ▼                 ▼                       ▼                      ▼
+    ┌─────────┐       ┌────────────┐       ┌─────────────────┐       ┌─────────┐
+    │  GPT-5  │       │ Claude 4.5 │       │ Gemini 2.5 Pro  │       │ Llama 4 │
+    │  (LLM1) │       │   (LLM2)   │       │     (LLM3)      │       │  (LLM4) │
+    └────┬────┘       └────┬───────┘       └────────┬────────┘       └────┬────┘
+         │                 │                        │                     │
+         └─────────────────┴────────────────────────┴─────────────────────┘
                                     │
                                     ▼
                          ┌──────────────────────┐
@@ -79,11 +79,11 @@ MoM Service uses an elegant **fan-out, fan-in architecture** for parallel proces
 
 - **🔌 OpenAI-Compatible API**: Drop-in replacement with `/v1/chat/completions` and `/v1/models` endpoints
 - **🎭 Multi-Model Orchestration**: Query multiple LLMs in parallel with intelligent synthesis
-- **🖼️ Multimodal Vision Support**: Send images alongside text using OpenAI Vision API format (GPT-4o, Claude-3, Gemini)
+- **🖼️ Multimodal Vision Support**: Send images alongside text using OpenAI Vision API format (GPT-5, Claude 4.5, Gemini 2.5 Pro)
 - **⚡ Real-Time Streaming**: Stream synthesized responses back to clients with low latency
 - **⚙️ Configuration-Driven**: Define everything in a single `config.yaml` file—no code changes needed
 - **💰 Advanced Pricing & Cost Tracking**:
-  - Custom pricing configurations for reasoning tokens (Gemini 2.5, Claude Sonnet 4.5, o1)
+  - Custom pricing configurations for reasoning tokens (Gemini 2.5 Pro, Claude 4.5)
   - Automatic model filtering based on multimodal capabilities
   - Detailed cost breakdowns with normalized token reporting
   - LiteLLM fallback pricing for all models
@@ -274,7 +274,7 @@ curl http://localhost:8000/v1/chat/completions \
   }'
 ```
 
-**Note**: Vision requests automatically filter to multimodal-capable models (GPT-4o, Claude-3, Gemini, etc.). Non-capable models are skipped.
+**Note**: Vision requests automatically filter to multimodal-capable models (GPT-5, Claude 4.5, Gemini 2.5 Pro, etc.). Non-capable models are skipped.
 
 ## ⚙️ Configuration
 
@@ -286,14 +286,14 @@ Define the individual LLMs you want to use:
 
 ```yaml
 llm_definitions:
-  - name: "gpt4"
-    model: "openai/gpt-4"
+  - name: "gpt5"
+    model: "openai/gpt-5"
     api_key_env: "OPENAI_API_KEY"
     params:
-      temperature: 0.7
+      reasoning_effort: "high"
 
-  - name: "gemini-flash"
-    model: "gemini/gemini-2.5-flash"
+  - name: "gemini-2.5-pro"
+    model: "gemini/gemini-2.5-pro"
     api_key_env: "GOOGLE_API_KEY"
     # Custom pricing for reasoning tokens (optional)
     pricing:
@@ -302,7 +302,7 @@ llm_definitions:
       reasoning_cost_per_token: 0.00000350   # $3.50 per 1M reasoning tokens
 ```
 
-**Note**: Custom pricing is optional. If not specified, LiteLLM's default pricing is used. For models with reasoning tokens (Gemini 2.5, Claude Sonnet 4.5, o1), custom pricing enables accurate cost tracking.
+**Note**: Custom pricing is optional. If not specified, LiteLLM's default pricing is used. For models with reasoning tokens (Gemini 2.5 Pro, Claude 4.5), custom pricing enables accurate cost tracking.
 
 ### Synthesis Prompts
 
@@ -326,18 +326,18 @@ Create your "meta-models" that define which LLMs to query and how to synthesize:
 models:
   - name: "mom-creative"
     llms_to_query:
-      - "gpt4"
-      - "claude"
-      - "gemini-flash"
-    concluding_llm: "gpt4"
+      - "gpt5"
+      - "claude4.5"
+      - "gemini-2.5-pro"
+    concluding_llm: "gpt5"
     concluding_prompt: "synth_default"
     include_thinking_context: true  # Show intermediate responses
   
   - name: "mom-fast"
     llms_to_query:
-      - "gemini-flash"
-      - "gpt-3.5-turbo"
-    concluding_llm: "gemini-flash"
+      - "gemini-2.5-pro"
+      - "mistral-8x7b"
+    concluding_llm: "gemini-2.5-pro"
     concluding_prompt: "synth_default"
     include_thinking_context: false
 ```
@@ -632,6 +632,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
+- This project was developed with the assistance of multiple AI tools, including **Anthropic's Claude**, **GitHub Copilot**, and **Kilo Code**.
 - Built with [FastAPI](https://fastapi.tiangolo.com/) and [LiteLLM](https://github.com/BerriAI/litellm)
 - Inspired by ensemble learning and multi-agent AI systems
 - Observability powered by [Langfuse](https://langfuse.com/)
