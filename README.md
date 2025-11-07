@@ -15,6 +15,9 @@ Think of it as assembling an expert panel: you get the creativity of GPT-5, the 
 
 In today's AI landscape with hundreds of specialized LLMs, relying on a single model is limiting. A Mixture of Models (MoM) approach delivers compelling advantages:
 
+![Different AI models offer unique perspectives on the same question](docs/neo-fork.png)
+*Each AI model brings its own unique perspective and reasoning style. MoM synthesizes these diverse viewpoints into a more comprehensive answer.*
+
 | Benefit | Description |
 |---------|-------------|
 | **🎯 Superior Quality** | Synthesize multiple perspectives to mitigate individual model weaknesses (hallucinations, biases, knowledge gaps) |
