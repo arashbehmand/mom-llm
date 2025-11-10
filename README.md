@@ -9,7 +9,7 @@
 
 MoM Service is an OpenAI-compatible API that revolutionizes LLM usage by orchestrating multiple AI models simultaneously. Instead of relying on a single model's perspective, it queries several LLMs in parallel and synthesizes their responses into a single, superior answer using a dedicated "concluding" model.
 
-Think of it as assembling an expert panel: you get the creativity of GPT-5, the speed of Gemini 2.5 Pro, and the reasoning of Claude 4.5—all combined into one comprehensive response that's more reliable and nuanced than any individual model could produce.
+Think of it as assembling an expert panel: you get the creativity of GPT-5, the reasoning of Claude Sonnet 4.5, and the versatility of Gemini 2.5 Pro—all combined into one comprehensive response that's more reliable and nuanced than any individual model could produce.
 
 ## 🌟 Why a Mixture of Models?
 
@@ -59,21 +59,6 @@ graph TD
     style E fill:#cfc,stroke:#333,stroke-width:2px
 ```
 
-### Explanation of Enhancements:
-
-1.  **Readability and Maintainability (Mermaid Syntax):**
-    *   The original ASCII diagram is replaced with a `Mermaid` diagram.
-    *   **Maintainability:** `Mermaid` is a markdown-like syntax for generating diagrams. It's far easier to edit, add new steps, or change connections by modifying text labels and arrows, rather than manually redrawing ASCII art.
-    *   **Readability:** The rendered `Mermaid` diagram is cleaner, more professional, and easier for readers to understand at a glance compared to ASCII. Most modern markdown viewers (like on GitHub, GitLab, or in VS Code) will render this automatically.
-
-2.  **Clarity and Best Practices (Diagram Content):**
-    *   **Descriptive Labels:** The labels have been made more specific. For example, "Client Request (OpenAI API)" is now "Client Request via OpenAI-Compatible API" which is more precise.
-    *   **Updated Model Names:** The LLM versions have been updated to reflect more current or well-known models (e.g., `GPT-5` to `GPT-4o`, `Claude 4.5` to `Claude 3.5 Sonnet`, etc.) to make the diagram more contemporary.
-    *   **Logical Grouping:** `subgraph` blocks are used to logically group the "Parallel LLM Inference" and "Response Synthesis" stages. This clearly communicates the different phases of the process.
-    *   **Clear Flow:** The diagram follows a standard top-down flowchart (`graph TD`), which is a universally understood pattern for representing processes.
-
-Since this is a diagram and not code, concepts like performance optimization and error handling are not applicable. The focus of the improvement is on making the architectural documentation as clear and easy to maintain as possible.
-
 ### Processing Flow
 
 1. **📥 Request In**: Client makes request to OpenAI-compatible endpoint (`/v1/chat/completions`)
@@ -86,14 +71,14 @@ Since this is a diagram and not code, concepts like performance optimization and
 
 - **🔌 OpenAI-Compatible API**: Drop-in replacement with `/v1/chat/completions` and `/v1/models` endpoints
 - **🎭 Multi-Model Orchestration**: Query multiple LLMs in parallel with intelligent synthesis
-- **🖼️ Multimodal Vision Support**: Send images alongside text using OpenAI Vision API format (GPT-5, Claude 4.5, Gemini 2.5 Pro)
+- **🖼️ Multimodal Vision Support**: Send images alongside text using OpenAI Vision API format
 - **⚡ Real-Time Streaming**: Stream synthesized responses back to clients with low latency
 - **⚙️ Configuration-Driven**: Define everything in a single `config.yaml` file—no code changes needed
 - **💰 Advanced Pricing & Cost Tracking**:
-  - Custom pricing configurations for reasoning tokens (Gemini 2.5 Pro, Claude 4.5)
+  - Custom pricing configurations for reasoning tokens
   - Automatic model filtering based on multimodal capabilities
   - Detailed cost breakdowns with normalized token reporting
-  - LiteLLM fallback pricing for all models
+  - Per-request cost calculation and logging
 - **📊 Advanced Observability**:
   - Built-in Langfuse integration for distributed tracing
   - Comprehensive metrics API with cost tracking and usage analytics
@@ -122,11 +107,11 @@ mom-llm/
 ├── 🔒 .env                    # Environment variables (gitignored)
 ├── 📂 mom_service/
 │   ├── 🎯 main.py            # FastAPI application & middleware
-│   ├── 🔒 auth.py            # Authentication dependency & token validation
+│   ├── 🔒 auth.py            # Authentication & token validation
 │   ├── ⚙️  config.py         # Configuration loader & models
 │   ├── 🧠 core_logic.py      # Fan-out & synthesis engine
 │   ├── 📞 llm_calls.py       # LLM communication via LiteLLM
-│   ├── 🖼️  multimodal_utils.py # Multimodal content handling & message sanitization
+│   ├── 🖼️  multimodal_utils.py # Multimodal content & message sanitization
 │   ├── 💰 cost_calculation.py # Cost tracking with reasoning tokens
 │   ├── 💵 pricing_utils.py   # Pricing conversions & normalization
 │   ├── 📊 metrics_db.py      # Metrics persistence & analytics
@@ -288,7 +273,7 @@ curl http://localhost:8000/v1/chat/completions \
   }'
 ```
 
-**Note**: Vision requests automatically filter to multimodal-capable models (GPT-5, Claude 4.5, Gemini 2.5 Pro, etc.). Non-capable models are skipped. Messages are also sanitized for each provider to ensure compatibility with strict LLM providers like Mistral.
+**Note**: Vision requests automatically filter to multimodal-capable models. Non-capable models are skipped, and messages are sanitized for each provider to ensure compatibility.
 
 ## ⚙️ Configuration
 
@@ -356,128 +341,6 @@ curl http://localhost:8000/v1/chat/completions \
 
 For complete API documentation including all endpoints, parameters, response formats, and code examples in multiple languages, see the **[API Reference](docs/API.md)**.
 
-## 🎯 Advanced Features
-
-### Message Sanitization for Provider Compatibility
-
-The service automatically sanitizes messages before sending them to LLM providers to ensure compatibility with strict providers like Mistral. This includes:
-
-- **Removing empty fields**: Provider-specific fields (like `images: []`) that are empty are removed to prevent validation errors
-- **Preserving multimodal content**: For multimodal-capable models, relevant fields are retained when they contain actual content
-- **Standard field support**: Maintains compatibility with standard OpenAI fields (name, function_call, tool_calls, etc.)
-
-This ensures your requests work reliably across all configured LLM providers without manual adjustments.
-
-### Thinking Context
-
-When `include_thinking_context: true`, the service includes intermediate LLM responses in the output, wrapped in `<think>` tags:
-
-```
-<think>
-Model: gpt-4
-Content: [GPT-4's response]
----
-Model: claude
-Content: [Claude's response]
----
-</think>
-
-[Final synthesized answer]
-```
-
-This is useful for:
-- Understanding how the synthesis was formed
-- Debugging model behavior
-- Transparency in decision-making
-
-### Cost Tracking
-
-The service automatically tracks and logs API costs for each request using LiteLLM's cost calculation.
-
-### Langfuse Observability
-
-Enable tracing and monitoring:
-
-1. Sign up at [Langfuse](https://langfuse.com/)
-2. Add credentials to `.env`
-3. View detailed traces for every request in Langfuse dashboard
-
-## 🛠️ Development
-
-### Running in Development Mode
-
-```bash
-uvicorn mom_service.main:app --reload --reload-include "config.yaml"
-```
-
-The `--reload-include` flag watches `config.yaml` for changes and automatically reloads the service.
-
-### Health Checks
-
-**Basic health check (fast):**
-```bash
-curl http://localhost:8000/health
-```
-
-**Detailed health check (includes component validation):**
-```bash
-curl http://localhost:8000/health/detailed
-```
-
-**Health check with LLM connectivity test:**
-```bash
-curl http://localhost:8000/health/detailed?check_llm=true
-```
-
-Returns status of:
-- Cache database connectivity
-- Metrics database connectivity
-- Configuration validity
-- LLM API connectivity (optional)
-
-### Running Tests
-
-Run the comprehensive test suite:
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage report
-pytest --cov=mom_service --cov-report=html
-
-# Run specific test file
-pytest tests/test_endpoints.py
-
-# Run with verbose output
-pytest -v
-```
-
-The test suite includes:
-- **Unit tests**: Configuration, core logic, utilities
-- **Integration tests**: LLM calls, caching, metrics
-- **API tests**: All endpoints with authentication
-- **Health check tests**: Component validation
-
-### Manual API Testing
-
-Test with curl:
-```bash
-# Quick health check via models endpoint
-curl http://localhost:8000/v1/models \
-  -H "Authorization: Bearer your-token"
-
-# Test a simple completion
-curl http://localhost:8000/v1/chat/completions \
-  -H "Authorization: Bearer your-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mom",
-    "messages": [{"role": "user", "content": "Hi!"}],
-    "stream": false
-  }'
-```
-
 ### Using with OpenAI SDK
 
 The service is fully compatible with the OpenAI Python SDK:
@@ -501,6 +364,75 @@ for chunk in response:
 ```
 
 See the [API Reference](docs/API.md#using-with-openai-sdk) for more examples including non-streaming and multimodal requests.
+
+## 🎯 Advanced Features
+
+### Thinking Context
+
+Set `include_thinking_context: true` in your model configuration to see intermediate responses from all LLMs before synthesis:
+
+```
+<think>
+Model: gpt-4o
+Content: [GPT-4o's response]
+---
+Model: claude-3-5-sonnet
+Content: [Claude's response]
+---
+</think>
+
+[Final synthesized answer]
+```
+
+Useful for understanding synthesis logic, debugging, and transparency.
+
+### Message Sanitization
+
+The service automatically sanitizes messages for provider compatibility, removing empty fields and preserving multimodal content appropriately. This ensures reliable operation across all LLM providers without manual adjustments.
+
+### Cost Tracking & Observability
+
+- **Automatic cost calculation** for every request with detailed breakdowns
+- **Langfuse integration** for distributed tracing: Add credentials to `.env` and view detailed traces at [Langfuse](https://langfuse.com/)
+- **Metrics API** at `/v1/metrics/usage` for usage analytics
+
+## 🛠️ Development
+
+### Running in Development Mode
+
+```bash
+uvicorn mom_service.main:app --reload --reload-include "config.yaml"
+```
+
+The `--reload-include` flag watches `config.yaml` for changes and automatically reloads the service.
+
+### Health Checks
+
+```bash
+# Basic health check
+curl http://localhost:8000/health
+
+# Detailed health check with component validation
+curl http://localhost:8000/health/detailed
+
+# Include LLM connectivity test
+curl http://localhost:8000/health/detailed?check_llm=true
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage report
+pytest --cov=mom_service --cov-report=html
+
+# Run specific test file
+pytest tests/test_endpoints.py
+```
+
+The test suite includes unit tests, integration tests, API tests, and health check validation.
 
 ## 📚 Documentation
 
