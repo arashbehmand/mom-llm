@@ -200,6 +200,7 @@ def _prepare_concluding_messages(
     intermediate_thinking_context: list[ThinkingContextItem],
     model_conf: "MoMModelConfig",
     config: MoMConfig,
+    concluding_instruction: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Prepare messages for the concluding LLM.
@@ -242,6 +243,10 @@ def _prepare_concluding_messages(
             )
             if prompt_def:
                 concl_msgs_for_llm.append({"role": "user", "content": prompt_def.content})
+
+    if concluding_instruction:
+        concl_msgs_for_llm.append({"role": "user", "content": concluding_instruction})
+
     return concl_msgs_for_llm
 
 

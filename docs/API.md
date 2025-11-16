@@ -148,6 +148,32 @@ Send chat completion requests to your MoM models.
 }
 ```
 
+#### Special Instructions for Concluding Agent
+
+You can provide special instructions directly to the concluding agent by embedding a special block in the last user message. This is useful for guiding the final synthesis of the fan-out responses.
+
+The instruction block must be in the following format:
+
+`<<CONCLUDING-INSTRUCTION>>`
+Your detailed instructions for the concluding agent go here.
+`<</CONCLUDING-INSTRUCTION>>`
+
+This block will be extracted and sent only to the concluding agent. It will be removed from the prompt sent to the fan-out models.
+
+**Example:**
+
+```json
+{
+  "model": "mom-creative",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What are the pros and cons of React vs Vue? <<CONCLUDING-INSTRUCTION>> Please synthesize the results into a markdown table. <</CONCLUDING-INSTRUCTION>>"
+    }
+  ]
+}
+```
+
 **Response (Non-Streaming):**
 ```json
 {

@@ -4,6 +4,7 @@ import contextvars
 import html
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -248,6 +249,29 @@ async def _process_mom_chat_request(
     llm_map = {ld.name: ld for ld in config.llm_definitions}
     thinking_was_embedded_in_content = False
 
+    concluding_instruction: str | None = None
+    # Use a copy to avoid modifying the original request messages list
+    processed_request_messages = [msg.copy() for msg in request_messages]
+
+    # Find the last user message and extract concluding instruction
+    for i in range(len(processed_request_messages) - 1, -1, -1):
+        if processed_request_messages[i].get("role") == "user":
+            content = processed_request_messages[i].get("content")
+            if isinstance(content, str):
+                match = re.search(
+                    r"<<CONCLUDING-INSTRUCTION>>(.*?)<</CONCLUDING-INSTRUCTION>>",
+                    content,
+                    re.DOTALL,
+                )
+                if match:
+                    concluding_instruction = match.group(1).strip()
+                    # Remove the instruction block from the content
+                    processed_request_messages[i]["content"] = content.replace(
+                        match.group(0), ""
+                    ).strip()
+                    logger.info(f"Extracted concluding instruction: {concluding_instruction}")
+            break  # only process the last user message
+
     # Get request_id from request state (set by middleware)
     request_id = getattr(fastapi_request_obj.state, "request_id", "unknown")
 
@@ -258,13 +282,13 @@ async def _process_mom_chat_request(
             user_id=fastapi_request_obj.headers.get("x-user-id", "anon"),
             metadata={
                 "model_requested": model_conf.name,
-                "num_messages": len(request_messages),
+                "num_messages": len(processed_request_messages),
                 "streaming": stream,
                 "request_id": request_id,
             },
             input={
                 "model": mom_model_name,
-                "messages": request_messages,
+                "messages": processed_request_messages,
                 "stream": stream,
             },
         )
@@ -274,7 +298,7 @@ async def _process_mom_chat_request(
     fanout_results_generator = _perform_fanout_calls(
         model_conf,
         llm_map,
-        request_messages,
+        processed_request_messages,
         timeout,
         config,
         options={"trace": trace, "request_id": request_id},
@@ -378,7 +402,11 @@ async def _process_mom_chat_request(
                     return
 
             concl_msgs_for_llm = _prepare_concluding_messages(
-                request_messages, intermediate_thinking_context, model_conf, config
+                processed_request_messages,
+                intermediate_thinking_context,
+                model_conf,
+                config,
+                concluding_instruction,
             )
 
             concl_def = llm_map.get(model_conf.concluding_llm)
@@ -405,9 +433,9 @@ async def _process_mom_chat_request(
             # Check if concluding LLM supports multimodal if request contains multimodal content
             from .multimodal_utils import has_multimodal_content, is_model_multimodal_capable
 
-            if has_multimodal_content(request_messages) and not is_model_multimodal_capable(
-                concl_def.model
-            ):
+            if has_multimodal_content(
+                processed_request_messages
+            ) and not is_model_multimodal_capable(concl_def.model):
                 logger.warning(
                     f"Request contains multimodal content but concluding LLM '{concl_def.model}' "
                     "may not support it. Results may be degraded."
@@ -483,7 +511,11 @@ async def _process_mom_chat_request(
         intermediate_thinking_context.append(item)
 
     concl_msgs_for_llm = _prepare_concluding_messages(
-        request_messages, intermediate_thinking_context, model_conf, config
+        processed_request_messages,
+        intermediate_thinking_context,
+        model_conf,
+        config,
+        concluding_instruction,
     )
 
     concl_def = llm_map.get(model_conf.concluding_llm)
@@ -493,7 +525,7 @@ async def _process_mom_chat_request(
     # Check if concluding LLM supports multimodal if request contains multimodal content
     from .multimodal_utils import has_multimodal_content, is_model_multimodal_capable
 
-    if has_multimodal_content(request_messages) and not is_model_multimodal_capable(
+    if has_multimodal_content(processed_request_messages) and not is_model_multimodal_capable(
         concl_def.model
     ):
         logger.warning(

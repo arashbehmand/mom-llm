@@ -236,3 +236,29 @@ class TestPrepareConcludingMessages:
 
         # Should include the custom prompt
         assert any("synthesize" in msg["content"].lower() for msg in result)
+
+    def test_prepare_messages_with_concluding_instruction(self, sample_mom_config):
+        """Test message preparation with a concluding instruction"""
+        request_messages = [{"role": "user", "content": "What is AI?"}]
+        intermediate_context = [
+            ThinkingContextItem(
+                model="gpt-4",
+                content="AI stands for Artificial Intelligence.",
+                usage=UsageInfo(prompt_tokens=5, completion_tokens=10, total_tokens=15),
+            ),
+        ]
+        concluding_instruction = "Please provide a very short answer."
+
+        model_conf = sample_mom_config.models[0]
+        result = _prepare_concluding_messages(
+            request_messages,
+            intermediate_context,
+            model_conf,
+            sample_mom_config,
+            concluding_instruction,
+        )
+
+        # Should include the concluding instruction as the last user message
+        # (or second to last if there is a concluding prompt)
+        assert result[-1]["role"] == "user"
+        assert result[-1]["content"] == concluding_instruction

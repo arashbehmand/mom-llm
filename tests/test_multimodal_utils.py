@@ -563,7 +563,7 @@ class TestSanitizeMessagesForProvider:
     def test_empty_messages_list(self):
         """Test sanitization with empty messages list"""
         sanitized = sanitize_messages_for_provider([], "gpt-4o")
-        assert sanitized == []
+        assert not sanitized
 
     def test_mistral_models_have_strict_schema(self):
         """Test that various Mistral model names trigger sanitization"""
