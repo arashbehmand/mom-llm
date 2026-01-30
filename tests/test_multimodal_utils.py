@@ -587,3 +587,97 @@ class TestSanitizeMessagesForProvider:
             sanitized = sanitize_messages_for_provider(messages, model)
             assert "images" in sanitized[0], f"images should be kept for {model}"
             assert len(sanitized[0]["images"]) == 2
+
+    def test_filters_thinking_content_blocks(self):
+        """Test that thinking content blocks are filtered from messages"""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "Let me analyze this step by step...",
+                        "signature": "Ep8JCkYICxgCKkBWcUFLfvG1LPIi...",
+                    },
+                    {
+                        "type": "text",
+                        "text": "Based on my analysis, here is the answer.",
+                    },
+                ],
+            },
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "gpt-4o")
+        assert len(sanitized) == 1
+        content = sanitized[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 1
+        assert content[0]["type"] == "text"
+        assert "thinking" not in str(content)
+
+    def test_filters_multiple_thinking_blocks(self):
+        """Test that multiple thinking blocks are all filtered"""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "First thought..."},
+                    {"type": "thinking", "thinking": "Second thought..."},
+                    {"type": "text", "text": "Final response."},
+                ],
+            },
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "mistral-medium-latest")
+        content = sanitized[0]["content"]
+        assert len(content) == 1
+        assert content[0]["type"] == "text"
+
+    def test_preserves_non_thinking_content(self):
+        """Test that text and image content are preserved when filtering thinking"""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Internal reasoning..."},
+                    {"type": "text", "text": "Response text"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/img.jpg"},
+                    },
+                ],
+            },
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "gpt-4o")
+        content = sanitized[0]["content"]
+        assert len(content) == 2
+        assert content[0]["type"] == "text"
+        assert content[1]["type"] == "image_url"
+
+    def test_handles_only_thinking_content(self):
+        """Test handling when message contains only thinking blocks"""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Just thinking..."},
+                ],
+            },
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "gpt-4o")
+        # Content should be empty string or empty list when all thinking
+        content = sanitized[0]["content"]
+        assert content == "" or content == []
+
+    def test_thinking_filter_with_string_content(self):
+        """Test that string content is not affected by thinking filter"""
+        messages = [
+            {"role": "user", "content": "Hello, thinking about things"},
+            {"role": "assistant", "content": "I was thinking about your question"},
+        ]
+
+        sanitized = sanitize_messages_for_provider(messages, "gpt-4o")
+        assert sanitized[0]["content"] == "Hello, thinking about things"
+        assert sanitized[1]["content"] == "I was thinking about your question"

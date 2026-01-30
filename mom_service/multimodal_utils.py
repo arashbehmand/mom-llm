@@ -99,9 +99,10 @@ def sanitize_messages_for_provider(
     """
     Remove provider-specific fields from messages that may cause errors with certain LLM providers.
 
-    Some providers (like Mistral) are strict about the message schema and reject requests
-    with extra fields like 'images' even if they're empty. This function creates a clean
-    copy of messages suitable for the target provider.
+    This function performs several sanitization steps:
+    1. Removes 'images' field for non-multimodal providers or when empty
+    2. Filters out 'thinking' content blocks from messages (Claude extended thinking)
+    3. Creates a clean copy of messages suitable for the target provider
 
     Args:
         messages: List of message dictionaries to sanitize
@@ -114,8 +115,23 @@ def sanitize_messages_for_provider(
     multimodal_capable = is_model_multimodal_capable(model_name)
 
     for msg in messages:
+        # Process content - filter out thinking blocks if content is a list
+        content = msg.get("content")
+        if isinstance(content, list):
+            # Filter out thinking content blocks (Claude extended thinking)
+            filtered_content = [
+                item
+                for item in content
+                if not (isinstance(item, dict) and item.get("type") == "thinking")
+            ]
+            # If all content was thinking blocks, use empty string as fallback
+            if not filtered_content:
+                content = ""
+            else:
+                content = filtered_content
+
         # Create a copy to avoid modifying the original
-        clean_msg = {"role": msg["role"], "content": msg["content"]}
+        clean_msg = {"role": msg["role"], "content": content}
 
         # Only include 'images' field if:
         # 1. The model supports multimodal content
