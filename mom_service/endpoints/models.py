@@ -26,8 +26,21 @@ class ImageContentPart(BaseModel):
     image_url: ImageUrlDetail
 
 
+class ThinkingContentPart(BaseModel):
+    """
+    Thinking content part for extended thinking models (e.g., Claude with extended thinking).
+
+    This represents the model's internal reasoning process. The thinking field contains
+    the summarized reasoning, and the signature field is used for verification.
+    """
+
+    type: Literal["thinking"] = "thinking"
+    thinking: str
+    signature: Optional[str] = None
+
+
 # Union of all content part types
-ContentPart = Union[TextContentPart, ImageContentPart]
+ContentPart = Union[TextContentPart, ImageContentPart, ThinkingContentPart]
 
 
 # Shared Models

@@ -13,6 +13,7 @@ from mom_service.endpoints.models import (
     ImageContentPart,
     ImageUrlDetail,
     TextContentPart,
+    ThinkingContentPart,
 )
 
 
@@ -62,6 +63,45 @@ class TestImageContentPart:
         assert data == {
             "type": "image_url",
             "image_url": {"url": "https://example.com/image.jpg", "detail": "low"},
+        }
+
+
+class TestThinkingContentPart:
+    """Tests for ThinkingContentPart model (Anthropic extended thinking)"""
+
+    def test_valid_thinking_content_part(self):
+        """Test creating a valid thinking content part"""
+        part = ThinkingContentPart(
+            type="thinking",
+            thinking="Let me analyze this step by step...",
+            signature="EqQBCgIYAhIM1gbcDa9GJwZA2b3h...",
+        )
+        assert part.type == "thinking"
+        assert part.thinking == "Let me analyze this step by step..."
+        assert part.signature == "EqQBCgIYAhIM1gbcDa9GJwZA2b3h..."
+
+    def test_thinking_content_part_without_signature(self):
+        """Test thinking content part without signature (optional field)"""
+        part = ThinkingContentPart(
+            type="thinking",
+            thinking="Reasoning process...",
+        )
+        assert part.type == "thinking"
+        assert part.thinking == "Reasoning process..."
+        assert part.signature is None
+
+    def test_thinking_content_part_dict(self):
+        """Test serialization to dict"""
+        part = ThinkingContentPart(
+            type="thinking",
+            thinking="Step-by-step analysis",
+            signature="abc123",
+        )
+        data = part.model_dump()
+        assert data == {
+            "type": "thinking",
+            "thinking": "Step-by-step analysis",
+            "signature": "abc123",
         }
 
 
@@ -211,6 +251,23 @@ class TestChatMessageValidation:
         )
         assert len(msg.content) == 3
 
+    def test_mixed_content_with_thinking(self):
+        """Test that we can mix text and thinking content parts"""
+        msg = ChatMessage(
+            role="assistant",
+            content=[
+                ThinkingContentPart(
+                    type="thinking",
+                    thinking="Analyzing the problem...",
+                    signature="sig123",
+                ),
+                TextContentPart(type="text", text="Here's my response"),
+            ],
+        )
+        assert len(msg.content) == 2
+        assert isinstance(msg.content[0], ThinkingContentPart)
+        assert isinstance(msg.content[1], TextContentPart)
+
 
 class TestRealWorldMultimodalRequest:
     """Test with actual multimodal request format"""
@@ -246,3 +303,58 @@ class TestRealWorldMultimodalRequest:
         assert len(data["content"]) == 2
         assert data["content"][0]["type"] == "text"
         assert data["content"][1]["type"] == "image_url"
+
+    def test_claude_extended_thinking_format(self):
+        """Test parsing assistant message with extended thinking content blocks"""
+        request_data = {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "The user wants me to transfer the content...",
+                    "signature": "Ep8JCkYICxgCKkBWcUFLfvG1LPIiXNg...",
+                },
+                {
+                    "type": "text",
+                    "text": "I'll transfer the tailored resume...",
+                },
+            ],
+        }
+
+        # This should parse without errors (previously caused 422)
+        msg = ChatMessage(**request_data)
+        assert msg.role == "assistant"
+        assert isinstance(msg.content, list)
+        assert len(msg.content) == 2
+
+        # Verify first part is thinking
+        assert isinstance(msg.content[0], ThinkingContentPart)
+        assert msg.content[0].type == "thinking"
+        assert "transfer the content" in msg.content[0].thinking
+        assert msg.content[0].signature == "Ep8JCkYICxgCKkBWcUFLfvG1LPIiXNg..."
+
+        # Verify second part is text
+        assert isinstance(msg.content[1], TextContentPart)
+        assert msg.content[1].type == "text"
+        assert "transfer the tailored resume" in msg.content[1].text
+
+    def test_claude_thinking_without_signature(self):
+        """Test parsing thinking content without signature field"""
+        request_data = {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "Let me analyze this step by step...",
+                },
+                {
+                    "type": "text",
+                    "text": "Based on my analysis...",
+                },
+            ],
+        }
+
+        msg = ChatMessage(**request_data)
+        assert len(msg.content) == 2
+        assert isinstance(msg.content[0], ThinkingContentPart)
+        assert msg.content[0].signature is None
