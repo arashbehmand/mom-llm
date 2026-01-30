@@ -1,6 +1,6 @@
 fastapi==0.116.1
 langfuse==2.60.9
-litellm==1.77.5
+litellm==1.80.5
 pydantic==2.11.7
 python-dotenv==1.1.1
 PyYAML==6.0.2

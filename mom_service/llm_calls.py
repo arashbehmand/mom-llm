@@ -228,9 +228,9 @@ async def _call_lite_llm(
                 for k, v in params.items():
                     if k == "messages":
                         continue
-                    if isinstance(v, (str, int, float, bool, list)):
+                    if isinstance(v, (str, int, float, bool)):
                         langfuse_params[k] = v
-                    elif isinstance(v, dict):
+                    elif isinstance(v, (dict, list)):
                         langfuse_params[k] = json.dumps(v)
 
                 generation = trace.generation(
@@ -283,16 +283,16 @@ async def _call_lite_llm(
     generation = None
     if trace:
         # Filter out complex types that Langfuse can't handle (dicts, objects)
-        # Only include primitive types: str, int, float, bool, list
+        # Only include primitive types: str, int, float, bool
         langfuse_params = {}
         for k, v in params.items():
             if k == "messages":
                 continue  # Skip messages as they're passed separately
             # Only include primitive types that Langfuse accepts
-            if isinstance(v, (str, int, float, bool, list)):
+            if isinstance(v, (str, int, float, bool)):
                 langfuse_params[k] = v
-            elif isinstance(v, dict):
-                # Convert dicts to JSON string for Langfuse
+            elif isinstance(v, (dict, list)):
+                # Convert dicts and lists to JSON string for Langfuse
                 langfuse_params[k] = json.dumps(v)
 
         generation = trace.generation(
