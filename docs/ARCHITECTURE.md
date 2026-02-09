@@ -333,6 +333,8 @@ MoMConfig
     └── llm_retry_delay_seconds: int
 ```
 
+`api_key_env` is optional in raw `config.yaml`; the loader infers provider defaults from `model` (for example, `openai/*` -> `OPENAI_API_KEY`) and normalizes the final `LLMDefinition`.
+
 **Config Loading Priority**:
 1. Path explicitly provided to `load_config()`
 2. `MOM_CONFIG_PATH` environment variable

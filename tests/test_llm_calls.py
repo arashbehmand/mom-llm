@@ -2,11 +2,13 @@
 Integration tests for mom_service.llm_calls module
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import respx
 
+from mom_service.config import LLMDefinition
 from mom_service.core_logic import call_llm
 from mom_service.endpoints.models import LLMCallParams
 from mom_service.llm_calls import (
@@ -272,6 +274,170 @@ class TestCallLiteLLM:
             assert result is not None
             # Verify that trace.generation was called
             mock_langfuse_client.trace.return_value.generation.assert_called_once()
+
+    @respx.mock
+    async def test_call_auto_api_mode_with_xai_tools_uses_completion_api(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+        mock_litellm_response,
+    ):
+        """Test api_mode='auto' stays on chat completion path even with xAI tools."""
+        xai_llm_definition = LLMDefinition(
+            name="grok41fr:o",
+            model="xai/grok-4-1-fast-reasoning",
+            api_key_env="XAI_API_KEY",
+            params={
+                "tools": [
+                    {"type": "web_search"},
+                    {"type": "x_search"},
+                ]
+            },
+        )
+
+        with (
+            patch(
+                "mom_service.responses_api.litellm.aresponses", new_callable=AsyncMock
+            ) as mock_aresponses,
+            patch(
+                "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+            ) as mock_acompletion,
+        ):
+            mock_acompletion.return_value = mock_litellm_response
+
+            params = LLMCallParams(
+                model=xai_llm_definition.model,
+                messages=sample_request_messages,
+                stream=False,
+            )
+            result_gen = call_llm(
+                xai_llm_definition,
+                params,
+                timeout=30,
+                config=sample_mom_config,
+                options={
+                    "request_id": "test-xai-tools",
+                    "mom_model_name": "test-model",
+                    "call_type": "fanout",
+                },
+            )
+
+            result = await anext(result_gen)
+
+            assert result.id == "test-response-id"
+            mock_acompletion.assert_called_once()
+            mock_aresponses.assert_not_called()
+
+    @respx.mock
+    async def test_call_explicit_responses_api_mode_routes_to_responses_api(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+    ):
+        """Test api_mode='responses' routes to Responses API without tools."""
+        llm_definition = LLMDefinition(
+            name="grok41fr:responses",
+            model="xai/grok-4-1-fast-reasoning",
+            api_key_env="XAI_API_KEY",
+            api_mode="responses",
+            params={"temperature": 0.3},
+        )
+
+        mock_usage = SimpleNamespace(
+            input_tokens=12,
+            output_tokens=7,
+            total_tokens=19,
+            input_tokens_details=SimpleNamespace(text_tokens=12, cached_tokens=0),
+            output_tokens_details=SimpleNamespace(reasoning_tokens=3, text_tokens=4),
+            num_sources_used=0,
+        )
+        mock_responses_obj = SimpleNamespace(
+            id="resp-test-456",
+            created_at=1234567891,
+            output_text="Responses mode output.",
+            usage=mock_usage,
+            output=[],
+        )
+
+        with (
+            patch(
+                "mom_service.responses_api.litellm.aresponses", new_callable=AsyncMock
+            ) as mock_aresponses,
+            patch(
+                "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+            ) as mock_acompletion,
+        ):
+            mock_aresponses.return_value = mock_responses_obj
+
+            params = LLMCallParams(
+                model=llm_definition.model,
+                messages=sample_request_messages,
+                stream=False,
+            )
+            result_gen = call_llm(
+                llm_definition,
+                params,
+                timeout=30,
+                config=sample_mom_config,
+                options={
+                    "request_id": "test-explicit-responses",
+                    "mom_model_name": "test-model",
+                    "call_type": "fanout",
+                },
+            )
+            result = await anext(result_gen)
+
+            assert result.choices[0].message.content == "Responses mode output."
+            mock_aresponses.assert_called_once()
+            mock_acompletion.assert_not_called()
+
+    @respx.mock
+    async def test_call_explicit_completion_api_mode_keeps_completion_api(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+        mock_litellm_response,
+    ):
+        """Test api_mode='completion' keeps chat completion path even with responses-style tools."""
+        llm_definition = LLMDefinition(
+            name="grok41fr:completion",
+            model="xai/grok-4-1-fast-reasoning",
+            api_key_env="XAI_API_KEY",
+            api_mode="completion",
+            params={"tools": [{"type": "web_search"}]},
+        )
+
+        with (
+            patch(
+                "mom_service.responses_api.litellm.aresponses", new_callable=AsyncMock
+            ) as mock_aresponses,
+            patch(
+                "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+            ) as mock_acompletion,
+        ):
+            mock_acompletion.return_value = mock_litellm_response
+
+            params = LLMCallParams(
+                model=llm_definition.model,
+                messages=sample_request_messages,
+                stream=False,
+            )
+            result_gen = call_llm(
+                llm_definition,
+                params,
+                timeout=30,
+                config=sample_mom_config,
+                options={
+                    "request_id": "test-explicit-completion",
+                    "mom_model_name": "test-model",
+                    "call_type": "fanout",
+                },
+            )
+            result = await anext(result_gen)
+
+            assert result.id == "test-response-id"
+            mock_acompletion.assert_called_once()
+            mock_aresponses.assert_not_called()
 
 
 # Import anext for Python 3.9 compatibility

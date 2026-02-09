@@ -5,9 +5,9 @@ Regression tests: ensure previously reported runtime issues don't recur.
 2) metrics DB is initialized on import and contains the `usage_metrics` table.
 """
 
-from builtins import anext
 import os
 import sqlite3
+from builtins import anext
 from unittest.mock import AsyncMock, patch
 
 import pytest

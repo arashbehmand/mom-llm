@@ -1,21 +1,19 @@
 llm_definitions:
-  - name: "oai-g4.1"
+  - base_name: "oai-g4.1"
     model: "openai/gpt-4.1"
-    api_key_env: "OPENAI_API_KEY"
     params:
       temperature: 0.7
-  - name: "oai-o3m"
+  - base_name: "oai-o3"
     model: "openai/o3-mini"
-    api_key_env: "OPENAI_API_KEY"
-  - name: "g25f"
+    variants:
+      - suffix: "m"
+  - base_name: "g25f"
     model: "gemini/gemini-2.5-flash-preview-04-17"
-    api_key_env: "GOOGLE_API_KEY"
-  - name: "ministral3b"
+  - base_name: "ministral3b"
     model: "openrouter/mistralai/ministral-3b"
-    api_key_env: "OPENROUTER_API_KEY"
   # Example with custom pricing (optional - overrides LiteLLM default pricing)
   # Useful for self-hosted models, custom agreements, or updating outdated pricing
-  # - name: "custom-llm"
+  # - base_name: "custom-llm"
   #   model: "custom/my-model"
   #   api_key_env: "CUSTOM_API_KEY"
   #   pricing:
@@ -24,13 +22,16 @@ llm_definitions:
   #
   # Example with reasoning token pricing (for models with thinking mode)
   # Models like Gemini 2.5 Flash, OpenAI o1 charge different rates for reasoning tokens
-  # - name: "gemini-with-pricing"
+  # - base_name: "gemini-with-pricing"
   #   model: "gemini/gemini-2.5-flash-preview-04-17"
-  #   api_key_env: "GOOGLE_API_KEY"
   #   pricing:
   #     prompt_cost_per_token: 0.00000015           # $0.15 per 1M input tokens
   #     completion_cost_per_token: 0.0000006        # $0.60 per 1M text output tokens
   #     reasoning_cost_per_token: 0.0000035         # $3.50 per 1M reasoning tokens (5.8× more!)
+  #
+  # Note:
+  # - If api_key_env is omitted, the service infers it from model provider.
+  # - Variant names resolve to "<base_name>:<suffix>" (e.g., "oai-o3:m").
 
 prompt_definitions:
   - name: "synth_default"
@@ -71,7 +72,7 @@ models:
   - name: "mom"
     llms_to_query:
       - "oai-g4.1"
-      - "oai-o3m"
+      - "oai-o3:m"
       - "g25f"
       - "ministral3b"
     concluding_llm: "g25f"

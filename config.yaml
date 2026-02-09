@@ -1,553 +1,316 @@
 llm_definitions:
-  # ============================================================================
-  # OpenAI Models
-  # ============================================================================
-  
-  # GPT-4.1 (April 2025 - still active, no reasoning_effort support)
-  - name: "oaig4.1"
-    model: "openai/gpt-4.1"
-    api_key_env: "OPENAI_API_KEY"
+- base_name: oai5m
+  model: openai/gpt-5-mini
+  variants:
+  - suffix: m
     params:
-      temperature: 0.1
-
-  # GPT-5-mini (cost-effective option)
-  - name: "oai5mm"
-    model: "openai/gpt-5-mini"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: medium
+  - suffix: h
     params:
-      reasoning_effort: "medium"
-  - name: "oai5mh"
-    model: "openai/gpt-5-mini"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: high
+- base_name: oai51
+  model: openai/gpt-5.1
+  variants:
+  - suffix: l
     params:
-      reasoning_effort: "high"
-
-  # GPT-5.1 (November 2025 - LEGACY, will be sunset ~March 2026)
-  - name: "oai51l"
-    model: "openai/gpt-5.1"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: low
+  - suffix: m
     params:
-      reasoning_effort: "low"
-  - name: "oai51m"
-    model: "openai/gpt-5.1"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: medium
+  - suffix: h
     params:
-      reasoning_effort: "medium"
-  - name: "oai51h"
-    model: "openai/gpt-5.1"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: high
+- base_name: oai52
+  model: openai/gpt-5.2
+  variants:
+  - suffix: l
     params:
-      reasoning_effort: "high"
-
-  # GPT-5.2 (December 11, 2025 - CURRENT FLAGSHIP)
-  # Supports: low, medium, high, xhigh reasoning_effort
-  # 400k context, 128k max output, Aug 2025 knowledge cutoff
-  - name: "oai52l"
-    model: "openai/gpt-5.2"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: low
+  - suffix: m
     params:
-      reasoning_effort: "low"
-  - name: "oai52m"
-    model: "openai/gpt-5.2"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: medium
+  - suffix: h
     params:
-      reasoning_effort: "medium"
-  - name: "oai52h"
-    model: "openai/gpt-5.2"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: high
+  - suffix: xh
     params:
-      reasoning_effort: "high"
-  - name: "oai52xh"
-    model: "openai/gpt-5.2"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: xhigh
+- base_name: oai52pro
+  model: openai/gpt-5.2-pro
+  variants:
+  - suffix: h
     params:
-      reasoning_effort: "xhigh"
-
-  # GPT-5.2 Pro (December 2025 - EXPENSIVE, use sparingly in emom only)
-  - name: "oai52proh"
-    model: "openai/gpt-5.2-pro"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: high
+  - suffix: xh
     params:
-      reasoning_effort: "high"
-  - name: "oai52proxh"
-    model: "openai/gpt-5.2-pro"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: xhigh
+- base_name: oai51cdxmax
+  model: openai/gpt-5.1-codex-max
+  variants:
+  - suffix: m
     params:
-      reasoning_effort: "xhigh"
-
-  # GPT-5.1-Codex-Max (December 2025 - best agentic coding model)
-  # Purpose-built for long-running coding tasks, supports compaction
-  - name: "oai51cdxmaxm"
-    model: "openai/gpt-5.1-codex-max"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: medium
+  - suffix: h
     params:
-      reasoning_effort: "medium"
-  - name: "oai51cdxmaxh"
-    model: "openai/gpt-5.1-codex-max"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: high
+  - suffix: xh
     params:
-      reasoning_effort: "high"
-  - name: "oai51cdxmaxxh"
-    model: "openai/gpt-5.1-codex-max"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: xhigh
+- base_name: oai51cdx
+  model: openai/gpt-5.1-codex
+  variants:
+  - suffix: m
     params:
-      reasoning_effort: "xhigh"
-
-  # GPT-5.1-Codex (standard code model, predecessor to Max)
-  - name: "oai51cdxm"
-    model: "openai/gpt-5.1-codex"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: medium
+  - suffix: h
     params:
-      reasoning_effort: "medium"
-  - name: "oai51cdxh"
-    model: "openai/gpt-5.1-codex"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: high
+- base_name: oaio4m
+  model: openai/o4-mini
+  variants:
+  - suffix: l
     params:
-      reasoning_effort: "high"
-
-  # O-series reasoning models
-  - name: "oaio4ml"
-    model: "openai/o4-mini"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: low
+  - suffix: m
     params:
-      reasoning_effort: "low"
-  - name: "oaio4mm"
-    model: "openai/o4-mini"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: medium
+  - suffix: h
     params:
-      reasoning_effort: "medium"
-  - name: "oaio4mh"
-    model: "openai/o4-mini"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: high
+- base_name: oaio3
+  model: openai/o3
+  variants:
+  - suffix: m
     params:
-      reasoning_effort: "high"
-  - name: "oaio3m"
-    model: "openai/o3"
-    api_key_env: "OPENAI_API_KEY"
+      reasoning_effort: medium
+  - suffix: h
     params:
-      reasoning_effort: "medium"
-  - name: "oaio3h"
-    model: "openai/o3"
-    api_key_env: "OPENAI_API_KEY"
-    params:
-      reasoning_effort: "high"
-  - name: "oaio3pro"
-    model: "openai/o3-pro"
-    api_key_env: "OPENAI_API_KEY"
-    params:
-      reasoning_effort: "high"
-
-  # ============================================================================
-  # Google Gemini Models
-  # ============================================================================
-  
-  # Gemini 2.5 Flash (stable - still available and cost-effective)
-  - name: "g25f"
-    model: "gemini/gemini-2.5-flash"
-    api_key_env: "GOOGLE_API_KEY"
-  - name: "g25fl"
-    model: "gemini/gemini-2.5-flash"
-    api_key_env: "GOOGLE_API_KEY"
+      reasoning_effort: high
+- base_name: oaio3pro
+  model: openai/o3-pro
+  params:
+    reasoning_effort: high
+- base_name: g25f
+  model: gemini/gemini-2.5-flash
+  variants:
+  - suffix: l
     params:
       thinking_budget: 0
-  - name: "g25fm"
-    model: "gemini/gemini-2.5-flash"
-    api_key_env: "GOOGLE_API_KEY"
+  - suffix: m
     params:
       thinking_budget: 8192
-  - name: "g25fh"
-    model: "gemini/gemini-2.5-flash"
-    api_key_env: "GOOGLE_API_KEY"
+  - suffix: h
     params:
       thinking_budget: 24576
-
-  # Gemini 2.5 Flash Lite (fastest, cheapest)
-  - name: "g25flt"
-    model: "gemini/gemini-2.5-flash-lite"
-    api_key_env: "GOOGLE_API_KEY"
-
-  # Gemini 2.5 Pro (stable, still excellent - #7 on LMArena)
-  - name: "g25p"
-    model: "gemini/gemini-2.5-pro"
-    api_key_env: "GOOGLE_API_KEY"
-  - name: "g25pl"
-    model: "gemini/gemini-2.5-pro"
-    api_key_env: "GOOGLE_API_KEY"
+    variants:
+    - suffix: o
+      params:
+        web_search_options:
+          search_context_size: high
+  - suffix: lt
+    model: gemini/gemini-2.5-flash-lite
+- base_name: g25p
+  model: gemini/gemini-2.5-pro
+  variants:
+  - suffix: l
     params:
       thinking_budget: 1024
-  - name: "g25pm"
-    model: "gemini/gemini-2.5-pro"
-    api_key_env: "GOOGLE_API_KEY"
+  - suffix: m
     params:
       thinking_budget: 8192
-  - name: "g25ph"
-    model: "gemini/gemini-2.5-pro"
-    api_key_env: "GOOGLE_API_KEY"
+  - suffix: h
     params:
       thinking_budget: 32768
-
-  # Gemini 3 Flash (December 2025)
-  - name: "g3f"
-    model: "gemini/gemini-3-flash-preview"
-    api_key_env: "GOOGLE_API_KEY"
-  - name: "g3fl"
-    model: "gemini/gemini-3-flash-preview"
-    api_key_env: "GOOGLE_API_KEY"
+    variants:
+    - suffix: o
+      params:
+        web_search_options:
+          search_context_size: high
+- base_name: g3f
+  model: gemini/gemini-3-flash-preview
+  variants:
+  - suffix: l
     params:
-      thinking_level: "low"
-  - name: "g3fm"
-    model: "gemini/gemini-3-flash-preview"
-    api_key_env: "GOOGLE_API_KEY"
+      thinking_level: low
+  - suffix: m
     params:
-      thinking_level: "medium"
-  - name: "g3fh"
-    model: "gemini/gemini-3-flash-preview"
-    api_key_env: "GOOGLE_API_KEY"
+      thinking_level: medium
+  - suffix: h
     params:
-      thinking_level: "high"
-
-  # Gemini 3 Pro (November 2025 - #1 ON LMARENA!)
-  # Uses thinking_level (low/high) instead of thinking_budget
-  # 1M token context, Jan 2025 knowledge cutoff
-  - name: "g3p"
-    model: "gemini/gemini-3-pro-preview"
-    api_key_env: "GOOGLE_API_KEY"
-  - name: "g3pl"
-    model: "gemini/gemini-3-pro-preview"
-    api_key_env: "GOOGLE_API_KEY"
+      thinking_level: high
+    variants:
+    - suffix: o
+      params:
+        web_search_options:
+          search_context_size: high
+- base_name: g3p
+  model: gemini/gemini-3-pro-preview
+  variants:
+  - suffix: l
     params:
-      thinking_level: "low"
-  - name: "g3ph"
-    model: "gemini/gemini-3-pro-preview"
-    api_key_env: "GOOGLE_API_KEY"
+      thinking_level: low
+  - suffix: h
     params:
-      thinking_level: "high"
-
-  # ============================================================================
-  # Anthropic Claude Models
-  # ============================================================================
-  
-  # Claude Sonnet 4.5 (September 2025)
-  - name: "cl45st"
-    model: "anthropic/claude-sonnet-4-5-20250929"
-    api_key_env: "ANTHROPIC_API_KEY"
-  - name: "cl45stl"
-    model: "anthropic/claude-sonnet-4-5-20250929"
-    api_key_env: "ANTHROPIC_API_KEY"
+      thinking_level: high
+    variants:
+    - suffix: o
+      params:
+        web_search_options:
+          search_context_size: high
+- base_name: cl45st
+  model: anthropic/claude-sonnet-4-5-20250929
+  variants:
+  - suffix: l
     params:
       thinking:
-        type: "enabled"
+        type: enabled
         budget_tokens: 2048
-  - name: "cl45stm"
-    model: "anthropic/claude-sonnet-4-5-20250929"
-    api_key_env: "ANTHROPIC_API_KEY"
+  - suffix: m
     params:
       thinking:
-        type: "enabled"
+        type: enabled
         budget_tokens: 8192
-  - name: "cl45sth"
-    model: "anthropic/claude-sonnet-4-5-20250929"
-    api_key_env: "ANTHROPIC_API_KEY"
+  - suffix: h
     params:
       thinking:
-        type: "enabled"
+        type: enabled
         budget_tokens: 16000
-
-  # Claude Haiku 4.5 (October 2025 - fast & cheap)
-  - name: "cl45hk"
-    model: "anthropic/claude-haiku-4-5-20251001"
-    api_key_env: "ANTHROPIC_API_KEY"
-  - name: "cl45hkm"
-    model: "anthropic/claude-haiku-4-5-20251001"
-    api_key_env: "ANTHROPIC_API_KEY"
+    variants:
+    - suffix: o
+      params:
+        web_search_options:
+          search_context_size: high
+- base_name: cl45hk
+  model: anthropic/claude-haiku-4-5-20251001
+  variants:
+  - suffix: m
     params:
       thinking:
-        type: "enabled"
+        type: enabled
         budget_tokens: 4096
-
-  # Claude Opus 4.5 (November 2025 - #3 on LMArena, excellent at coding)
-  - name: "cl45op"
-    model: "anthropic/claude-opus-4-5-20251101"
-    api_key_env: "ANTHROPIC_API_KEY"
-  - name: "cl45opl"
-    model: "anthropic/claude-opus-4-5-20251101"
-    api_key_env: "ANTHROPIC_API_KEY"
+- base_name: cl45op
+  model: anthropic/claude-opus-4-5-20251101
+  variants:
+  - suffix: l
     params:
       thinking:
-        type: "enabled"
+        type: enabled
         budget_tokens: 4096
-  - name: "cl45opm"
-    model: "anthropic/claude-opus-4-5-20251101"
-    api_key_env: "ANTHROPIC_API_KEY"
+  - suffix: m
     params:
       thinking:
-        type: "enabled"
+        type: enabled
         budget_tokens: 10000
-  - name: "cl45oph"
-    model: "anthropic/claude-opus-4-5-20251101"
-    api_key_env: "ANTHROPIC_API_KEY"
+  - suffix: h
     params:
       thinking:
-        type: "enabled"
+        type: enabled
         budget_tokens: 16000
-
-  # ============================================================================
-  # xAI Grok Models (VERIFIED from user's panel)
-  # ============================================================================
-  
-  # Grok 3 (base model)
-  - name: "grok3"
-    model: "xai/grok-3"
-    api_key_env: "XAI_API_KEY"
-
-  # Grok 3 Mini (reasoning model)
-  - name: "grok3ml"
-    model: "xai/grok-3-mini"
-    api_key_env: "XAI_API_KEY"
+    variants:
+    - suffix: o
+      params:
+        web_search_options:
+          search_context_size: high
+- base_name: grok3
+  model: xai/grok-3
+- base_name: grok3m
+  model: xai/grok-3-mini
+  variants:
+  - suffix: l
     params:
-      reasoning_effort: "low"
-  - name: "grok3mh"
-    model: "xai/grok-3-mini"
-    api_key_env: "XAI_API_KEY"
+      reasoning_effort: low
+  - suffix: h
     params:
-      reasoning_effort: "high"
-
-  # Grok 4-0709 (July 2025 base)
-  - name: "grok4"
-    model: "xai/grok-4-0709"
-    api_key_env: "XAI_API_KEY"
-
-  # Grok 4 Fast (reasoning/non-reasoning variants)
-  - name: "grok4fr"
-    model: "xai/grok-4-fast-reasoning"
-    api_key_env: "XAI_API_KEY"
-  - name: "grok4fnr"
-    model: "xai/grok-4-fast-non-reasoning"
-    api_key_env: "XAI_API_KEY"
-
-  # Grok 4.1 Fast (November 2025 - #2 on LMArena with thinking)
-  - name: "grok41fr"
-    model: "xai/grok-4-1-fast-reasoning"
-    api_key_env: "XAI_API_KEY"
-  - name: "grok41fnr"
-    model: "xai/grok-4-1-fast-non-reasoning"
-    api_key_env: "XAI_API_KEY"
-
-  # Grok Code (agentic coding)
-  - name: "grokcode"
-    model: "xai/grok-code-fast-1"
-    api_key_env: "XAI_API_KEY"
-
-  # ============================================================================
-  # DeepSeek Models (via OpenRouter - VERIFIED slugs)
-  # ============================================================================
-  
-  # DeepSeek V3.2 (December 2025 - current)
-  - name: "dsv32"
-    model: "openrouter/deepseek/deepseek-v3.2"
-    api_key_env: "OPENROUTER_API_KEY"
-  
-  # DeepSeek V3.2-Exp (experimental, #24 on LMArena)
-  - name: "dsv32exp"
-    model: "openrouter/deepseek/deepseek-v3.2-exp"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # DeepSeek Chat (points to latest non-thinking)
-  - name: "dschat"
-    model: "openrouter/deepseek/deepseek-chat"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # DeepSeek R1-0528 (May 2025 - reasoning model)
-  - name: "r1"
-    model: "openrouter/deepseek/deepseek-r1-0528"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # DeepSeek R1 (latest reasoner)
-  - name: "dsr1"
-    model: "openrouter/deepseek/deepseek-r1"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # ============================================================================
-  # Mistral Models
-  # ============================================================================
-  
-  # Mistral Large 3 (December 2025 - NEW FLAGSHIP, #38 on LMArena)
-  - name: "mstrll3"
-    model: "mistral/mistral-large-2512"
-    api_key_env: "MISTRAL_API_KEY"
-
-  # Mistral Medium 3.1 (August 2025 - great value)
-  - name: "mstrlm31"
-    model: "mistral/mistral-medium-2508"
-    api_key_env: "MISTRAL_API_KEY"
-
-  # Mistral Small 3.2 (June 2025 - efficient)
-  - name: "mstrls32"
-    model: "mistral/mistral-small-2506"
-    api_key_env: "MISTRAL_API_KEY"
-
-  # Magistral (September 2025 - reasoning models)
-  - name: "magistralml"
-    model: "mistral/magistral-medium-2509"
-    api_key_env: "MISTRAL_API_KEY"
+      reasoning_effort: high
+- base_name: grok4
+  model: xai/grok-4-0709
+  variants:
+  - suffix: o
+    api_mode: responses
     params:
-      reasoning_effort: "low"
-  - name: "magistralmh"
-    model: "mistral/magistral-medium-2509"
-    api_key_env: "MISTRAL_API_KEY"
-    params:
-      reasoning_effort: "high"
-  - name: "magistralsl"
-    model: "mistral/magistral-small-2509"
-    api_key_env: "MISTRAL_API_KEY"
-    params:
-      reasoning_effort: "low"
-
-  # Codestral (August 2025 - code completion)
-  - name: "codestral"
-    model: "mistral/codestral-2508"
-    api_key_env: "MISTRAL_API_KEY"
-
-  # ============================================================================
-  # Other Frontier Models (via OpenRouter - VERIFIED slugs)
-  # ============================================================================
-  
-  # Qwen3 Max (Alibaba - #17 on LMArena)
-  - name: "qwn3max"
-    model: "openrouter/qwen/qwen3-max"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # Qwen3 Coder (Alibaba - agentic coding)
-  - name: "qwn3coder"
-    model: "openrouter/qwen/qwen3-coder"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # Kimi K2 (Moonshot AI - #20 on LMArena with thinking)
-  - name: "k2"
-    model: "openrouter/moonshotai/kimi-k2"
-    api_key_env: "OPENROUTER_API_KEY"
-  - name: "k2t"
-    model: "openrouter/moonshotai/kimi-k2-thinking"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # GLM 4.6 (Zhipu AI - #21 on LMArena)
-  - name: "glm46"
-    model: "openrouter/z-ai/glm-4.6"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # MiniMax M2
-  - name: "m2"
-    model: "openrouter/minimax/minimax-m2"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # ============================================================================
-  # Online/Search-Enabled Models
-  # ============================================================================
-  
-  # OpenAI Search Models
-  - name: "oaio4mdr-o"
-    model: "openai/o4-mini-deep-research-2025-06-26"
-    api_key_env: "OPENAI_API_KEY"
-    params:
-      reasoning_effort: "medium"
       tools:
-        - type: "web_search_preview"
-  - name: "oai4osp-o"
-    model: "openai/gpt-4o-search-preview"
-    api_key_env: "OPENAI_API_KEY"
+      - type: web_search
+  - suffix: fr
+    model: xai/grok-4-fast-reasoning
+  - suffix: fnr
+    model: xai/grok-4-fast-non-reasoning
+- base_name: grok41fr
+  model: xai/grok-4-1-fast-reasoning
+  variants:
+  - suffix: o
+    api_mode: responses
+    params:
+      tools:
+      - type: web_search
+      - type: x_search
+- base_name: grok41fnr
+  model: xai/grok-4-1-fast-non-reasoning
+- base_name: grokcode
+  model: xai/grok-code-fast-1
+- base_name: dsv32
+  model: openrouter/deepseek/deepseek-v3.2
+  variants:
+  - suffix: exp
+    model: openrouter/deepseek/deepseek-v3.2-exp
+- base_name: dschat
+  model: openrouter/deepseek/deepseek-chat
+- base_name: r1
+  model: openrouter/deepseek/deepseek-r1-0528
+- base_name: dsr1
+  model: openrouter/deepseek/deepseek-r1
+- base_name: mstrll3
+  model: mistral/mistral-large-2512
+- base_name: mstrlm31
+  model: mistral/mistral-medium-2508
+- base_name: mstrls32
+  model: mistral/mistral-small-2506
+- base_name: magistralm
+  model: mistral/magistral-medium-2509
+  variants:
+  - suffix: l
+    params:
+      reasoning_effort: low
+  - suffix: h
+    params:
+      reasoning_effort: high
+- base_name: magistralsl
+  model: mistral/magistral-small-2509
+  params:
+    reasoning_effort: low
+- base_name: codestral
+  model: mistral/codestral-2508
+- base_name: qwn3max
+  model: openrouter/qwen/qwen3-max
+- base_name: qwn3coder
+  model: openrouter/qwen/qwen3-coder
+- base_name: k2
+  model: openrouter/moonshotai/kimi-k2
+  variants:
+  - suffix: t
+    model: openrouter/moonshotai/kimi-k2-thinking
+  - suffix: o
+    model: openrouter/moonshotai/kimi-k2:online
+- base_name: glm47
+  model: openrouter/z-ai/glm-4.7
+- base_name: m2
+  model: openrouter/minimax/minimax-m2
+- base_name: oaio4mdr-o
+  model: openai/o4-mini-deep-research-2025-06-26
+  params:
+    reasoning_effort: medium
+    tools:
+    - type: web_search_preview
+- base_name: oai4osp-o
+  model: openai/gpt-4o-search-preview
+- base_name: plx-snr-o
+  model: openrouter/perplexity/sonar
+- base_name: plx-snrp-o
+  model: openrouter/perplexity/sonar-pro
+- base_name: plx-snrrp-o
+  model: openrouter/perplexity/sonar-reasoning-pro
+- base_name: plx-dr-o
+  model: openrouter/perplexity/sonar-deep-research
 
-  # Gemini with Google Search grounding
-  - name: "g25ph-o"
-    model: "gemini/gemini-2.5-pro"
-    api_key_env: "GOOGLE_API_KEY"
-    params:
-      thinking_budget: 32768
-      web_search_options:
-        search_context_size: "high"
-  - name: "g25fh-o"
-    model: "gemini/gemini-2.5-flash"
-    api_key_env: "GOOGLE_API_KEY"
-    params:
-      thinking_budget: 24576
-      web_search_options:
-        search_context_size: "high"
-  - name: "g3ph-o"
-    model: "gemini/gemini-3-pro-preview"
-    api_key_env: "GOOGLE_API_KEY"
-    params:
-      thinking_level: "high"
-      web_search_options:
-        search_context_size: "high"
-  - name: "g3fh-o"
-    model: "gemini/gemini-3-flash-preview"
-    api_key_env: "GOOGLE_API_KEY"
-    params:
-      thinking_level: "high"
-      web_search_options:
-        search_context_size: "high"
-
-  # Claude with web search
-  - name: "cl45sth-o"
-    model: "anthropic/claude-sonnet-4-5-20250929"
-    api_key_env: "ANTHROPIC_API_KEY"
-    params:
-      thinking:
-        type: "enabled"
-        budget_tokens: 16000
-      web_search_options:
-        search_context_size: "high"
-  - name: "cl45oph-o"
-    model: "anthropic/claude-opus-4-5-20251101"
-    api_key_env: "ANTHROPIC_API_KEY"
-    params:
-      thinking:
-        type: "enabled"
-        budget_tokens: 16000
-      web_search_options:
-        search_context_size: "high"
-
-  # Grok with live search (X and web)
-  - name: "grok4-o"
-    model: "xai/grok-4-0709"
-    api_key_env: "XAI_API_KEY"
-    params:
-      search_parameters:
-        mode: "auto"
-  - name: "grok41fr-o"
-    model: "xai/grok-4-1-fast-reasoning"
-    api_key_env: "XAI_API_KEY"
-    params:
-      search_parameters:
-        mode: "auto"
-        sources:
-          - type: "web"
-          - type: "x"
-
-  # Perplexity Sonar (native search)
-  - name: "plx-snr-o"
-    model: "openrouter/perplexity/sonar"
-    api_key_env: "OPENROUTER_API_KEY"
-  - name: "plx-snrp-o"
-    model: "openrouter/perplexity/sonar-pro"
-    api_key_env: "OPENROUTER_API_KEY"
-  - name: "plx-snrr-o"
-    model: "openrouter/perplexity/sonar-reasoning"
-    api_key_env: "OPENROUTER_API_KEY"
-  - name: "plx-snrrp-o"
-    model: "openrouter/perplexity/sonar-reasoning-pro"
-    api_key_env: "OPENROUTER_API_KEY"
-  - name: "plx-dr-o"
-    model: "openrouter/perplexity/sonar-deep-research"
-    api_key_env: "OPENROUTER_API_KEY"
-
-  # Kimi K2 Online
-  - name: "k2-o"
-    model: "openrouter/moonshotai/kimi-k2:online"
-    api_key_env: "OPENROUTER_API_KEY"
-
-# ==============================================================================
-# Prompt Definitions
-# ==============================================================================
 prompt_definitions:
   - name: "synth_default"
     content: |
@@ -617,11 +380,10 @@ models:
   # Standard mom - balanced mix of models, low reasoning
   - name: "mom"
     llms_to_query:
-      - "oai52l"
-      - "oaig4.1"
-      - "oaio4ml"
+      - "oai52:l"
+      - "oaio4m:l"
       - "g3p"
-      - "cl45stl"
+      - "cl45st:l"
       - "grok41fr"
       - "dsr1"
       - "mstrll3"
@@ -632,13 +394,12 @@ models:
   # Big mom - medium/high reasoning across providers
   - name: "bmom"
     llms_to_query:
-      - "oai52m"
-      - "oaig4.1"
-      - "oaio3h"
-      - "oaio4mh"
-      - "g3ph"
-      - "g3fh"
-      - "cl45sth"
+      - "oai52:m"
+      - "oaio3:h"
+      - "oaio4m:h"
+      - "g3p:h"
+      - "g3f:h"
+      - "cl45st:h"
       - "grok41fr"
       - "dsr1"
       - "mstrll3"
@@ -649,44 +410,43 @@ models:
   # Huge mom - maximum coverage with all flagship models
   - name: "hmom"
     llms_to_query:
-      - "oai52h"
-      - "oaig4.1"
-      - "oaio3h"
-      - "oaio4mh"
-      - "g3ph"
-      - "g25ph"
-      - "cl45sth"
-      - "cl45oph"
+      - "oai52:h"
+      - "oaio3:h"
+      - "oaio4m:h"
+      - "g3p:h"
+      - "g25p:h"
+      - "cl45st:h"
+      - "cl45op:h"
       - "grok41fr"
       - "dsr1"
       - "mstrll3"
-      - "magistralmh"
+      - "magistralm:h"
       - "qwn3max"
-      - "k2t"
-      - "glm46"
-    concluding_llm: "g3ph"
+      - "k2:t"
+      - "glm47"
+    concluding_llm: "g3p:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
   # Elite mom - top-tier models only (GPT-5.2 Pro here only!)
   - name: "emom"
     llms_to_query:
-      - "oai52proxh"
+      - "oai52pro:xh"
       - "oaio3pro"
-      - "g3ph"
-      - "cl45oph"
+      - "g3p:h"
+      - "cl45op:h"
       - "grok4"
-    concluding_llm: "g3ph"
+    concluding_llm: "g3p:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
   # Code mom - coding-optimized models (with Codex Max!)
   - name: "mom-code"
     llms_to_query:
-      - "oai51cdxmaxm"
-      - "oaio4mm"
-      - "g3ph"
-      - "cl45stm"
+      - "oai51cdxmax:m"
+      - "oaio4m:m"
+      - "g3p:h"
+      - "cl45st:m"
       - "grokcode"
       - "qwn3coder"
       - "k2"
@@ -697,14 +457,14 @@ models:
   # Creative mom - for creative/writing tasks
   - name: "mom-creative"
     llms_to_query:
-      - "oai52m"
-      - "g3fh"
-      - "cl45stl"
-      - "cl45opm"
+      - "oai52:m"
+      - "g3f:h"
+      - "cl45st:l"
+      - "cl45op:m"
       - "grok41fr"
       - "dsr1"
       - "mstrll3"
-    concluding_llm: "oai52m"
+    concluding_llm: "oai52:m"
     concluding_prompt: "synth_creative"
     include_thinking_context: true
 
@@ -712,33 +472,33 @@ models:
   - name: "mom-oh"
     llms_to_query:
       - "oaio4mdr-o"
-      - "g3ph-o"
-      - "g25ph-o"
-      - "cl45sth-o"
-      - "cl45oph-o"
-      - "grok41fr-o"
+      - "g3p:h:o"
+      - "g25p:h:o"
+      - "cl45st:h:o"
+      - "cl45op:h:o"
+      - "grok41fr:o"
       - "plx-snrrp-o"
       - "plx-dr-o"
-      - "k2-o"
-    concluding_llm: "g3fh-o"
+      - "k2:o"
+    concluding_llm: "g3f:h:o"
     concluding_prompt: "synth_search"
     include_thinking_context: true
 
   # Elite huge mom code - top-tier coding models, expensive but best quality
   - name: "ehmom-code"
     llms_to_query:
-      - "oai51cdxmaxxh"
-      - "oai52xh"
+      - "oai51cdxmax:xh"
+      - "oai52:xh"
       - "oaio3pro"
-      - "oaio4mh"
-      - "g3ph"
-      - "g25ph"
-      - "cl45oph"
+      - "oaio4m:h"
+      - "g3p:h"
+      - "g25p:h"
+      - "cl45op:h"
       - "grokcode"
       - "codestral"
       - "qwn3coder"
-      - "k2t"
-    concluding_llm: "cl45oph"
+      - "k2:t"
+    concluding_llm: "cl45op:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -746,31 +506,30 @@ models:
   - name: "mom-ol"
     llms_to_query:
       - "oai4osp-o"
-      - "g3fh-o"
+      - "g3f:h:o"
       - "plx-snrp-o"
-      - "k2-o"
-    concluding_llm: "g3fh-o"
+      - "k2:o"
+    concluding_llm: "g3f:h:o"
     concluding_prompt: "synth_search"
     include_thinking_context: true
 
   # Cheap mom - minimal models for testing
   - name: "mom-cheap"
     llms_to_query:
-      - "oaig4.1"
       - "mstrls32"
-      - "g25flt"
-    concluding_llm: "g25flt"
+      - "g25f:lt"
+    concluding_llm: "g25f:lt"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
   # Mini mom - cost-effective with gpt-5-mini
   - name: "mom-mini"
     llms_to_query:
-      - "oai5mh"
-      - "g3fm"
-      - "cl45hkm"
+      - "oai5m:h"
+      - "g3f:m"
+      - "cl45hk:m"
       - "dschat"
-    concluding_llm: "g3fm"
+    concluding_llm: "g3f:m"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -781,6 +540,7 @@ service:
   timeout_seconds: 1200
   exposed_apis: ["openai"]
   cache_enabled: true
+  enable_mom_debug_model: false
 
 # ==============================================================================
 # Langfuse Integration

@@ -32,8 +32,12 @@ from litellm.utils import Choices, Message, ModelResponse, Usage
 
 from . import metrics_db
 from .config import LLMDefinition, MoMConfig
+from .responses_api import call_responses_non_stream
 
 logger = logging.getLogger(__name__)
+
+COMPLETION_API_ROUTE = "completion"
+RESPONSES_API_ROUTE = "responses"
 
 # SQLite database file path
 CACHE_DB_PATH = os.path.join(os.path.dirname(__file__), "llm_cache.db")
@@ -156,6 +160,24 @@ def _cache_response(cache_key: str, messages: list[dict[str, Any]], response_obj
         logger.error(f"Error caching response for key {cache_key}: {e}")
 
 
+def _select_api_route(llm_def: LLMDefinition, params: dict[str, Any]) -> str:
+    api_mode = llm_def.api_mode
+
+    if params.get("stream", False):
+        if api_mode == "responses":
+            logger.warning(
+                "LLM '%s' configured with api_mode='responses' but stream=True; "
+                "falling back to completion API.",
+                llm_def.name,
+            )
+        return COMPLETION_API_ROUTE
+
+    if api_mode == "responses":
+        return RESPONSES_API_ROUTE
+
+    return COMPLETION_API_ROUTE
+
+
 async def _call_lite_llm(
     llm_def: LLMDefinition,
     messages: list[dict[str, Any]],
@@ -191,12 +213,16 @@ async def _call_lite_llm(
         **(llm_def.params or {}),  # LLM-specific params can override defaults (guard against None)
     }
 
+    api_route = _select_api_route(llm_def, params)
+
     # For streaming, request usage info in the stream
     if stream:
         params["stream_options"] = {"include_usage": True}
 
     # Generate cache key using sanitized messages for consistency
-    cache_key = _generate_cache_key(llm_def, sanitized_messages, params)
+    cache_key = _generate_cache_key(
+        llm_def, sanitized_messages, {**params, "_api_route": api_route}
+    )
     if config.service.cache_enabled:
         cached_response = _get_cached_response(cache_key)
         if cached_response:
@@ -232,10 +258,16 @@ async def _call_lite_llm(
                         langfuse_params[k] = v
                     elif isinstance(v, (dict, list)):
                         langfuse_params[k] = json.dumps(v)
+                langfuse_params["api_route"] = api_route
 
                 generation = trace.generation(
                     name=generation_name,
-                    metadata={"call_type": call_type, "llm_name": llm_def.name, "cached": True},
+                    metadata={
+                        "call_type": call_type,
+                        "llm_name": llm_def.name,
+                        "cached": True,
+                        "api_route": api_route,
+                    },
                     input=messages,
                     model=llm_def.model,
                     model_parameters=langfuse_params,
@@ -294,10 +326,11 @@ async def _call_lite_llm(
             elif isinstance(v, (dict, list)):
                 # Convert dicts and lists to JSON string for Langfuse
                 langfuse_params[k] = json.dumps(v)
+        langfuse_params["api_route"] = api_route
 
         generation = trace.generation(
             name=generation_name,
-            metadata={"call_type": call_type, "llm_name": llm_def.name},
+            metadata={"call_type": call_type, "llm_name": llm_def.name, "api_route": api_route},
             input=messages,
             model=llm_def.model,
             model_parameters=langfuse_params,
@@ -464,7 +497,15 @@ async def _call_lite_llm(
                         status_message="Streaming response completed (no usage info)",
                     )
         else:
-            response = await litellm.acompletion(**params)
+            if api_route == RESPONSES_API_ROUTE:
+                logger.info(
+                    "Using LiteLLM Responses API for %s (api_mode=%s).",
+                    llm_def.name,
+                    llm_def.api_mode,
+                )
+                response = await call_responses_non_stream(llm_def, params, config)
+            else:
+                response = await litellm.acompletion(**params)
             if config.service.cache_enabled:
                 _cache_response(cache_key, sanitized_messages, response)
 

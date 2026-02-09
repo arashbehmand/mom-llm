@@ -297,9 +297,20 @@ ANTHROPIC_API_KEY="..."
 ```yaml
 # Define individual LLMs
 llm_definitions:
-  - name: "gpt4"
-    model: "openai/gpt-4"
-    api_key_env: "OPENAI_API_KEY"
+  - base_name: "gpt4"
+    model: "openai/gpt-4.1"
+    variants:
+      - suffix: "h"
+        params:
+          reasoning_effort: "high"
+
+  - base_name: "claude"
+    model: "anthropic/claude-sonnet-4-5-20250929"
+
+  - base_name: "gemini"
+    model: "gemini/gemini-2.5-pro"
+    # Optional override only when provider default is not what you want:
+    # api_key_env: "CUSTOM_GEMINI_KEY_ENV"
 
 # Define synthesis prompts
 prompt_definitions:
@@ -309,10 +320,12 @@ prompt_definitions:
 # Create MoM models
 models:
   - name: "mom"
-    llms_to_query: ["gpt4", "claude", "gemini"]
-    concluding_llm: "gpt4"
+    llms_to_query: ["gpt4:h", "claude", "gemini"]
+    concluding_llm: "gpt4:h"
     concluding_prompt: "synth_default"
 ```
+
+`suffix` entries resolve to final names like `gpt4:h`. If `api_key_env` is omitted, the service infers it from the provider in `model` (e.g., OpenAI -> `OPENAI_API_KEY`).
 
 For detailed configuration options, custom pricing, advanced features, and complete examples, see the **[Configuration Guide](docs/CONFIGURATION.md)**.
 

@@ -89,9 +89,11 @@ The `config.yaml` file has four main sections:
 
 ```yaml
 llm_definitions:   # Define individual LLMs
-  - name: "..."
+  - base_name: "..."
     model: "..."
-    # ... configuration
+    variants:
+      - suffix: "..."
+        # ... configuration
 
 prompt_definitions:  # Define synthesis prompts
   - name: "..."
@@ -114,26 +116,84 @@ langfuse:  # Optional observability
 
 Define individual LLMs that can be used in your MoM models.
 
-### Basic LLM Definition
+### Variant-Based Definitions (Recommended)
 
 ```yaml
 llm_definitions:
-  - name: "gpt4"  # Internal name for referencing
-    model: "openai/gpt-4"  # LiteLLM model identifier
-    api_key_env: "OPENAI_API_KEY"  # Environment variable containing API key
+  - base_name: "oai5m"
+    model: "openai/gpt-5-mini"  # LiteLLM model identifier
+    variants:
+      - suffix: "m"
+        params:
+          reasoning_effort: "medium"
+      - suffix: "h"
+        params:
+          reasoning_effort: "high"
 ```
 
-### LLM with Custom Parameters
+Resolved names are `<base_name>:<suffix>`, so this creates `oai5m:m` and `oai5m:h`.
+
+### API Key Resolution
+
+`api_key_env` is optional in config. If omitted, MoM infers the default from the model provider:
+
+- `openai/*` -> `OPENAI_API_KEY`
+- `gemini/*` -> `GOOGLE_API_KEY`
+- `anthropic/*` -> `ANTHROPIC_API_KEY`
+- `xai/*` -> `XAI_API_KEY`
+- `mistral/*` -> `MISTRAL_API_KEY`
+- `openrouter/*` -> `OPENROUTER_API_KEY`
+
+Use `api_key_env` only when you need an override.
 
 ```yaml
 llm_definitions:
-  - name: "gpt5"
-    model: "openai/gpt-5"
-    api_key_env: "OPENAI_API_KEY"
-    params:
-      reasoning_effort: "high"  # Model-specific parameters
-      temperature: 0.7
-      max_tokens: 2000
+  - base_name: "g3p"
+    model: "gemini/gemini-3-pro-preview"
+    api_key_env: "MY_CUSTOM_GEMINI_KEY"  # Optional override
+```
+
+### Legacy Explicit-Name Syntax (Still Supported)
+
+```yaml
+llm_definitions:
+  - name: "gpt4"
+    model: "openai/gpt-4.1"
+```
+
+### LLM with Custom Parameters (Variant)
+
+```yaml
+llm_definitions:
+  - base_name: "g3p"
+    model: "gemini/gemini-3-pro-preview"
+    variants:
+      - suffix: "h"
+        params:
+          thinking_level: "high"  # Model-specific parameters
+          temperature: 0.7
+          max_tokens: 2000
+```
+
+### API Route Selection (`api_mode`)
+
+Each LLM definition can control which LiteLLM endpoint path is used:
+
+- `auto` (default): use Chat Completions API
+- `completion`: force Chat Completions API
+- `responses`: force Responses API (non-streaming only; streaming falls back to completion)
+
+```yaml
+llm_definitions:
+  - base_name: "grok41fr"
+    model: "xai/grok-4-1-fast-reasoning"
+    variants:
+      - suffix: "o"
+        api_mode: "responses"
+        params:
+          tools:
+            - type: "web_search"
+            - type: "x_search"
 ```
 
 ### LLM with Custom Pricing
@@ -142,17 +202,15 @@ For models with special pricing (like reasoning tokens), you can define custom p
 
 ```yaml
 llm_definitions:
-  - name: "gemini-2.5-pro"
+  - base_name: "gemini-2.5-pro"
     model: "gemini/gemini-2.5-pro"
-    api_key_env: "GOOGLE_API_KEY"
     pricing:
       prompt_cost_per_token: 0.00000015      # $0.15 per 1M tokens
       completion_cost_per_token: 0.00000060  # $0.60 per 1M text tokens
       reasoning_cost_per_token: 0.00000350   # $3.50 per 1M reasoning tokens
 
-  - name: "claude4.5"
+  - base_name: "claude4.5"
     model: "anthropic/claude-4.5"
-    api_key_env: "ANTHROPIC_API_KEY"
     pricing:
       prompt_cost_per_token: 0.00000300      # $3.00 per 1M tokens
       completion_cost_per_token: 0.00001500  # $15.00 per 1M text tokens
@@ -167,17 +225,14 @@ LLMs automatically support multimodal requests if the underlying model supports 
 
 ```yaml
 llm_definitions:
-  - name: "gpt4-vision"
+  - base_name: "gpt4-vision"
     model: "openai/gpt-4-vision-preview"
-    api_key_env: "OPENAI_API_KEY"
 
-  - name: "claude-sonnet"
+  - base_name: "claude-sonnet"
     model: "anthropic/claude-3-5-sonnet-20241022"
-    api_key_env: "ANTHROPIC_API_KEY"
 
-  - name: "gemini-pro-vision"
+  - base_name: "gemini-pro-vision"
     model: "gemini/gemini-2.5-pro"
-    api_key_env: "GOOGLE_API_KEY"
 ```
 
 The service automatically filters LLMs based on multimodal capability when images are included in requests.
@@ -252,10 +307,10 @@ Define "meta-models" that orchestrate multiple LLMs and synthesize their respons
 models:
   - name: "mom"  # Model name used in API requests
     llms_to_query:  # LLMs to query in parallel
-      - "gpt4"
+      - "gpt4:h"
       - "claude"
       - "gemini"
-    concluding_llm: "gpt4"  # LLM that synthesizes responses
+    concluding_llm: "gpt4:h"  # LLM that synthesizes responses
     concluding_prompt: "synth_default"  # Prompt for synthesis
 ```
 
@@ -267,10 +322,10 @@ Show intermediate responses to users:
 models:
   - name: "mom-transparent"
     llms_to_query:
-      - "gpt4"
+      - "gpt4:h"
       - "claude"
       - "gemini"
-    concluding_llm: "gpt4"
+    concluding_llm: "gpt4:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true  # Include intermediate responses
 ```
@@ -357,6 +412,9 @@ service:
   # Retry configuration
   max_llm_retries: 3  # Number of retries for failed LLM calls
   llm_retry_delay_seconds: 2  # Delay between retries
+
+  # Debug model generation
+  enable_mom_debug_model: false  # Auto-create "mom-debug" with all known LLMs
 ```
 
 ### Configuration Options Explained
@@ -365,9 +423,10 @@ service:
 |---------|------|---------|-------------|
 | `timeout_seconds` | integer | 30 | Maximum time (in seconds) to wait for LLM responses |
 | `exposed_apis` | array | `["openai"]` | API formats to expose (currently only OpenAI-compatible) |
-| `cache_enabled` | boolean | true | Enable automatic caching of LLM responses to reduce costs |
+| `cache_enabled` | boolean | false | Enable automatic caching of LLM responses to reduce costs |
 | `max_llm_retries` | integer | 3 | Number of retry attempts for failed LLM calls |
 | `llm_retry_delay_seconds` | integer | 2 | Delay (in seconds) between retry attempts |
+| `enable_mom_debug_model` | boolean | false | Auto-generate `mom-debug` that queries all configured LLM definitions |
 
 ## Langfuse Integration
 
@@ -402,6 +461,8 @@ Once configured, all requests will be traced in your Langfuse dashboard, providi
 ## Complete Configuration Example
 
 Here's a comprehensive example combining all features:
+
+> Note: This example uses explicit `name` entries for readability. Variant-based `base_name`/`suffix` syntax is the recommended style for larger configs.
 
 ```yaml
 # LLM Definitions

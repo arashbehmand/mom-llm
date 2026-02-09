@@ -77,8 +77,9 @@ logger = logging.getLogger(__name__)
 logger.info("--- mom_service.main.py: Logging configured ---")
 
 LITELLM_VERBOSE_ENV = os.getenv("LITELLM_VERBOSE", "false").lower()
-litellm.set_verbose = LITELLM_VERBOSE_ENV in ("true", "1", "yes")
-logger.info(f"--- LiteLLM verbose logging {'ENABLED' if litellm.set_verbose else 'DISABLED'} ---")
+if LITELLM_VERBOSE_ENV in ("true", "1", "yes") and not os.getenv("LITELLM_LOG"):
+    os.environ["LITELLM_LOG"] = "DEBUG"
+logger.info(f"--- LiteLLM log level: {os.getenv('LITELLM_LOG', 'default')} ---")
 
 try:
     config: MoMConfig = load_config()
