@@ -56,8 +56,8 @@ llm_definitions:
   - suffix: xh
     params:
       reasoning_effort: xhigh
-- base_name: oai51cdx
-  model: openai/gpt-5.1-codex
+- base_name: oai52cdx
+  model: openai/gpt-5.2-codex
   variants:
   - suffix: m
     params:
@@ -65,6 +65,21 @@ llm_definitions:
   - suffix: h
     params:
       reasoning_effort: high
+  - suffix: xh
+    params:
+      reasoning_effort: xhigh
+- base_name: oai53cdx
+  model: openai/gpt-5.3-codex
+  variants:
+  - suffix: m
+    params:
+      reasoning_effort: medium
+  - suffix: h
+    params:
+      reasoning_effort: high
+  - suffix: xh
+    params:
+      reasoning_effort: xhigh
 - base_name: oaio4m
   model: openai/o4-mini
   variants:
@@ -211,17 +226,29 @@ llm_definitions:
       params:
         web_search_options:
           search_context_size: high
-- base_name: grok3
-  model: xai/grok-3
-- base_name: grok3m
-  model: xai/grok-3-mini
+- base_name: cl46op
+  model: anthropic/claude-opus-4-6
   variants:
   - suffix: l
     params:
-      reasoning_effort: low
+      thinking:
+        type: enabled
+        budget_tokens: 4096
+  - suffix: m
+    params:
+      thinking:
+        type: enabled
+        budget_tokens: 10000
   - suffix: h
     params:
-      reasoning_effort: high
+      thinking:
+        type: enabled
+        budget_tokens: 16000
+    variants:
+    - suffix: o
+      params:
+        web_search_options:
+          search_context_size: high
 - base_name: grok4
   model: xai/grok-4-0709
   variants:
@@ -252,8 +279,6 @@ llm_definitions:
   variants:
   - suffix: exp
     model: openrouter/deepseek/deepseek-v3.2-exp
-- base_name: dschat
-  model: openrouter/deepseek/deepseek-chat
 - base_name: r1
   model: openrouter/deepseek/deepseek-r1-0528
 - base_name: dsr1
@@ -283,13 +308,8 @@ llm_definitions:
   model: openrouter/qwen/qwen3-max
 - base_name: qwn3coder
   model: openrouter/qwen/qwen3-coder
-- base_name: k2
-  model: openrouter/moonshotai/kimi-k2
-  variants:
-  - suffix: t
-    model: openrouter/moonshotai/kimi-k2-thinking
-  - suffix: o
-    model: openrouter/moonshotai/kimi-k2:online
+- base_name: k25
+  model: openrouter/moonshotai/kimi-k2.5-0127
 - base_name: glm47
   model: openrouter/z-ai/glm-4.7
 - base_name: m2
@@ -383,10 +403,11 @@ models:
       - "oai52:l"
       - "oaio4m:l"
       - "g3p"
-      - "cl45st:l"
+      - "cl46op:l"
       - "grok41fr"
       - "dsr1"
       - "mstrll3"
+      - "k25"
     concluding_llm: "g25f"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -399,10 +420,11 @@ models:
       - "oaio4m:h"
       - "g3p:h"
       - "g3f:h"
-      - "cl45st:h"
+      - "cl46op:m"
       - "grok41fr"
       - "dsr1"
       - "mstrll3"
+      - "k25"
     concluding_llm: "g3p"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -415,14 +437,14 @@ models:
       - "oaio4m:h"
       - "g3p:h"
       - "g25p:h"
+      - "cl46op:h"
       - "cl45st:h"
-      - "cl45op:h"
       - "grok41fr"
       - "dsr1"
       - "mstrll3"
       - "magistralm:h"
       - "qwn3max"
-      - "k2:t"
+      - "k25"
       - "glm47"
     concluding_llm: "g3p:h"
     concluding_prompt: "synth_default"
@@ -434,22 +456,22 @@ models:
       - "oai52pro:xh"
       - "oaio3pro"
       - "g3p:h"
-      - "cl45op:h"
+      - "cl46op:h"
       - "grok4"
     concluding_llm: "g3p:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
-  # Code mom - coding-optimized models (with Codex Max!)
+  # Code mom - coding-optimized models (with Codex!)
   - name: "mom-code"
     llms_to_query:
-      - "oai51cdxmax:m"
+      - "oai52cdx:m"
       - "oaio4m:m"
       - "g3p:h"
-      - "cl45st:m"
+      - "cl46op:m"
       - "grokcode"
       - "qwn3coder"
-      - "k2"
+      - "k25"
     concluding_llm: "g3p"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -459,8 +481,8 @@ models:
     llms_to_query:
       - "oai52:m"
       - "g3f:h"
+      - "cl46op:m"
       - "cl45st:l"
-      - "cl45op:m"
       - "grok41fr"
       - "dsr1"
       - "mstrll3"
@@ -474,12 +496,11 @@ models:
       - "oaio4mdr-o"
       - "g3p:h:o"
       - "g25p:h:o"
+      - "cl46op:h:o"
       - "cl45st:h:o"
-      - "cl45op:h:o"
       - "grok41fr:o"
       - "plx-snrrp-o"
       - "plx-dr-o"
-      - "k2:o"
     concluding_llm: "g3f:h:o"
     concluding_prompt: "synth_search"
     include_thinking_context: true
@@ -487,18 +508,18 @@ models:
   # Elite huge mom code - top-tier coding models, expensive but best quality
   - name: "ehmom-code"
     llms_to_query:
-      - "oai51cdxmax:xh"
+      - "oai52cdx:xh"
       - "oai52:xh"
       - "oaio3pro"
       - "oaio4m:h"
       - "g3p:h"
       - "g25p:h"
-      - "cl45op:h"
+      - "cl46op:h"
       - "grokcode"
       - "codestral"
       - "qwn3coder"
-      - "k2:t"
-    concluding_llm: "cl45op:h"
+      - "k25"
+    concluding_llm: "cl46op:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -508,7 +529,6 @@ models:
       - "oai4osp-o"
       - "g3f:h:o"
       - "plx-snrp-o"
-      - "k2:o"
     concluding_llm: "g3f:h:o"
     concluding_prompt: "synth_search"
     include_thinking_context: true
@@ -528,7 +548,7 @@ models:
       - "oai5m:h"
       - "g3f:m"
       - "cl45hk:m"
-      - "dschat"
+      - "dsv32"
     concluding_llm: "g3f:m"
     concluding_prompt: "synth_default"
     include_thinking_context: true
