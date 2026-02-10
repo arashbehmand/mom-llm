@@ -42,6 +42,10 @@ ALLOWED_CORS_ORIGINS=""  # Comma-separated origins, or empty for no CORS
 
 # LiteLLM Logging
 LITELLM_VERBOSE="false"  # Set to "true" for detailed LLM call logging
+
+# Optional progress reporting integration
+REDIS_URL="redis://localhost:6379"        # Enables event publishing/subscription
+REPORTING_SERVICE_URL="http://localhost:8001"  # Used for X-MoM-Progress-Url header
 ```
 
 ### LLM Provider API Keys

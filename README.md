@@ -82,7 +82,8 @@ graph TD
   - Per-request cost calculation and logging
 - **📊 Advanced Observability**:
   - Built-in Langfuse integration for distributed tracing
-  - Comprehensive metrics API with cost tracking and usage analytics
+  - Comprehensive metrics API with cost tracking and usage analytics (reporting service)
+  - Live progress page for each request (when Redis/reporting is enabled)
   - Detailed health check endpoints for monitoring system components
 - **🔒 Enterprise Security**:
   - Centralized Bearer token authentication with structured error responses
@@ -116,11 +117,18 @@ mom-llm/
 │   ├── 💰 cost_calculation.py # Cost tracking with reasoning tokens
 │   ├── 💵 pricing_utils.py   # Pricing conversions & normalization
 │   ├── 📊 metrics_db.py      # Metrics persistence & analytics
+│   ├── 📣 events.py          # Redis event publisher (progress reporting)
 │   ├── 🏥 health.py          # Health check utilities
 │   └── 📂 endpoints/
 │       ├── 📋 models.py      # Pydantic request/response models
 │       ├── 🔌 openai_v1.py   # OpenAI-compatible endpoints
 │       └── 📈 metrics_api.py # Usage metrics API
+│   └── 📂 reporting/
+│       ├── 🎯 main.py        # Reporting service app
+│       ├── 📈 metrics_api.py # Reporting metrics API
+│       ├── 📊 metrics_db.py  # Reporting metrics DB helpers
+│       └── 📂 templates/
+│           └── 📄 progress.html
 └── 📂 tests/
     ├── ⚙️  conftest.py       # Pytest fixtures & configuration
     ├── 🧪 test_config.py     # Configuration tests
@@ -164,6 +172,10 @@ mom-llm/
    LANGFUSE_PUBLIC_KEY=""
    LANGFUSE_SECRET_KEY=""
    LANGFUSE_HOST="https://cloud.langfuse.com"
+
+   # Optional: progress reporting
+   REDIS_URL="redis://localhost:6379"
+   REPORTING_SERVICE_URL="http://localhost:8001"
    ```
 
 3. **Configure your models**
@@ -244,6 +256,7 @@ curl http://localhost:8000/v1/chat/completions \
   }'
 ```
 Note: Set "stream": false to get a single JSON response instead of an SSE stream.
+If `REPORTING_SERVICE_URL` is configured, responses include `X-MoM-Progress-Url` for live status.
 
 **Send an image (multimodal vision request):**
 ```bash
@@ -331,15 +344,16 @@ For detailed configuration options, custom pricing, advanced features, and compl
 
 ## 🔌 API Reference
 
-The MoM Service provides OpenAI-compatible endpoints plus additional metrics and health check endpoints.
+The MoM service exposes OpenAI-compatible chat endpoints and health checks. The reporting service exposes progress and metrics endpoints.
 
 ### Quick API Overview
 
 **Core Endpoints:**
 - `GET /v1/models` - List available MoM models
 - `POST /v1/chat/completions` - Chat completions (streaming and non-streaming)
-- `GET /v1/metrics/usage` - Usage metrics and cost tracking
 - `GET /health` - Health check
+- `GET http://localhost:8001/progress/{request_id}` - Live request progress page
+- `GET http://localhost:8001/v1/metrics/usage` - Usage metrics and cost tracking
 
 **Example Request:**
 ```bash

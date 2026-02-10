@@ -9,6 +9,7 @@ import sys
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import litellm
@@ -29,9 +30,13 @@ from .core_logic import (
 from .endpoints.metrics_api import metrics_router
 from .endpoints.models import OpenAIErrorDetail, OpenAIErrorResponse, ThinkingContextItem, UsageInfo
 from .endpoints.openai_v1 import openai_router
+from .events import MoMEvent, RedisPublisher
 from .health import perform_comprehensive_health_check
 
 load_dotenv()
+
+# Redis Publisher (global)
+redis_publisher: RedisPublisher | None = None
 
 # Context variable for request ID
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -101,7 +106,29 @@ if config.langfuse:
     except Exception as e:
         logger.error(f"Langfuse init error: {e}")
 
-app = FastAPI()
+
+@asynccontextmanager
+async def app_lifespan(_app: FastAPI):
+    """Initialize and clean up app-scoped resources."""
+    # pylint: disable=global-statement
+    global redis_publisher
+    if os.getenv("REDIS_URL"):
+        redis_publisher = RedisPublisher()
+        if redis_publisher.enabled:
+            logger.info("Redis publisher initialized and enabled.")
+        else:
+            logger.warning("Redis publisher initialized but disabled (connection failed?).")
+    else:
+        logger.info("Redis publisher disabled (REDIS_URL not set).")
+
+    try:
+        yield
+    finally:
+        if redis_publisher:
+            await redis_publisher.close()
+
+
+app = FastAPI(lifespan=app_lifespan)
 
 
 # Request ID Middleware
@@ -218,6 +245,18 @@ async def generic_exception_handler(request: Request, exc: Exception):
     logger.error(
         f"Unhandled exception occurred: {str(exc)}", exc_info=True, extra={"request_id": request_id}
     )
+
+    # Emit error event if Redis is enabled
+    if redis_publisher and redis_publisher.enabled:
+        await redis_publisher.publish(
+            MoMEvent(
+                type="error",
+                request_id=request_id,
+                timestamp=time.time(),
+                data={"error": str(exc)},
+            )
+        )
+
     error_detail = OpenAIErrorDetail(
         message=str(exc),
         type="internal_server_error",
@@ -247,7 +286,12 @@ async def _process_mom_chat_request(
         logger.error(f"MoM Model '{mom_model_name}' not found in configuration.")
         raise ValueError(f"MoM Model '{mom_model_name}' not found.")
 
-    llm_map = {ld.name: ld for ld in config.llm_definitions}
+    llm_map = {}
+    for ld in config.llm_definitions:
+        if isinstance(ld, dict):
+            llm_map[ld["name"]] = ld
+        else:
+            llm_map[ld.name] = ld
     thinking_was_embedded_in_content = False
 
     concluding_instruction: str | None = None
@@ -276,6 +320,25 @@ async def _process_mom_chat_request(
     # Get request_id from request state (set by middleware)
     request_id = getattr(fastapi_request_obj.state, "request_id", "unknown")
 
+    # Publish request_start event
+    if redis_publisher and redis_publisher.enabled:
+        await redis_publisher.publish(
+            MoMEvent(
+                type="request_start",
+                request_id=request_id,
+                timestamp=time.time(),
+                data={
+                    "model_requested": model_conf.name,
+                    "num_messages": len(processed_request_messages),
+                    "streaming": stream,
+                },
+            )
+        )
+
+    # Prepare progress URL if configured
+    reporting_base_url = os.getenv("REPORTING_SERVICE_URL", "")
+    progress_url = f"{reporting_base_url}/progress/{request_id}" if reporting_base_url else None
+
     trace = None
     if LANGFUSE_CLIENT:
         trace = LANGFUSE_CLIENT.trace(
@@ -302,7 +365,7 @@ async def _process_mom_chat_request(
         processed_request_messages,
         timeout,
         config,
-        options={"trace": trace, "request_id": request_id},
+        options={"trace": trace, "request_id": request_id, "redis_publisher": redis_publisher},
     )
 
     intermediate_thinking_context: list[ThinkingContextItem] = []
@@ -316,6 +379,41 @@ async def _process_mom_chat_request(
             thinking_block_open = False
 
             logger.info("Streaming fan-out thinking context...")
+
+            # Inject progress link at the start of thinking
+            if model_conf.include_thinking_context and not thinking_block_open:
+                open_tag_data = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": mom_model_name,
+                    "choices": [
+                        {
+                            "index": index,
+                            "delta": {"content": "<think>\n"},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                yield open_tag_data
+                thinking_block_open = True
+
+                if progress_url:
+                    progress_msg = f"Track progress live: {progress_url}\n---\n"
+                    yield {
+                        "id": response_id,
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": mom_model_name,
+                        "choices": [
+                            {
+                                "index": index,
+                                "delta": {"content": progress_msg},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+
             async for thinking_item in fanout_results_generator:
                 intermediate_thinking_context.append(thinking_item)
 
@@ -410,6 +508,17 @@ async def _process_mom_chat_request(
                 concluding_instruction,
             )
 
+            # Publish concluding start event
+            if redis_publisher and redis_publisher.enabled:
+                await redis_publisher.publish(
+                    MoMEvent(
+                        type="concluding_start",
+                        request_id=request_id,
+                        timestamp=time.time(),
+                        data={"concluding_llm": model_conf.concluding_llm},
+                    )
+                )
+
             concl_def = llm_map.get(model_conf.concluding_llm)
             if not concl_def:
                 logger.error(f"Concluding LLMDefinition '{model_conf.concluding_llm}' not found.")
@@ -458,6 +567,7 @@ async def _process_mom_chat_request(
                     "stream": True,
                     "request_id": request_id,
                     "mom_model_name": mom_model_name,
+                    "redis_publisher": redis_publisher,
                 },
             )
 
@@ -505,6 +615,17 @@ async def _process_mom_chat_request(
             if trace:
                 trace.update(output={"final_content_streamed": final_content_streamed})
 
+            # Publish request_complete event
+            if redis_publisher and redis_publisher.enabled:
+                await redis_publisher.publish(
+                    MoMEvent(
+                        type="request_complete",
+                        request_id=request_id,
+                        timestamp=time.time(),
+                        data={"final_content_length": len(final_content_streamed)},
+                    )
+                )
+
         return streaming_response_generator()
 
     # Non-streaming branch (de-indented since the streaming branch returns above)
@@ -534,6 +655,17 @@ async def _process_mom_chat_request(
             "may not support it. Results may be degraded."
         )
 
+    # Publish concluding start event (non-streaming)
+    if redis_publisher and redis_publisher.enabled:
+        await redis_publisher.publish(
+            MoMEvent(
+                type="concluding_start",
+                request_id=request_id,
+                timestamp=time.time(),
+                data={"concluding_llm": model_conf.concluding_llm},
+            )
+        )
+
     gen_name_concl = f"concluding-{concl_def.name}" if trace else None
     concluding_llm_response = await _execute_concluding_call(
         concl_def,
@@ -547,6 +679,7 @@ async def _process_mom_chat_request(
             "stream": False,
             "request_id": request_id,
             "mom_model_name": mom_model_name,
+            "redis_publisher": redis_publisher,
         },
     )
 
@@ -598,6 +731,17 @@ async def _process_mom_chat_request(
             },
             level="DEFAULT",
             status_message="MoM request completed successfully",
+        )
+
+    # Publish request_complete event (non-streaming)
+    if redis_publisher and redis_publisher.enabled:
+        await redis_publisher.publish(
+            MoMEvent(
+                type="request_complete",
+                request_id=request_id,
+                timestamp=time.time(),
+                data={"final_content_length": len(final_content)},
+            )
         )
 
     return (

@@ -29,6 +29,7 @@ from .config import LLMDefinition
 from .config import ModelConfig as MoMModelConfig
 from .config import MoMConfig
 from .endpoints.models import LLMCallParams, ThinkingContextItem, UsageInfo
+from .events import MoMEvent
 from .llm_calls import _call_lite_llm
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ async def _perform_fanout_calls(
     options = options or {}
     trace = options.get("trace")
     request_id = options.get("request_id", "unknown")
+    redis_publisher = options.get("redis_publisher")
 
     # Filter models based on multimodal capability
     from .multimodal_utils import filter_multimodal_capable_models
@@ -122,14 +124,35 @@ async def _perform_fanout_calls(
             )
             continue
 
-        gen_name = f"fanout-{idx}-{ld.name}" if trace else None
+        # Handle both dict and object access for ld
+        ld_name = ld.get("name") if isinstance(ld, dict) else ld.name
+        ld_model = ld.get("model") if isinstance(ld, dict) else ld.model
+        ld_params = ld.get("params") if isinstance(ld, dict) else ld.params
+
+        # Publish fanout start event
+        if redis_publisher and redis_publisher.enabled:
+            import time
+
+            await redis_publisher.publish(
+                MoMEvent(
+                    type="fanout_start",
+                    request_id=request_id,
+                    timestamp=time.time(),
+                    data={
+                        "model": ld_name,  # Use model name (which includes variant suffix)
+                        "status": "processing",
+                    },
+                )
+            )
+
+        gen_name = f"fanout-{idx}-{ld_name}" if trace else None
         # Use LLMCallParams to encapsulate model/messages/stream settings
         llm_call_params = LLMCallParams(
-            model=ld.model,
+            model=ld_model,
             messages=request_messages,
-            temperature=ld.params.get("temperature") if isinstance(ld.params, dict) else None,
-            max_tokens=ld.params.get("max_tokens") if isinstance(ld.params, dict) else None,
-            top_p=ld.params.get("top_p") if isinstance(ld.params, dict) else None,
+            temperature=ld_params.get("temperature") if isinstance(ld_params, dict) else None,
+            max_tokens=ld_params.get("max_tokens") if isinstance(ld_params, dict) else None,
+            top_p=ld_params.get("top_p") if isinstance(ld_params, dict) else None,
             stream=False,
         )
         llm_call_generator = call_llm(
@@ -152,13 +175,26 @@ async def _perform_fanout_calls(
         ld_fanout, result_or_exception = await future
         content_str = ""
         current_usage_info = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+        status = "success"
+        error_msg = None
+
+        # Handle both dict and object access for ld_fanout
+        ld_fanout_name = ld_fanout.get("name") if isinstance(ld_fanout, dict) else ld_fanout.name
+        ld_fanout_model = ld_fanout.get("model") if isinstance(ld_fanout, dict) else ld_fanout.model
+        ld_fanout_pricing = (
+            ld_fanout.get("pricing") if isinstance(ld_fanout, dict) else ld_fanout.pricing
+        )
 
         if isinstance(result_or_exception, Exception):
-            content_str = f"Error: Call to {ld_fanout.model} failed. Details: {html.escape(str(result_or_exception))}"
-            logger.error(f"Fan-out call to {ld_fanout.name} failed: {result_or_exception}")
+            content_str = f"Error: Call to {ld_fanout_model} failed. Details: {html.escape(str(result_or_exception))}"
+            logger.error(f"Fan-out call to {ld_fanout_name} failed: {result_or_exception}")
+            status = "error"
+            error_msg = str(result_or_exception)
         elif result_or_exception is None:
-            content_str = f"Error: Call to {ld_fanout.model} returned no response (likely due to an internal error or timeout)."
-            logger.error(f"Fan-out call to {ld_fanout.name} returned None.")
+            content_str = f"Error: Call to {ld_fanout_model} returned no response (likely due to an internal error or timeout)."
+            logger.error(f"Fan-out call to {ld_fanout_name} returned None.")
+            status = "error"
+            error_msg = "No response returned"
         else:
             current_res_obj_fanout = result_or_exception
             has_choices = hasattr(current_res_obj_fanout, "choices") and bool(
@@ -183,15 +219,36 @@ async def _perform_fanout_calls(
                     current_res_obj_fanout.usage,
                     response_obj=current_res_obj_fanout,
                     is_cached=is_cached,
-                    pricing_config=ld_fanout.pricing,
+                    pricing_config=ld_fanout_pricing,
                 )
             else:
                 content_str = (
-                    f"Warning: Call to {ld_fanout.model} returned an empty or malformed response."
+                    f"Warning: Call to {ld_fanout_model} returned an empty or malformed response."
                 )
+                status = "warning"
+                error_msg = "Empty or malformed response"
+
+        # Publish fanout completion event
+        if redis_publisher and redis_publisher.enabled:
+            import time
+
+            await redis_publisher.publish(
+                MoMEvent(
+                    type="fanout_complete",
+                    request_id=request_id,
+                    timestamp=time.time(),
+                    data={
+                        "model": ld_fanout_name,
+                        "status": status,
+                        "error": error_msg,
+                        "duration_ms": 0,  # We don't track individual fanout duration here yet
+                        "tokens": current_usage_info.total_tokens if current_usage_info else 0,
+                    },
+                )
+            )
 
         yield ThinkingContextItem(
-            model=ld_fanout.model, content=str(content_str), usage=current_usage_info
+            model=ld_fanout_model, content=str(content_str), usage=current_usage_info
         )
 
 

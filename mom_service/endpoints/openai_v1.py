@@ -12,11 +12,12 @@ All endpoints require Bearer token authentication via the Authorization header.
 """
 
 import json
+import os
 import time
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..auth import verify_bearer_token
 from ..config import load_config
@@ -29,6 +30,14 @@ from .models import (
 
 config = load_config()
 openai_router = APIRouter(prefix="/v1", tags=["OpenAI"])
+
+
+def _build_progress_url(request: Request) -> str | None:
+    reporting_base_url = os.getenv("REPORTING_SERVICE_URL", "").strip()
+    request_id = getattr(request.state, "request_id", None)
+    if not reporting_base_url or not request_id:
+        return None
+    return f"{reporting_base_url}/progress/{request_id}"
 
 
 @openai_router.get("/models")
@@ -144,7 +153,11 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
                 yield f"data: {json.dumps(error_data)}\n\n"
             yield "data: [DONE]\n\n"
 
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
+        response = StreamingResponse(event_stream(), media_type="text/event-stream")
+        progress_url = _build_progress_url(request)
+        if progress_url:
+            response.headers["X-MoM-Progress-Url"] = progress_url
+        return response
 
     # Non-streaming path
     try:
@@ -182,4 +195,8 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail={"message": str(e), "type": "server_error"})
-    return resp_payload
+    response = JSONResponse(content=resp_payload)
+    progress_url = _build_progress_url(request)
+    if progress_url:
+        response.headers["X-MoM-Progress-Url"] = progress_url
+    return response

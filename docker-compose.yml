@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   mom-service:
     build:
@@ -13,8 +11,9 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       # Mount data directory for databases (cache and metrics)
       - ./data:/app/data
-      # Optional: Mount .env file if using environment variables
-      # - ./.env:/app/.env:ro
+    # Optional: add .env files
+    env_file:
+      - .env
     environment:
       # API authentication token
       - API_TOKEN=${API_TOKEN:-your-secret-token-here}
@@ -22,6 +21,9 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
+      # Redis for events
+      - REDIS_URL=redis://redis:6379
+      - REPORTING_SERVICE_URL=http://localhost:8001
       # LLM provider API keys
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -36,6 +38,40 @@ services:
       retries: 3
       start_period: 5s
     restart: unless-stopped
+    depends_on:
+      - redis
+    networks:
+      - mom-network
+
+  mom-reporting:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mom-reporting
+    command: uvicorn mom_service.reporting.main:app --host 0.0.0.0 --port 8001
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - API_TOKEN=${API_TOKEN:-your-secret-token-here}
+    restart: unless-stopped
+    depends_on:
+      - redis
+    networks:
+      - mom-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: mom-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
     networks:
       - mom-network
 
@@ -88,5 +124,6 @@ networks:
     driver: bridge
 
 volumes:
+  redis_data:
   # Uncomment if using Langfuse database
   # langfuse-db-data:

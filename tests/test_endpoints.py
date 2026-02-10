@@ -2,7 +2,7 @@
 Integration tests for mom_service API endpoints
 """
 
-# pylint: disable=redefined-outer-name
+# pylint: disable=redefined-outer-name,too-many-arguments,too-many-positional-arguments
 
 import os
 from unittest.mock import MagicMock, patch
@@ -97,6 +97,75 @@ class TestOpenAIEndpoints:
         assert data["choices"][0]["message"]["content"] == "Paris is the capital of France."
         assert "usage" in data
         assert data["usage"]["total_tokens"] == 30
+
+    @patch("mom_service.main.get_mom_model_config")
+    @patch("mom_service.main._process_mom_chat_request")
+    def test_chat_completions_non_streaming_progress_header(
+        self, mock_process, mock_get_config, test_client, auth_headers, monkeypatch
+    ):
+        monkeypatch.setenv("REPORTING_SERVICE_URL", "http://localhost:8001")
+        mock_process.return_value = (
+            "Done.",
+            None,
+            {
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "cost": 0.0,
+            },
+            0.0,
+            "test-mom-model",
+            False,
+            None,
+        )
+        mock_get_config.return_value = MagicMock(
+            name="test-mom-model",
+            llms_to_query=["test-llm"],
+            concluding_llm="test-concluding-llm",
+            include_thinking_context=True,
+        )
+
+        request_data = {
+            "model": "test-mom-model",
+            "messages": [{"role": "user", "content": "ping"}],
+            "stream": False,
+        }
+        response = test_client.post("/v1/chat/completions", json=request_data, headers=auth_headers)
+        assert response.status_code == 200
+        assert response.headers["X-MoM-Progress-Url"].startswith("http://localhost:8001/progress/")
+
+    @patch("mom_service.main.get_mom_model_config")
+    @patch("mom_service.main._process_mom_chat_request")
+    def test_chat_completions_streaming_progress_header(
+        self, mock_process, mock_get_config, test_client, auth_headers, monkeypatch
+    ):
+        monkeypatch.setenv("REPORTING_SERVICE_URL", "http://localhost:8001")
+
+        async def _mock_stream():
+            yield {
+                "id": "chunk-id",
+                "object": "chat.completion.chunk",
+                "created": 123,
+                "model": "test-mom-model",
+                "choices": [{"index": 0, "delta": {"content": "Hi"}, "finish_reason": None}],
+            }
+
+        mock_process.return_value = _mock_stream()
+        mock_get_config.return_value = MagicMock(
+            name="test-mom-model",
+            llms_to_query=["test-llm"],
+            concluding_llm="test-concluding-llm",
+            include_thinking_context=True,
+        )
+
+        request_data = {
+            "model": "test-mom-model",
+            "messages": [{"role": "user", "content": "ping"}],
+            "stream": True,
+        }
+        response = test_client.post("/v1/chat/completions", json=request_data, headers=auth_headers)
+        assert response.status_code == 200
+        assert response.headers["X-MoM-Progress-Url"].startswith("http://localhost:8001/progress/")
 
     def test_chat_completions_model_not_found(self, test_client, auth_headers):
         """Test POST /v1/chat/completions with non-existent model"""

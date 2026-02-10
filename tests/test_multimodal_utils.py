@@ -669,7 +669,7 @@ class TestSanitizeMessagesForProvider:
         sanitized = sanitize_messages_for_provider(messages, "gpt-4o")
         # Content should be empty string or empty list when all thinking
         content = sanitized[0]["content"]
-        assert content == "" or content == []
+        assert content in ("", [])
 
     def test_thinking_filter_with_string_content(self):
         """Test that string content is not affected by thinking filter"""

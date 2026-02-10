@@ -198,6 +198,9 @@ async def _call_lite_llm(
     request_id = options.get("request_id", "unknown")
     mom_model_name = options.get("mom_model_name", "unknown")
 
+    # Resolve API key from environment variable (if configured)
+    api_key = os.getenv(llm_def.api_key_env) if llm_def.api_key_env else None
+
     # Sanitize messages to remove provider-specific fields that may cause errors
     from .multimodal_utils import sanitize_messages_for_provider
 
@@ -212,6 +215,10 @@ async def _call_lite_llm(
         "num_retries": config.service.max_llm_retries,  # LiteLLM retry parameter
         **(llm_def.params or {}),  # LLM-specific params can override defaults (guard against None)
     }
+
+    # Only pass api_key explicitly if resolved; otherwise let LiteLLM resolve it
+    if api_key:
+        params["api_key"] = api_key
 
     api_route = _select_api_route(llm_def, params)
 

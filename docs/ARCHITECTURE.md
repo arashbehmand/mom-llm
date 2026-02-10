@@ -180,9 +180,11 @@ sequenceDiagram
   - Supports multimodal content (OpenAI Vision API format)
   - Automatically filters models based on content type
 
-#### Metrics API (`endpoints/metrics_api.py`)
-- `GET /v1/metrics/usage` - Aggregated usage statistics
-- `GET /v1/metrics/usage/raw` - Raw metric records
+#### Reporting Service API (`reporting/main.py`, `reporting/metrics_api.py`)
+- `GET http://localhost:8001/progress/{request_id}` - Live progress page
+- `GET http://localhost:8001/api/progress/{request_id}` - JSON progress payload
+- `GET http://localhost:8001/v1/metrics/usage` - Aggregated usage statistics
+- `GET http://localhost:8001/v1/metrics/usage/raw` - Raw metric records
 
 #### Request/Response Models (`endpoints/models.py`)
 
@@ -562,6 +564,8 @@ Multi-Stage Build:
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc. - LLM provider keys
 - `LANGFUSE_*` - Observability configuration
 - `ALLOWED_CORS_ORIGINS` - CORS policy
+- `REDIS_URL` - Enables event publishing/subscription for progress reporting
+- `REPORTING_SERVICE_URL` - Base URL for response header `X-MoM-Progress-Url`
 
 ## 📝 Code Documentation
 
@@ -641,9 +645,9 @@ Client → POST /v1/chat/completions (stream: true)
 
 ### Example 3: Metrics Query
 ```
-Client → GET /v1/metrics/usage?model_name=mom-creative&start_time=...
+Client → GET http://localhost:8001/v1/metrics/usage?model_name=mom-creative&start_time=...
            ↓
-      Metrics API Handler
+      Reporting Metrics API Handler
            ↓
       Query SQLite with filters
            ↓

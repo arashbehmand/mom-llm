@@ -9,6 +9,7 @@ This document provides detailed information about all API endpoints available in
   - [List Models](#list-models)
   - [Chat Completions](#chat-completions)
 - [Metrics & Observability Endpoints](#metrics--observability-endpoints)
+  - [Progress Page](#progress-page)
   - [Usage Metrics](#usage-metrics)
   - [Raw Metrics](#raw-metrics)
 - [Health Check Endpoints](#health-check-endpoints)
@@ -89,6 +90,10 @@ Send chat completion requests to your MoM models.
 **Headers:**
 - `Authorization: Bearer YOUR_API_TOKEN`
 - `Content-Type: application/json`
+
+**Response Headers:**
+- `X-Request-ID`: Request correlation ID for the chat completion request.
+- `X-MoM-Progress-Url` (optional): Present when `REPORTING_SERVICE_URL` is set.
 
 **Request Body:**
 
@@ -280,11 +285,21 @@ curl http://localhost:8000/v1/chat/completions \
 
 ## Metrics & Observability Endpoints
 
+### Progress Page
+
+Track live fan-out/concluding status for a request.
+
+**HTML Endpoint:** `GET http://localhost:8001/progress/{request_id}`
+
+**JSON Endpoint:** `GET http://localhost:8001/api/progress/{request_id}`
+
+Use `X-MoM-Progress-Url` when present, or build the URL from `X-Request-ID`.
+
 ### Usage Metrics
 
 Get aggregated usage metrics with cost tracking.
 
-**Endpoint:** `GET /v1/metrics/usage`
+**Endpoint:** `GET http://localhost:8001/v1/metrics/usage`
 
 **Headers:**
 - `Authorization: Bearer YOUR_API_TOKEN`
@@ -356,15 +371,15 @@ Get aggregated usage metrics with cost tracking.
 **Example:**
 ```bash
 # Get all metrics
-curl http://localhost:8000/v1/metrics/usage \
+curl http://localhost:8001/v1/metrics/usage \
   -H "Authorization: Bearer your-token"
 
 # Get metrics for a specific model
-curl "http://localhost:8000/v1/metrics/usage?model_name=mom-creative" \
+curl "http://localhost:8001/v1/metrics/usage?model_name=mom-creative" \
   -H "Authorization: Bearer your-token"
 
 # Get metrics for a time range
-curl "http://localhost:8000/v1/metrics/usage?start_time=1640000000&end_time=1650000000" \
+curl "http://localhost:8001/v1/metrics/usage?start_time=1640000000&end_time=1650000000" \
   -H "Authorization: Bearer your-token"
 ```
 
@@ -372,7 +387,7 @@ curl "http://localhost:8000/v1/metrics/usage?start_time=1640000000&end_time=1650
 
 Get raw metric records for detailed analysis.
 
-**Endpoint:** `GET /v1/metrics/usage/raw`
+**Endpoint:** `GET http://localhost:8001/v1/metrics/usage/raw`
 
 **Headers:**
 - `Authorization: Bearer YOUR_API_TOKEN`
@@ -423,11 +438,11 @@ Get raw metric records for detailed analysis.
 **Example:**
 ```bash
 # Get recent raw metrics
-curl http://localhost:8000/v1/metrics/usage/raw \
+curl http://localhost:8001/v1/metrics/usage/raw \
   -H "Authorization: Bearer your-token"
 
 # Get raw metrics with limit
-curl "http://localhost:8000/v1/metrics/usage/raw?limit=50" \
+curl "http://localhost:8001/v1/metrics/usage/raw?limit=50" \
   -H "Authorization: Bearer your-token"
 ```
 

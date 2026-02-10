@@ -132,6 +132,21 @@ class MoMConfig(BaseModel):
     service: ServiceConfig
     langfuse: LangfuseConfig | None = None
 
+    def __init__(self, **data: Any) -> None:
+        # Pre-process llm_definitions if they are raw dictionaries (from yaml)
+        # The validation logic _expand_llm_definitions handles base_name/variants expansion
+        # converting them into flat dictionary definitions that can be parsed into LLMDefinition
+        if (
+            "llm_definitions" in data
+            and isinstance(data["llm_definitions"], list)
+            and data["llm_definitions"]
+            and isinstance(data["llm_definitions"][0], dict)
+        ):
+            # Check if expansion is needed (i.e. if we have dicts, not objects yet)
+            data["llm_definitions"] = _expand_llm_definitions(data["llm_definitions"])
+
+        super().__init__(**data)
+
 
 DEFAULT_API_KEY_ENV_BY_PROVIDER = {
     "openai": "OPENAI_API_KEY",
@@ -408,7 +423,14 @@ def _apply_mom_debug_model_if_enabled(normalized: dict[str, Any]) -> None:
 
 
 def _validate_model_references(config: MoMConfig) -> None:
-    known_llm_names = {llm.name for llm in config.llm_definitions}
+    # Handle both dicts and LLMDefinition objects
+    known_llm_names = set()
+    for llm in config.llm_definitions:
+        if isinstance(llm, dict):
+            known_llm_names.add(llm["name"])
+        else:
+            known_llm_names.add(llm.name)
+
     errors: list[str] = []
 
     for model_cfg in config.models:
