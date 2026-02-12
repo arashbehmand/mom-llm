@@ -310,10 +310,14 @@ llm_definitions:
   model: openrouter/qwen/qwen3-coder
 - base_name: k25
   model: openrouter/moonshotai/kimi-k2.5-0127
-- base_name: glm47
-  model: openrouter/z-ai/glm-4.7
+- base_name: glm5
+  model: openrouter/z-ai/glm-5
+- base_name: ernie45
+  model: openrouter/baidu/ernie-4.5-300b-a47b
+- base_name: ernie45t
+  model: openrouter/baidu/ernie-4.5-21b-a3b-thinking
 - base_name: m2
-  model: openrouter/minimax/minimax-m2
+  model: openrouter/minimax/minimax-m2.1
 - base_name: oaio4mdr-o
   model: openai/o4-mini-deep-research-2025-06-26
   params:
@@ -405,8 +409,8 @@ models:
       - "g3p"
       - "cl46op:l"
       - "grok41fr"
-      - "dsr1"
-      - "mstrll3"
+      - "qwn3max"
+      - "glm5"
       - "k25"
     concluding_llm: "g25f"
     concluding_prompt: "synth_default"
@@ -416,15 +420,15 @@ models:
   - name: "bmom"
     llms_to_query:
       - "oai52:m"
-      - "oaio3:h"
       - "oaio4m:h"
       - "g3p:h"
       - "g3f:h"
       - "cl46op:m"
       - "grok41fr"
-      - "dsr1"
-      - "mstrll3"
       - "k25"
+      - "glm5"
+      - "qwn3max"
+      - "ernie45t"
     concluding_llm: "g3p"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -433,19 +437,18 @@ models:
   - name: "hmom"
     llms_to_query:
       - "oai52:h"
-      - "oaio3:h"
       - "oaio4m:h"
       - "g3p:h"
       - "g25p:h"
+      - "g3f:h"
       - "cl46op:h"
       - "cl45st:h"
       - "grok41fr"
-      - "dsr1"
-      - "mstrll3"
-      - "magistralm:h"
       - "qwn3max"
       - "k25"
-      - "glm47"
+      - "glm5"
+      - "ernie45t"
+      - "m2"
     concluding_llm: "g3p:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -454,10 +457,10 @@ models:
   - name: "emom"
     llms_to_query:
       - "oai52pro:xh"
-      - "oaio3pro"
       - "g3p:h"
       - "cl46op:h"
-      - "grok4"
+      - "grok41fr"
+      - "k25"
     concluding_llm: "g3p:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -484,8 +487,8 @@ models:
       - "cl46op:m"
       - "cl45st:l"
       - "grok41fr"
-      - "dsr1"
-      - "mstrll3"
+      - "qwn3max"
+      - "ernie45t"
     concluding_llm: "oai52:m"
     concluding_prompt: "synth_creative"
     include_thinking_context: true
@@ -510,7 +513,6 @@ models:
     llms_to_query:
       - "oai52cdx:xh"
       - "oai52:xh"
-      - "oaio3pro"
       - "oaio4m:h"
       - "g3p:h"
       - "g25p:h"
@@ -519,6 +521,7 @@ models:
       - "codestral"
       - "qwn3coder"
       - "k25"
+      - "glm5"
     concluding_llm: "cl46op:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
