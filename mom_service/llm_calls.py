@@ -38,6 +38,52 @@ logger = logging.getLogger(__name__)
 
 COMPLETION_API_ROUTE = "completion"
 RESPONSES_API_ROUTE = "responses"
+REDACTED = "[REDACTED]"
+
+CACHE_KEY_IGNORED_PARAMS = frozenset(
+    {
+        "api_key",
+        "messages",
+        "num_retries",
+        "timeout",
+    }
+)
+
+LANGFUSE_IGNORED_PARAMS = frozenset({"messages"})
+
+SENSITIVE_PARAM_EXACT = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "authorization",
+        "auth",
+        "token",
+        "secret",
+        "secret_key",
+        "password",
+        "credential",
+        "credentials",
+        "client_secret",
+    }
+)
+SENSITIVE_PARAM_SUFFIXES = (
+    "_api_key",
+    "_apikey",
+    "_token",
+    "_secret",
+    "_password",
+    "_credential",
+    "_credentials",
+)
+SENSITIVE_PARAM_PREFIXES = (
+    "api_key_",
+    "apikey_",
+    "token_",
+    "secret_",
+    "password_",
+    "auth_",
+    "authorization_",
+)
 
 # SQLite database file path
 CACHE_DB_PATH = os.path.join(os.path.dirname(__file__), "llm_cache.db")
@@ -69,12 +115,98 @@ def _init_cache_db():
 _init_cache_db()
 
 
+def _is_sensitive_param_key(key: str) -> bool:
+    """Return True when a key likely contains credentials or auth material."""
+    key_lower = key.lower()
+    if key_lower in SENSITIVE_PARAM_EXACT:
+        return True
+    if "authorization" in key_lower:
+        return True
+    if key_lower.endswith(SENSITIVE_PARAM_SUFFIXES):
+        return True
+    return key_lower.startswith(SENSITIVE_PARAM_PREFIXES)
+
+
+def _normalize_nested_data(value: Any, redact_sensitive: bool) -> Any:
+    """Normalize nested values for deterministic serialization and optional redaction."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for raw_key, raw_value in sorted(value.items(), key=lambda item: str(item[0])):
+            key = str(raw_key)
+            if _is_sensitive_param_key(key):
+                if redact_sensitive:
+                    normalized[key] = REDACTED
+                continue
+            normalized[key] = _normalize_nested_data(raw_value, redact_sensitive=redact_sensitive)
+        return normalized
+
+    if isinstance(value, (list, tuple)):
+        return [_normalize_nested_data(item, redact_sensitive=redact_sensitive) for item in value]
+
+    return str(value)
+
+
+def _normalize_cache_params(params: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Drop volatile/runtime params and sensitive keys from cache key generation."""
+    normalized: dict[str, Any] = {}
+    for raw_key, raw_value in sorted((params or {}).items(), key=lambda item: str(item[0])):
+        key = str(raw_key)
+        if key in CACHE_KEY_IGNORED_PARAMS:
+            continue
+        if _is_sensitive_param_key(key):
+            continue
+        normalized[key] = _normalize_nested_data(raw_value, redact_sensitive=False)
+    return normalized
+
+
+def _build_langfuse_model_parameters(params: dict[str, Any], api_route: str) -> dict[str, Any]:
+    """Build Langfuse-safe model parameters without sensitive values."""
+    langfuse_params: dict[str, Any] = {}
+    for raw_key, raw_value in params.items():
+        key = str(raw_key)
+        if key in LANGFUSE_IGNORED_PARAMS:
+            continue
+        if _is_sensitive_param_key(key):
+            continue
+        if isinstance(raw_value, (str, int, float, bool)):
+            langfuse_params[key] = raw_value
+            continue
+        if isinstance(raw_value, (dict, list, tuple)):
+            normalized = _normalize_nested_data(raw_value, redact_sensitive=True)
+            langfuse_params[key] = json.dumps(normalized, sort_keys=True)
+    langfuse_params["api_route"] = api_route
+    return langfuse_params
+
+
 def _generate_cache_key(
     llm_cfg: LLMDefinition,
     messages: list[dict[str, Any]],
     params: Optional[dict[str, Any]],
 ) -> str:
     """Generates a unique cache key based on LLM config, messages, and parameters."""
+    key_data = {
+        "llm_name": llm_cfg.name,
+        "model": llm_cfg.model,
+        "messages": _normalize_nested_data(messages, redact_sensitive=False),
+        "params": _normalize_cache_params(params),
+    }
+    json_string = json.dumps(key_data, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(json_string.encode("utf-8")).hexdigest()
+
+
+def _generate_legacy_cache_key(
+    llm_cfg: LLMDefinition,
+    messages: list[dict[str, Any]],
+    params: Optional[dict[str, Any]],
+) -> str:
+    """
+    Legacy cache key generator retained for backwards-compatible cache reads.
+
+    This matches the previous behavior that directly hashed sorted raw params.
+    """
     key_data = {
         "llm_name": llm_cfg.name,
         "model": llm_cfg.model,
@@ -227,11 +359,20 @@ async def _call_lite_llm(
         params["stream_options"] = {"include_usage": True}
 
     # Generate cache key using sanitized messages for consistency
-    cache_key = _generate_cache_key(
-        llm_def, sanitized_messages, {**params, "_api_route": api_route}
-    )
+    cache_key_input = {**params, "_api_route": api_route}
+    cache_key = _generate_cache_key(llm_def, sanitized_messages, cache_key_input)
+    legacy_cache_key = _generate_legacy_cache_key(llm_def, sanitized_messages, cache_key_input)
     if config.service.cache_enabled:
         cached_response = _get_cached_response(cache_key)
+        if not cached_response and legacy_cache_key != cache_key:
+            cached_response = _get_cached_response(legacy_cache_key)
+            if cached_response:
+                logger.info(
+                    "Legacy cache hit for %s with key %s... Rewriting using normalized key.",
+                    llm_def.name,
+                    legacy_cache_key[:8],
+                )
+                _cache_response(cache_key, sanitized_messages, cached_response)
         if cached_response:
             logger.info(f"Cache hit for {llm_def.name} with key {cache_key[:8]}...")
 
@@ -256,16 +397,7 @@ async def _call_lite_llm(
 
             # Create Langfuse generation for cache hit
             if trace:
-                # Filter params for Langfuse
-                langfuse_params = {}
-                for k, v in params.items():
-                    if k == "messages":
-                        continue
-                    if isinstance(v, (str, int, float, bool)):
-                        langfuse_params[k] = v
-                    elif isinstance(v, (dict, list)):
-                        langfuse_params[k] = json.dumps(v)
-                langfuse_params["api_route"] = api_route
+                langfuse_params = _build_langfuse_model_parameters(params, api_route)
 
                 generation = trace.generation(
                     name=generation_name,
@@ -321,19 +453,7 @@ async def _call_lite_llm(
 
     generation = None
     if trace:
-        # Filter out complex types that Langfuse can't handle (dicts, objects)
-        # Only include primitive types: str, int, float, bool
-        langfuse_params = {}
-        for k, v in params.items():
-            if k == "messages":
-                continue  # Skip messages as they're passed separately
-            # Only include primitive types that Langfuse accepts
-            if isinstance(v, (str, int, float, bool)):
-                langfuse_params[k] = v
-            elif isinstance(v, (dict, list)):
-                # Convert dicts and lists to JSON string for Langfuse
-                langfuse_params[k] = json.dumps(v)
-        langfuse_params["api_route"] = api_route
+        langfuse_params = _build_langfuse_model_parameters(params, api_route)
 
         generation = trace.generation(
             name=generation_name,

@@ -49,6 +49,51 @@ class TestCacheDatabase:
 
         assert key1 != key2
 
+    def test_generate_cache_key_different_for_different_messages(self, sample_llm_definition):
+        """Different message content must always produce different cache keys."""
+        params = {"temperature": 0.7}
+        messages1 = [{"role": "user", "content": "hello"}]
+        messages2 = [{"role": "user", "content": "hello there"}]
+
+        key1 = _generate_cache_key(sample_llm_definition, messages1, params)
+        key2 = _generate_cache_key(sample_llm_definition, messages2, params)
+
+        assert key1 != key2
+
+    def test_generate_cache_key_ignores_runtime_and_sensitive_params(
+        self, sample_llm_definition, sample_request_messages
+    ):
+        """Runtime metadata and secrets should not affect cache-key identity."""
+        params1 = {
+            "temperature": 0.7,
+            "timeout": 30,
+            "num_retries": 2,
+            "api_key": "sk-first",
+            "messages": [{"role": "user", "content": "shadow copy"}],
+            "_api_route": "completion",
+            "extra_headers": {
+                "Authorization": "Bearer top-secret-1",
+                "X-Client": "mom-service",
+            },
+        }
+        params2 = {
+            "temperature": 0.7,
+            "timeout": 120,
+            "num_retries": 9,
+            "api_key": "sk-second",
+            "messages": [{"role": "user", "content": "different shadow copy"}],
+            "_api_route": "completion",
+            "extra_headers": {
+                "Authorization": "Bearer top-secret-2",
+                "X-Client": "mom-service",
+            },
+        }
+
+        key1 = _generate_cache_key(sample_llm_definition, sample_request_messages, params1)
+        key2 = _generate_cache_key(sample_llm_definition, sample_request_messages, params2)
+
+        assert key1 == key2
+
 
 class TestCacheOperations:
     """Tests for cache get/set operations"""
@@ -274,6 +319,63 @@ class TestCallLiteLLM:
             assert result is not None
             # Verify that trace.generation was called
             mock_langfuse_client.trace.return_value.generation.assert_called_once()
+
+    @respx.mock
+    async def test_call_litellm_trace_does_not_include_api_key(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+        mock_litellm_response,
+        mock_langfuse_client,
+    ):
+        """Langfuse model parameters must not leak credentials."""
+        llm_definition = LLMDefinition(
+            name="trace-safe-llm",
+            model="gpt-4",
+            api_key_env="OPENAI_API_KEY",
+            params={
+                "temperature": 0.2,
+                "extra_headers": {
+                    "Authorization": "Bearer secret-header-token",
+                    "X-Client": "mom-service",
+                },
+            },
+        )
+
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion:
+            mock_acompletion.return_value = mock_litellm_response
+
+            params = LLMCallParams(
+                model=llm_definition.model,
+                messages=sample_request_messages,
+                stream=False,
+            )
+            result_gen = call_llm(
+                llm_definition,
+                params,
+                timeout=30,
+                config=sample_mom_config,
+                options={
+                    "request_id": "trace-safety-test",
+                    "mom_model_name": "test-model",
+                    "call_type": "fanout",
+                    "trace": mock_langfuse_client.trace.return_value,
+                    "generation_name": "trace-safe-generation",
+                },
+            )
+
+            result = await anext(result_gen)
+            assert result is not None
+
+            generation_kwargs = mock_langfuse_client.trace.return_value.generation.call_args.kwargs
+            model_parameters = generation_kwargs["model_parameters"]
+
+            assert "api_key" not in model_parameters
+            assert "extra_headers" in model_parameters
+            assert "secret-header-token" not in model_parameters["extra_headers"]
+            assert "[REDACTED]" in model_parameters["extra_headers"]
 
     @respx.mock
     async def test_call_auto_api_mode_with_xai_tools_uses_completion_api(
