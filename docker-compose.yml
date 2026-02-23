@@ -28,6 +28,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - UVICORN_APP=mom_service.main:app
+      - UVICORN_PORT=8000
+      - UVICORN_RELOAD=true
       # Add other provider keys as needed
       # - AZURE_API_KEY=${AZURE_API_KEY:-}
       # - COHERE_API_KEY=${COHERE_API_KEY:-}
@@ -48,7 +51,6 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: mom-reporting
-    command: uvicorn mom_service.reporting.main:app --host 0.0.0.0 --port 8001
     ports:
       - "8001:8001"
     volumes:
@@ -59,6 +61,9 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - API_TOKEN=${API_TOKEN:-your-secret-token-here}
+      - UVICORN_APP=mom_service.reporting.main:app
+      - UVICORN_PORT=8001
+      - UVICORN_RELOAD=true
     restart: unless-stopped
     depends_on:
       - redis

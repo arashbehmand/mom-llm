@@ -35,10 +35,12 @@ RUN useradd --create-home --shell /bin/bash appuser && \
 
 # Copy application code
 COPY --chown=appuser:appuser ./mom_service ./mom_service
+COPY --chown=appuser:appuser ./docker/start-uvicorn.sh /usr/local/bin/start-uvicorn.sh
 # Note: config.yaml should be mounted as a volume or provided via environment
 
 # Create directories for databases with correct permissions
 RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
+RUN chmod +x /usr/local/bin/start-uvicorn.sh
 
 # Set environment variables
 ENV PYTHONPATH=/app \
@@ -55,5 +57,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)" || exit 1
 
-# Production command (no --reload)
-CMD ["uvicorn", "mom_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+ENTRYPOINT ["/usr/local/bin/start-uvicorn.sh"]

@@ -158,8 +158,8 @@ llm_definitions:
       params:
         web_search_options:
           search_context_size: high
-- base_name: g3p
-  model: gemini/gemini-3-pro-preview
+- base_name: g31p
+  model: gemini/gemini-3.1-pro-preview
   variants:
   - suffix: l
     params:
@@ -172,29 +172,34 @@ llm_definitions:
       params:
         web_search_options:
           search_context_size: high
-- base_name: cl45st
-  model: anthropic/claude-sonnet-4-5-20250929
+- base_name: cl46st
+  model: anthropic/claude-sonnet-4-6
   variants:
   - suffix: l
     params:
+      reasoning_effort: low
       thinking:
-        type: enabled
-        budget_tokens: 2048
+        type: adaptive
   - suffix: m
     params:
+      reasoning_effort: medium
       thinking:
-        type: enabled
-        budget_tokens: 8192
+        type: adaptive
   - suffix: h
     params:
+      reasoning_effort: high
       thinking:
-        type: enabled
-        budget_tokens: 16000
+        type: adaptive
     variants:
     - suffix: o
       params:
         web_search_options:
           search_context_size: high
+  - suffix: am
+    params:
+      reasoning_effort: max
+      thinking:
+        type: adaptive
 - base_name: cl45hk
   model: anthropic/claude-haiku-4-5-20251001
   variants:
@@ -203,52 +208,34 @@ llm_definitions:
       thinking:
         type: enabled
         budget_tokens: 4096
-- base_name: cl45op
-  model: anthropic/claude-opus-4-5-20251101
-  variants:
-  - suffix: l
-    params:
-      thinking:
-        type: enabled
-        budget_tokens: 4096
-  - suffix: m
-    params:
-      thinking:
-        type: enabled
-        budget_tokens: 10000
-  - suffix: h
-    params:
-      thinking:
-        type: enabled
-        budget_tokens: 16000
-    variants:
-    - suffix: o
-      params:
-        web_search_options:
-          search_context_size: high
 - base_name: cl46op
   model: anthropic/claude-opus-4-6
   variants:
   - suffix: l
     params:
+      reasoning_effort: low
       thinking:
-        type: enabled
-        budget_tokens: 4096
+        type: adaptive
   - suffix: m
     params:
+      reasoning_effort: medium
       thinking:
-        type: enabled
-        budget_tokens: 10000
+        type: adaptive
   - suffix: h
     params:
+      reasoning_effort: high
       thinking:
-        type: enabled
-        budget_tokens: 16000
+        type: adaptive
     variants:
     - suffix: o
       params:
         web_search_options:
           search_context_size: high
+  - suffix: am
+    params:
+      reasoning_effort: max
+      thinking:
+        type: adaptive
 - base_name: grok4
   model: xai/grok-4-0709
   variants:
@@ -406,7 +393,7 @@ models:
     llms_to_query:
       - "oai52:l"
       - "oaio4m:l"
-      - "g3p"
+      - "g31p"
       - "cl46op:l"
       - "grok41fr"
       - "qwn3max"
@@ -421,7 +408,7 @@ models:
     llms_to_query:
       - "oai52:m"
       - "oaio4m:h"
-      - "g3p:h"
+      - "g31p:h"
       - "g3f:h"
       - "cl46op:m"
       - "grok41fr"
@@ -429,7 +416,7 @@ models:
       - "glm5"
       - "qwn3max"
       - "ernie45t"
-    concluding_llm: "g3p"
+    concluding_llm: "g31p"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -438,18 +425,18 @@ models:
     llms_to_query:
       - "oai52:h"
       - "oaio4m:h"
-      - "g3p:h"
+      - "g31p:h"
       - "g25p:h"
       - "g3f:h"
       - "cl46op:h"
-      - "cl45st:h"
+      - "cl46st:h"
       - "grok41fr"
       - "qwn3max"
       - "k25"
       - "glm5"
       - "ernie45t"
       - "m2"
-    concluding_llm: "g3p:h"
+    concluding_llm: "g31p:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -457,11 +444,12 @@ models:
   - name: "emom"
     llms_to_query:
       - "oai52pro:xh"
-      - "g3p:h"
-      - "cl46op:h"
+      - "cl46op:am"
+      - "cl46st:am"
+      - "g31p:h"
       - "grok41fr"
       - "k25"
-    concluding_llm: "g3p:h"
+    concluding_llm: "g31p:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -470,12 +458,12 @@ models:
     llms_to_query:
       - "oai52cdx:m"
       - "oaio4m:m"
-      - "g3p:h"
+      - "g31p:h"
       - "cl46op:m"
       - "grokcode"
       - "qwn3coder"
       - "k25"
-    concluding_llm: "g3p"
+    concluding_llm: "g31p"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -485,7 +473,7 @@ models:
       - "oai52:m"
       - "g3f:h"
       - "cl46op:m"
-      - "cl45st:l"
+      - "cl46st:l"
       - "grok41fr"
       - "qwn3max"
       - "ernie45t"
@@ -497,10 +485,10 @@ models:
   - name: "mom-oh"
     llms_to_query:
       - "oaio4mdr-o"
-      - "g3p:h:o"
+      - "g31p:h:o"
       - "g25p:h:o"
       - "cl46op:h:o"
-      - "cl45st:h:o"
+      - "cl46st:h:o"
       - "grok41fr:o"
       - "plx-snrrp-o"
       - "plx-dr-o"
@@ -514,7 +502,7 @@ models:
       - "oai52cdx:xh"
       - "oai52:xh"
       - "oaio4m:h"
-      - "g3p:h"
+      - "g31p:h"
       - "g25p:h"
       - "cl46op:h"
       - "grokcode"
@@ -555,6 +543,20 @@ models:
     concluding_llm: "g3f:m"
     concluding_prompt: "synth_default"
     include_thinking_context: true
+
+  # - name: "mom-test-claude"
+  #   llms_to_query:
+  #     - "cl46op:l"
+  #     - "cl46op:m"
+  #     - "cl46op:h"
+  #     - "cl46op:am"
+  #     - "cl46st:l"
+  #     - "cl46st:m"
+  #     - "cl46st:h"
+  #     - "cl46st:am"
+  #   concluding_llm: "cl45hk"
+  #   concluding_prompt: "synth_default"
+  #   include_thinking_context: true
 
 # ==============================================================================
 # Service Configuration
