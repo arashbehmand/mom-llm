@@ -2,7 +2,19 @@
 Unit tests for mom_service.core_logic module
 """
 
-from mom_service.core_logic import _calculate_and_log_costs, _prepare_concluding_messages
+import asyncio
+from builtins import anext
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from mom_service.config import LLMDefinition, ModelConfig
+from mom_service.core_logic import (
+    _calculate_and_log_costs,
+    _perform_fanout_calls,
+    _prepare_concluding_messages,
+)
 from mom_service.endpoints.models import ThinkingContextItem, UsageInfo
 
 
@@ -262,3 +274,76 @@ class TestPrepareConcludingMessages:
         # (or second to last if there is a concluding prompt)
         assert result[-1]["role"] == "user"
         assert result[-1]["content"] == concluding_instruction
+
+
+class TestFanoutProgressEvents:
+    """Tests for fanout progress event behavior."""
+
+    @pytest.mark.asyncio
+    async def test_fanout_completion_events_continue_after_consumer_disconnect(
+        self, sample_mom_config
+    ):
+        """Fanout completion events should still publish after stream consumer disconnects."""
+        llm_map = {
+            "llm1": LLMDefinition(name="llm1", model="gpt-4", api_key_env="OPENAI_API_KEY"),
+            "llm2": LLMDefinition(name="llm2", model="gpt-4o-mini", api_key_env="OPENAI_API_KEY"),
+        }
+        model_conf = ModelConfig(
+            name="test-model",
+            llms_to_query=["llm1", "llm2"],
+            concluding_llm="llm1",
+            include_thinking_context=True,
+        )
+        request_messages = [{"role": "user", "content": "What is AI?"}]
+        redis_publisher = SimpleNamespace(enabled=True, publish=AsyncMock())
+
+        def _mock_response(content: str, total_tokens: int) -> MagicMock:
+            response = MagicMock()
+            response.choices = [MagicMock()]
+            response.choices[0].message = MagicMock()
+            response.choices[0].message.content = content
+            response.usage = MagicMock()
+            response.usage.prompt_tokens = max(total_tokens // 3, 1)
+            response.usage.completion_tokens = max(total_tokens - response.usage.prompt_tokens, 1)
+            response.usage.total_tokens = total_tokens
+            response._is_cached = False  # pylint: disable=protected-access
+            return response
+
+        async def _fast_response_gen(*_, **__):
+            await asyncio.sleep(0.01)
+            yield _mock_response("fast-response", 30)
+
+        async def _slow_response_gen(*_, **__):
+            await asyncio.sleep(0.15)
+            yield _mock_response("slow-response", 45)
+
+        with patch("mom_service.core_logic._call_lite_llm") as mock_call:
+
+            def _side_effect(llm_def, *_, **__):
+                if llm_def.name == "llm1":
+                    return _fast_response_gen()
+                return _slow_response_gen()
+
+            mock_call.side_effect = _side_effect
+
+            fanout_gen = _perform_fanout_calls(
+                model_conf,
+                llm_map,
+                request_messages,
+                timeout=30,
+                config=sample_mom_config,
+                options={"request_id": "rid-disconnect", "redis_publisher": redis_publisher},
+            )
+
+            # Simulate a client consuming one streamed item and then disconnecting.
+            await anext(fanout_gen)
+            await fanout_gen.aclose()
+
+            # Allow detached fanout tasks to finish and publish completion events.
+            await asyncio.sleep(0.25)
+
+        published_events = [call.args[0] for call in redis_publisher.publish.await_args_list]
+        fanout_complete = [event for event in published_events if event.type == "fanout_complete"]
+
+        assert len(fanout_complete) == 2
+        assert {event.data["model"] for event in fanout_complete} == {"llm1", "llm2"}

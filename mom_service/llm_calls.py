@@ -310,6 +310,28 @@ def _select_api_route(llm_def: LLMDefinition, params: dict[str, Any]) -> str:
     return COMPLETION_API_ROUTE
 
 
+def _extract_stream_error_message(chunk_dict: dict[str, Any]) -> str | None:
+    """Extract provider error details from a streaming chunk when present."""
+    error_payload = chunk_dict.get("error")
+    if not error_payload:
+        return None
+
+    if isinstance(error_payload, dict):
+        error_message = (
+            error_payload.get("message")
+            or error_payload.get("detail")
+            or error_payload.get("error")
+        )
+        error_type = error_payload.get("type")
+        if error_type and error_message:
+            return f"{error_type}: {error_message}"
+        if error_message:
+            return str(error_message)
+        return str(error_payload)
+
+    return str(error_payload)
+
+
 async def _call_lite_llm(
     llm_def: LLMDefinition,
     messages: list[dict[str, Any]],
@@ -488,6 +510,13 @@ async def _call_lite_llm(
                         }
                     except Exception:
                         chunk_dict = {"choices": [{"delta": {"content": str(chunk)}}]}
+
+                stream_error_message = _extract_stream_error_message(chunk_dict)
+                if stream_error_message:
+                    raise RuntimeError(
+                        "Streaming call to "
+                        f"{llm_def.name} returned provider error: {stream_error_message}"
+                    )
 
                 # Capture usage info if present in chunk (final chunk contains usage)
                 # Only use it if it has non-zero values (final chunk)

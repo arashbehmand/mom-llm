@@ -5,7 +5,7 @@ Integration tests for mom_service API endpoints
 # pylint: disable=redefined-outer-name,too-many-arguments,too-many-positional-arguments
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -166,6 +166,72 @@ class TestOpenAIEndpoints:
         response = test_client.post("/v1/chat/completions", json=request_data, headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["X-MoM-Progress-Url"].startswith("http://localhost:8001/progress/")
+
+    @patch("mom_service.main.get_mom_model_config")
+    @patch("mom_service.endpoints.openai_v1._publish_progress_event", new_callable=AsyncMock)
+    @patch("mom_service.main._process_mom_chat_request")
+    def test_chat_completions_streaming_error_publishes_progress_error_event(
+        self,
+        mock_process,
+        mock_publish_progress_event,
+        mock_get_config,
+        test_client,
+        auth_headers,
+    ):
+        mock_process.side_effect = RuntimeError("streaming failed")
+        mock_get_config.return_value = MagicMock(
+            name="test-mom-model",
+            llms_to_query=["test-llm"],
+            concluding_llm="test-concluding-llm",
+            include_thinking_context=True,
+        )
+
+        request_data = {
+            "model": "test-mom-model",
+            "messages": [{"role": "user", "content": "ping"}],
+            "stream": True,
+        }
+        response = test_client.post("/v1/chat/completions", json=request_data, headers=auth_headers)
+
+        assert response.status_code == 200
+        mock_publish_progress_event.assert_awaited_once()
+        call_args = mock_publish_progress_event.await_args.args
+        assert call_args[1] == "error"
+        assert call_args[2]["stage"] == "streaming"
+        assert "streaming failed" in call_args[2]["error"]
+
+    @patch("mom_service.main.get_mom_model_config")
+    @patch("mom_service.endpoints.openai_v1._publish_progress_event", new_callable=AsyncMock)
+    @patch("mom_service.main._process_mom_chat_request")
+    def test_chat_completions_non_streaming_error_publishes_progress_error_event(
+        self,
+        mock_process,
+        mock_publish_progress_event,
+        mock_get_config,
+        test_client,
+        auth_headers,
+    ):
+        mock_process.side_effect = RuntimeError("non-streaming failed")
+        mock_get_config.return_value = MagicMock(
+            name="test-mom-model",
+            llms_to_query=["test-llm"],
+            concluding_llm="test-concluding-llm",
+            include_thinking_context=True,
+        )
+
+        request_data = {
+            "model": "test-mom-model",
+            "messages": [{"role": "user", "content": "ping"}],
+            "stream": False,
+        }
+        response = test_client.post("/v1/chat/completions", json=request_data, headers=auth_headers)
+
+        assert response.status_code == 500
+        mock_publish_progress_event.assert_awaited_once()
+        call_args = mock_publish_progress_event.await_args.args
+        assert call_args[1] == "error"
+        assert call_args[2]["stage"] == "non_streaming"
+        assert "non-streaming failed" in call_args[2]["error"]
 
     def test_chat_completions_model_not_found(self, test_client, auth_headers):
         """Test POST /v1/chat/completions with non-existent model"""

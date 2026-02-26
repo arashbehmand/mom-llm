@@ -145,6 +145,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
         # Store in request state
         request.state.request_id = request_id
+        request.state.redis_publisher = redis_publisher
 
         # Set in context var for logging
         request_id_var.set(request_id)
@@ -487,6 +488,19 @@ async def _process_mom_chat_request(
                         status_message="All fan-out calls failed or returned no usable content.",
                     )
                 if not intermediate_thinking_context and model_conf.llms_to_query:
+                    if redis_publisher and redis_publisher.enabled:
+                        await redis_publisher.publish(
+                            MoMEvent(
+                                type="error",
+                                request_id=request_id,
+                                timestamp=time.time(),
+                                data={
+                                    "error": (
+                                        "All fan-out calls failed or returned no usable content."
+                                    )
+                                },
+                            )
+                        )
                     error_data = {
                         "id": response_id,
                         "object": "chat.completion.chunk",
@@ -526,6 +540,19 @@ async def _process_mom_chat_request(
                     trace.update(
                         level="ERROR",
                         status_message=f"Concluding LLMDef '{model_conf.concluding_llm}' not found.",
+                    )
+                if redis_publisher and redis_publisher.enabled:
+                    await redis_publisher.publish(
+                        MoMEvent(
+                            type="error",
+                            request_id=request_id,
+                            timestamp=time.time(),
+                            data={
+                                "error": (
+                                    f"Concluding LLM definition '{model_conf.concluding_llm}' not found."
+                                )
+                            },
+                        )
                     )
                 error_data = {
                     "id": response_id,

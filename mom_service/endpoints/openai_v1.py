@@ -11,16 +11,19 @@ Endpoints:
 All endpoints require Bearer token authentication via the Authorization header.
 """
 
+import asyncio
 import json
 import os
 import time
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..auth import verify_bearer_token
 from ..config import load_config
+from ..events import MoMEvent
 from .models import (
     ChatMessage,
     OpenAIChatCompletionRequest,
@@ -38,6 +41,23 @@ def _build_progress_url(request: Request) -> str | None:
     if not reporting_base_url or not request_id:
         return None
     return f"{reporting_base_url}/progress/{request_id}"
+
+
+async def _publish_progress_event(request: Request, event_type: str, data: dict[str, Any]) -> None:
+    """Publish progress/status events for reporting when Redis publisher is available."""
+    request_id = getattr(request.state, "request_id", None)
+    redis_publisher = getattr(request.state, "redis_publisher", None)
+    if not request_id or not redis_publisher or not redis_publisher.enabled:
+        return
+
+    await redis_publisher.publish(
+        MoMEvent(
+            type=event_type,
+            request_id=request_id,
+            timestamp=time.time(),
+            data=data,
+        )
+    )
 
 
 @openai_router.get("/models")
@@ -83,6 +103,7 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
             response_id = f"mom-oai-{req_data.model}-{str(uuid.uuid4())}"
             complete_content = ""
             trace_obj = None
+            send_done = True
 
             try:
                 the_generator = await _process_mom_chat_request(
@@ -141,8 +162,48 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
                     except Exception as e:
                         logger.error(f"Failed to update Langfuse trace for streaming response: {e}")
 
+            except asyncio.CancelledError:
+                send_done = False
+                logger.info(
+                    "Streaming client disconnected. request_id=%s",
+                    getattr(request.state, "request_id", "unknown"),
+                )
+                await _publish_progress_event(
+                    request,
+                    "request_aborted",
+                    {
+                        "reason": "Client disconnected before completion",
+                        "stage": "streaming",
+                    },
+                )
+                if trace_obj:
+                    try:
+                        trace_obj.update(
+                            level="ERROR",
+                            status_message="Client disconnected before streaming completed",
+                        )
+                    except Exception as trace_error:
+                        logger.error(
+                            "Failed to update Langfuse trace on disconnect: %s", trace_error
+                        )
+                raise
             except Exception as e:
                 logger.error(f"Error in streaming response generator: {str(e)}", exc_info=True)
+                if trace_obj:
+                    try:
+                        trace_obj.update(
+                            level="ERROR",
+                            status_message=f"Streaming request failed: {str(e)}",
+                        )
+                    except Exception as trace_error:
+                        logger.error(
+                            "Failed to update Langfuse trace on streaming error: %s", trace_error
+                        )
+                await _publish_progress_event(
+                    request,
+                    "error",
+                    {"error": str(e), "stage": "streaming"},
+                )
                 error_data = {
                     "id": response_id,
                     "object": "chat.completion.chunk",
@@ -151,7 +212,8 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
                     "error": {"message": str(e), "type": "server_error"},
                 }
                 yield f"data: {json.dumps(error_data)}\n\n"
-            yield "data: [DONE]\n\n"
+            if send_done:
+                yield "data: [DONE]\n\n"
 
         response = StreamingResponse(event_stream(), media_type="text/event-stream")
         progress_url = _build_progress_url(request)
@@ -194,6 +256,22 @@ async def chat_completions_openai(req_data: OpenAIChatCompletionRequest, request
     except HTTPException:
         raise
     except Exception as e:
+        trace_obj = getattr(request.state, "trace_obj", None)
+        if trace_obj:
+            try:
+                trace_obj.update(
+                    level="ERROR",
+                    status_message=f"Non-streaming request failed: {str(e)}",
+                )
+            except Exception as trace_error:
+                logger.error(
+                    "Failed to update Langfuse trace on non-streaming error: %s", trace_error
+                )
+        await _publish_progress_event(
+            request,
+            "error",
+            {"error": str(e), "stage": "non_streaming"},
+        )
         raise HTTPException(status_code=500, detail={"message": str(e), "type": "server_error"})
     response = JSONResponse(content=resp_payload)
     progress_url = _build_progress_url(request)

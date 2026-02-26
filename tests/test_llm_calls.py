@@ -275,6 +275,67 @@ class TestCallLiteLLM:
             assert "API Error" in str(exc_info.value)
 
     @respx.mock
+    async def test_call_litellm_streaming_error_chunk_marks_langfuse_error(
+        self,
+        sample_llm_definition,
+        sample_request_messages,
+        sample_mom_config,
+        mock_langfuse_client,
+    ):
+        """Provider error chunks in streaming mode must be marked as Langfuse errors."""
+
+        class _ErrorChunkStream:
+            def __init__(self):
+                self._sent_error = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self._sent_error:
+                    raise StopAsyncIteration
+                self._sent_error = True
+                return {"error": {"type": "provider_error", "message": "upstream outage"}}
+
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion:
+            mock_acompletion.return_value = _ErrorChunkStream()
+
+            params = LLMCallParams(
+                model=sample_llm_definition.model,
+                messages=sample_request_messages,
+                temperature=(
+                    sample_llm_definition.params.get("temperature")
+                    if isinstance(sample_llm_definition.params, dict)
+                    else None
+                ),
+                stream=True,
+            )
+            result_gen = call_llm(
+                sample_llm_definition,
+                params,
+                timeout=30,
+                config=sample_mom_config,
+                options={
+                    "request_id": "test-stream-error",
+                    "mom_model_name": "test-model",
+                    "call_type": "concluding",
+                    "trace": mock_langfuse_client.trace.return_value,
+                    "generation_name": "test-concluding-stream",
+                },
+            )
+
+            with pytest.raises(RuntimeError, match="upstream outage"):
+                await anext(result_gen)
+
+            generation = mock_langfuse_client.trace.return_value.generation.return_value
+            generation.end.assert_called_once()
+            end_kwargs = generation.end.call_args.kwargs
+            assert end_kwargs["level"] == "ERROR"
+            assert "upstream outage" in end_kwargs["status_message"]
+
+    @respx.mock
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     async def test_call_litellm_with_trace(
         self,

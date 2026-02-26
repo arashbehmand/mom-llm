@@ -77,6 +77,11 @@ async def _perform_fanout_calls(
     options (dict) may contain 'trace' and 'request_id'.
     """
 
+    options = options or {}
+    trace = options.get("trace")
+    request_id = options.get("request_id", "unknown")
+    redis_publisher = options.get("redis_publisher")
+
     # Helper to wrap the coroutine and capture the LLMDefinition
     async def call_and_return_with_def(
         llm_def: LLMDefinition, call_coroutine: AsyncGenerator[Any, None]
@@ -84,15 +89,64 @@ async def _perform_fanout_calls(
         try:
             # For non-streaming fanout, we expect one result or nothing on error
             result = await anext(call_coroutine, None)
-            return (llm_def, result)
         except Exception as e:
             # If the LLM call itself raises an exception, capture it here
-            return (llm_def, e)
+            result = e
 
-    options = options or {}
-    trace = options.get("trace")
-    request_id = options.get("request_id", "unknown")
-    redis_publisher = options.get("redis_publisher")
+        # Publish completion from the task itself so progress events continue
+        # even when the upstream response stream is cancelled/disconnected.
+        if redis_publisher and redis_publisher.enabled:
+            import time
+
+            llm_name = llm_def.get("name") if isinstance(llm_def, dict) else llm_def.name
+            status = "success"
+            error_msg = None
+            tokens = 0
+
+            if isinstance(result, Exception):
+                status = "error"
+                error_msg = str(result)
+            elif result is None:
+                status = "error"
+                error_msg = "No response returned"
+            else:
+                has_choices = hasattr(result, "choices") and bool(result.choices)
+                has_message = (
+                    has_choices
+                    and hasattr(result.choices[0], "message")
+                    and bool(result.choices[0].message)
+                )
+                has_content = (
+                    has_message
+                    and hasattr(result.choices[0].message, "content")
+                    and result.choices[0].message.content is not None
+                )
+                if not (has_choices and has_message and has_content):
+                    status = "warning"
+                    error_msg = "Empty or malformed response"
+
+                usage_obj = getattr(result, "usage", None)
+                if isinstance(usage_obj, dict):
+                    tokens = usage_obj.get("total_tokens", 0) or 0
+                else:
+                    tokens = getattr(usage_obj, "total_tokens", 0) or 0
+
+            await redis_publisher.publish(
+                MoMEvent(
+                    type="fanout_complete",
+                    request_id=request_id,
+                    timestamp=time.time(),
+                    data={
+                        "model": llm_name,
+                        "status": status,
+                        "error": error_msg,
+                        "duration_ms": 0,  # We don't track individual fanout duration here yet
+                        "tokens": tokens,
+                    },
+                )
+            )
+
+        return (llm_def, result)
 
     # Filter models based on multimodal capability
     from .multimodal_utils import filter_multimodal_capable_models
@@ -175,8 +229,6 @@ async def _perform_fanout_calls(
         ld_fanout, result_or_exception = await future
         content_str = ""
         current_usage_info = UsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-        status = "success"
-        error_msg = None
 
         # Handle both dict and object access for ld_fanout
         ld_fanout_name = ld_fanout.get("name") if isinstance(ld_fanout, dict) else ld_fanout.name
@@ -188,13 +240,9 @@ async def _perform_fanout_calls(
         if isinstance(result_or_exception, Exception):
             content_str = f"Error: Call to {ld_fanout_model} failed. Details: {html.escape(str(result_or_exception))}"
             logger.error(f"Fan-out call to {ld_fanout_name} failed: {result_or_exception}")
-            status = "error"
-            error_msg = str(result_or_exception)
         elif result_or_exception is None:
             content_str = f"Error: Call to {ld_fanout_model} returned no response (likely due to an internal error or timeout)."
             logger.error(f"Fan-out call to {ld_fanout_name} returned None.")
-            status = "error"
-            error_msg = "No response returned"
         else:
             current_res_obj_fanout = result_or_exception
             has_choices = hasattr(current_res_obj_fanout, "choices") and bool(
@@ -225,27 +273,6 @@ async def _perform_fanout_calls(
                 content_str = (
                     f"Warning: Call to {ld_fanout_model} returned an empty or malformed response."
                 )
-                status = "warning"
-                error_msg = "Empty or malformed response"
-
-        # Publish fanout completion event
-        if redis_publisher and redis_publisher.enabled:
-            import time
-
-            await redis_publisher.publish(
-                MoMEvent(
-                    type="fanout_complete",
-                    request_id=request_id,
-                    timestamp=time.time(),
-                    data={
-                        "model": ld_fanout_name,
-                        "status": status,
-                        "error": error_msg,
-                        "duration_ms": 0,  # We don't track individual fanout duration here yet
-                        "tokens": current_usage_info.total_tokens if current_usage_info else 0,
-                    },
-                )
-            )
 
         yield ThinkingContextItem(
             model=ld_fanout_model, content=str(content_str), usage=current_usage_info

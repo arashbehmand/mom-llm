@@ -79,6 +79,42 @@ def test_apply_event_to_state_ignores_missing_request_id(clean_active_requests):
     assert not active_requests
 
 
+def test_apply_event_to_state_request_aborted_marks_client_dropped(clean_active_requests):
+    request_id = "req-drop"
+    apply_event_to_state(
+        active_requests,
+        {
+            "type": "request_start",
+            "request_id": request_id,
+            "timestamp": 100.0,
+            "data": {"model_requested": "mom", "num_messages": 1},
+        },
+    )
+    apply_event_to_state(
+        active_requests,
+        {
+            "type": "concluding_start",
+            "request_id": request_id,
+            "timestamp": 103.0,
+            "data": {"concluding_llm": "g25f"},
+        },
+    )
+    apply_event_to_state(
+        active_requests,
+        {
+            "type": "request_aborted",
+            "request_id": request_id,
+            "timestamp": 104.0,
+            "data": {"reason": "Client disconnected before completion"},
+        },
+    )
+
+    state = active_requests[request_id]
+    assert state["status"] == "client_dropped"
+    assert state["error"] == "Client disconnected before completion"
+    assert state["concluding"]["status"] == "aborted"
+
+
 @pytest.mark.asyncio
 async def test_get_progress_status_from_active_requests(clean_active_requests):
     request_id = "req-live"

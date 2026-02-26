@@ -110,9 +110,17 @@ def apply_event_to_state(
         if req_state["concluding"]:
             req_state["concluding"]["status"] = "completed"
 
+    elif event_type == "request_aborted":
+        req_state["status"] = "client_dropped"
+        req_state["error"] = data.get("reason", "Client disconnected")
+        if req_state["concluding"] and req_state["concluding"].get("status") == "processing":
+            req_state["concluding"]["status"] = "aborted"
+
     elif event_type == "error":
         req_state["status"] = "error"
         req_state["error"] = data.get("error")
+        if req_state["concluding"] and req_state["concluding"].get("status") == "processing":
+            req_state["concluding"]["status"] = "error"
 
 
 async def event_listener():
