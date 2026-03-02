@@ -215,7 +215,7 @@ class TestPrepareConcludingMessages:
 
     def test_prepare_messages_with_concluding_prompt(self):
         """Test message preparation with a custom concluding prompt"""
-        from mom_service.config import ModelConfig, MoMConfig, PromptDefinition, ServiceConfig
+        from mom_service.config import MoMConfig, PromptDefinition, ServiceConfig
 
         config = MoMConfig(
             llm_definitions=[],
@@ -276,7 +276,7 @@ class TestPrepareConcludingMessages:
         assert result[-1]["content"] == concluding_instruction
 
 
-class TestFanoutProgressEvents:
+class TestFanoutProgressEvents:  # pylint: disable=too-few-public-methods
     """Tests for fanout progress event behavior."""
 
     @pytest.mark.asyncio

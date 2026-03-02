@@ -167,7 +167,7 @@ async def event_listener():
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     # Startup
     logger.info("Reporting Service starting up...")
 

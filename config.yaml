@@ -325,11 +325,11 @@ llm_definitions:
 prompt_definitions:
   - name: "synth_default"
     content: |
-      Review all LLM replies found above, specifically after the `<<<<<<>>>>>>` separator, which follow the final user message. Treat each reply after that separator as a distinct expert response. Then proceed:
+      Review all LLM replies in this conversation. They appear as assistant-role messages in the turns immediately following the `<<<<<<>>>>>>` separator (which comes after the final user message). Treat each such assistant-role message after that separator as a distinct expert response. Then proceed:
 
-      1. Identify each response's key insight(s) and any conflicting points.  
-         - Note that not all experts are equally reliable.  
-         - If zero responses appear after the separator, state: "No expert responses were available."  
+      1. Identify each response's key insight(s) and any conflicting points.
+         - Note that not all experts are equally reliable.
+         - If no assistant-role messages appear after the separator, state: "No expert responses were available."
          - If only one response appears, relay its key insight.  
          - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
 
@@ -346,11 +346,11 @@ prompt_definitions:
 
   - name: "synth_creative"
     content: |
-      Review all LLM replies found above, specifically after the `<<<<<<>>>>>>` separator, which follow the final user message. Treat each reply after that separator as a distinct expert response. Then proceed:
+      Review all LLM replies in this conversation. They appear as assistant-role messages in the turns immediately following the `<<<<<<>>>>>>` separator (which comes after the final user message). Treat each such assistant-role message after that separator as a distinct expert response. Then proceed:
 
-      1. Identify each response's key insight(s) and any conflicting points.  
-         - Note that not all experts are equally reliable.  
-         - If zero responses appear after the separator, state: "No expert responses were available."  
+      1. Identify each response's key insight(s) and any conflicting points.
+         - Note that not all experts are equally reliable.
+         - If no assistant-role messages appear after the separator, state: "No expert responses were available."
          - If only one response appears, relay its key insight.  
          - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
       2. Synthesize a single, cohesive answer that:  
@@ -364,11 +364,11 @@ prompt_definitions:
 
   - name: "synth_search"
     content: |
-      Review all LLM replies found above, specifically after the `<<<<<<>>>>>>` separator, which follow the final user message. Treat each reply after that separator as a distinct expert response. Then proceed:
+      Review all LLM replies in this conversation. They appear as assistant-role messages in the turns immediately following the `<<<<<<>>>>>>` separator (which comes after the final user message). Treat each such assistant-role message after that separator as a distinct expert response. Then proceed:
 
-      1. Identify each response's key insight(s) and any conflicting points.  
-         - Note that not all experts are equally reliable.  
-         - If zero responses appear after the separator, state: "No expert responses were available."  
+      1. Identify each response's key insight(s) and any conflicting points.
+         - Note that not all experts are equally reliable.
+         - If no assistant-role messages appear after the separator, state: "No expert responses were available."
          - If only one response appears, relay its key insight.  
          - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
          - If the original question involved a request for up-to-date information, prioritize insights that reference recent data or events, you can use search tools yourself to gather more information.

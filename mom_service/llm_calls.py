@@ -429,7 +429,7 @@ async def _call_lite_llm(
                         "cached": True,
                         "api_route": api_route,
                     },
-                    input=messages,
+                    input=sanitized_messages,
                     model=llm_def.model,
                     model_parameters=langfuse_params,
                 )
@@ -480,7 +480,7 @@ async def _call_lite_llm(
         generation = trace.generation(
             name=generation_name,
             metadata={"call_type": call_type, "llm_name": llm_def.name, "api_route": api_route},
-            input=messages,
+            input=sanitized_messages,
             model=llm_def.model,
             model_parameters=langfuse_params,
         )
