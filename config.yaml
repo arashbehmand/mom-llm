@@ -8,20 +8,8 @@ llm_definitions:
   - suffix: h
     params:
       reasoning_effort: high
-- base_name: oai51
-  model: openai/gpt-5.1
-  variants:
-  - suffix: l
-    params:
-      reasoning_effort: low
-  - suffix: m
-    params:
-      reasoning_effort: medium
-  - suffix: h
-    params:
-      reasoning_effort: high
-- base_name: oai52
-  model: openai/gpt-5.2
+- base_name: oai54
+  model: openai/gpt-5.4
   variants:
   - suffix: l
     params:
@@ -35,8 +23,8 @@ llm_definitions:
   - suffix: xh
     params:
       reasoning_effort: xhigh
-- base_name: oai52pro
-  model: openai/gpt-5.2-pro
+- base_name: oai54pro
+  model: openai/gpt-5.4-pro
   variants:
   - suffix: h
     params:
@@ -56,18 +44,6 @@ llm_definitions:
   - suffix: xh
     params:
       reasoning_effort: xhigh
-- base_name: oai52cdx
-  model: openai/gpt-5.2-codex
-  variants:
-  - suffix: m
-    params:
-      reasoning_effort: medium
-  - suffix: h
-    params:
-      reasoning_effort: high
-  - suffix: xh
-    params:
-      reasoning_effort: xhigh
 - base_name: oai53cdx
   model: openai/gpt-5.3-codex
   variants:
@@ -77,9 +53,6 @@ llm_definitions:
   - suffix: h
     params:
       reasoning_effort: high
-  - suffix: xh
-    params:
-      reasoning_effort: xhigh
 - base_name: oaio4m
   model: openai/o4-mini
   variants:
@@ -195,11 +168,11 @@ llm_definitions:
       params:
         web_search_options:
           search_context_size: high
-  - suffix: am
-    params:
-      reasoning_effort: max
-      thinking:
-        type: adaptive
+  # - suffix: am
+  #   params:
+  #     reasoning_effort: max
+  #     thinking:
+  #       type: adaptive
 - base_name: cl45hk
   model: anthropic/claude-haiku-4-5-20251001
   variants:
@@ -248,19 +221,33 @@ llm_definitions:
     model: xai/grok-4-fast-reasoning
   - suffix: fnr
     model: xai/grok-4-fast-non-reasoning
-- base_name: grok41fr
+- base_name: grok41
   model: xai/grok-4-1-fast-reasoning
   variants:
-  - suffix: o
+  - suffix: fr
+    model: xai/grok-4-1-fast-reasoning
+    variants:
+    - suffix: o
+      api_mode: responses
+      params:
+        tools:
+        - type: web_search
+        - type: x_search
+  - suffix: fnr
+    model: xai/grok-4-1-fast-non-reasoning
+- base_name: grok42b
+  model: xai/grok-4-1-fast-reasoning
+  variants:
+  - suffix: ma
     api_mode: responses
-    params:
-      tools:
-      - type: web_search
-      - type: x_search
-- base_name: grok41fnr
-  model: xai/grok-4-1-fast-non-reasoning
+    model: xai/grok-4.20-multi-agent-beta-0309
+  - suffix: r
+    model: xai/grok-4.20-beta-0309-reasoning
+  - suffix: nr
+    model: xai/grok-4.20-beta-0309-non-reasoning
 - base_name: grokcode
   model: xai/grok-code-fast-1
+
 - base_name: dsv32
   model: openrouter/deepseek/deepseek-v3.2
   variants:
@@ -305,12 +292,12 @@ llm_definitions:
   model: openrouter/baidu/ernie-4.5-21b-a3b-thinking
 - base_name: m2
   model: openrouter/minimax/minimax-m2.1
-- base_name: oaio4mdr-o
-  model: openai/o4-mini-deep-research-2025-06-26
-  params:
-    reasoning_effort: medium
-    tools:
-    - type: web_search_preview
+# - base_name: oaio4mdr-o
+#   model: openai/o4-mini-deep-research-2025-06-26
+#   params:
+#     reasoning_effort: medium
+#     tools:
+#     - type: web_search_preview
 - base_name: oai4osp-o
   model: openai/gpt-4o-search-preview
 - base_name: plx-snr-o
@@ -391,11 +378,11 @@ models:
   # Standard mom - balanced mix of models, low reasoning
   - name: "mom"
     llms_to_query:
-      - "oai52:l"
+      - "oai54:l"
       - "oaio4m:l"
       - "g31p"
       - "cl46op:l"
-      - "grok41fr"
+      - "grok42b:nr"
       - "qwn3max"
       - "glm5"
       - "k25"
@@ -406,12 +393,13 @@ models:
   # Big mom - medium/high reasoning across providers
   - name: "bmom"
     llms_to_query:
-      - "oai52:m"
+      - "oai54:m"
       - "oaio4m:h"
       - "g31p:h"
       - "g3f:h"
       - "cl46op:m"
-      - "grok41fr"
+      - "grok41:fr"
+      - "grok42b:nr"
       - "k25"
       - "glm5"
       - "qwn3max"
@@ -423,14 +411,15 @@ models:
   # Huge mom - maximum coverage with all flagship models
   - name: "hmom"
     llms_to_query:
-      - "oai52:h"
+      - "oai54:h"
       - "oaio4m:h"
       - "g31p:h"
       - "g25p:h"
       - "g3f:h"
       - "cl46op:h"
       - "cl46st:h"
-      - "grok41fr"
+      - "grok41:fr"
+      - "grok42b:r"
       - "qwn3max"
       - "k25"
       - "glm5"
@@ -440,14 +429,15 @@ models:
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
-  # Elite mom - top-tier models only (GPT-5.2 Pro here only!)
+  # Elite mom - top-tier models only
   - name: "emom"
     llms_to_query:
-      - "oai52pro:xh"
+      - "oai54:xh"
       - "cl46op:am"
-      - "cl46st:am"
+      - "cl46st:h"
       - "g31p:h"
-      - "grok41fr"
+      - "grok41:fr"
+      - "grok42b:ma"
       - "k25"
     concluding_llm: "g31p:h"
     concluding_prompt: "synth_default"
@@ -456,7 +446,7 @@ models:
   # Code mom - coding-optimized models (with Codex!)
   - name: "mom-code"
     llms_to_query:
-      - "oai52cdx:m"
+      - "oai53cdx:m"
       - "oaio4m:m"
       - "g31p:h"
       - "cl46op:m"
@@ -470,26 +460,26 @@ models:
   # Creative mom - for creative/writing tasks
   - name: "mom-creative"
     llms_to_query:
-      - "oai52:m"
+      - "oai54:m"
       - "g3f:h"
       - "cl46op:m"
       - "cl46st:l"
-      - "grok41fr"
+      - "grok41:fr"
       - "qwn3max"
       - "ernie45t"
-    concluding_llm: "oai52:m"
+    concluding_llm: "oai54:m"
     concluding_prompt: "synth_creative"
     include_thinking_context: true
 
   # Online mom high - search-enabled models ensemble
   - name: "mom-oh"
     llms_to_query:
-      - "oaio4mdr-o"
+      # - "oaio4mdr-o"
       - "g31p:h:o"
       - "g25p:h:o"
       - "cl46op:h:o"
       - "cl46st:h:o"
-      - "grok41fr:o"
+      - "grok41:fr:o"
       - "plx-snrrp-o"
       - "plx-dr-o"
     concluding_llm: "g3f:h:o"
@@ -499,8 +489,9 @@ models:
   # Elite huge mom code - top-tier coding models, expensive but best quality
   - name: "ehmom-code"
     llms_to_query:
-      - "oai52cdx:xh"
-      - "oai52:xh"
+      - "oai53cdx:h"
+      - "oai51cdxmax:xh"
+      - "oai54:xh"
       - "oaio4m:h"
       - "g31p:h"
       - "g25p:h"
