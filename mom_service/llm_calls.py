@@ -22,10 +22,12 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 from collections.abc import AsyncGenerator
 from typing import Any, Optional
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import litellm
 from litellm.utils import Choices, Message, ModelResponse, Usage
@@ -85,6 +87,43 @@ SENSITIVE_PARAM_PREFIXES = (
     "authorization_",
 )
 
+# S3 presigned URL query parameters that change on every request.
+# Stripping these ensures cache keys are stable across regenerations.
+_S3_PRESIGNED_PARAMS = frozenset(
+    {
+        "X-Amz-Algorithm",
+        "X-Amz-Credential",
+        "X-Amz-Date",
+        "X-Amz-Expires",
+        "X-Amz-Security-Token",
+        "X-Amz-Signature",
+        "X-Amz-SignedHeaders",
+    }
+)
+
+_PRESIGNED_URL_RE = re.compile(
+    r"X-Amz-(?:Date|Signature|Credential|Expires|Algorithm|SignedHeaders|Security-Token)="
+)
+
+
+def _normalize_presigned_urls(text: str) -> str:
+    """Strip volatile S3 presigned URL query params so cache keys stay stable."""
+    if "X-Amz-" not in text:
+        return text
+
+    def _strip_url(match: re.Match) -> str:
+        url = match.group(0)
+        parsed = urlparse(url)
+        if not parsed.query:
+            return url
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        filtered = {k: v for k, v in params.items() if k not in _S3_PRESIGNED_PARAMS}
+        new_query = urlencode(filtered, doseq=True)
+        return urlunparse(parsed._replace(query=new_query))
+
+    return re.sub(r"https?://[^\s\"'<>]+", _strip_url, text)
+
+
 # SQLite database file path
 CACHE_DB_PATH = os.path.join(os.path.dirname(__file__), "llm_cache.db")
 logger.info(f"Cache DB path: {CACHE_DB_PATH}")
@@ -129,8 +168,11 @@ def _is_sensitive_param_key(key: str) -> bool:
 
 def _normalize_nested_data(value: Any, redact_sensitive: bool) -> Any:
     """Normalize nested values for deterministic serialization and optional redaction."""
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, (int, float, bool)):
         return value
+
+    if isinstance(value, str):
+        return _normalize_presigned_urls(value)
 
     if isinstance(value, dict):
         normalized: dict[str, Any] = {}

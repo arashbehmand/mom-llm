@@ -100,10 +100,34 @@ def _convert_responses_to_model_response(
     )
 
 
+def _normalize_message_content_format(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ensure all messages use a consistent content format.
+
+    Some providers (e.g. XAI) reject requests where content format is mixed
+    (some messages use plain strings, others use list-of-parts objects).
+    If any message already uses the list-of-parts format we promote all
+    plain-string messages to match; otherwise we leave everything as-is.
+
+    TODO: Remove this workaround once LiteLLM handles the normalization
+    upstream (see: https://github.com/BerriAI/litellm/issues/XXXXX).
+    """
+    has_list_content = any(isinstance(m.get("content"), list) for m in messages)
+    if not has_list_content:
+        return messages
+
+    normalized: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, str):
+            msg = {**msg, "content": [{"type": "text", "text": content}]}
+        normalized.append(msg)
+    return normalized
+
+
 def _build_responses_kwargs(params: dict[str, Any]) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "model": params["model"],
-        "input": params["messages"],
+        "input": _normalize_message_content_format(params["messages"]),
         "stream": False,
         "timeout": params.get("timeout"),
     }
