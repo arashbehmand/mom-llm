@@ -3,11 +3,11 @@ Tests for mom_service.responses_api – content format normalization and
 Responses API helpers.
 """
 
-from mom_service.responses_api import _build_responses_kwargs, _normalize_message_content_format
+from mom_service.responses_api import _build_responses_kwargs, _flatten_message_content_to_strings
 
 
-class TestNormalizeMessageContentFormat:
-    """Tests for _normalize_message_content_format workaround."""
+class TestFlattenMessageContentToStrings:
+    """Tests for _flatten_message_content_to_strings workaround."""
 
     def test_all_plain_strings_unchanged(self):
         messages = [
@@ -15,53 +15,62 @@ class TestNormalizeMessageContentFormat:
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi there!"},
         ]
-        result = _normalize_message_content_format(messages)
+        result = _flatten_message_content_to_strings(messages)
         assert result is messages  # same object, no copy needed
 
-    def test_all_list_content_unchanged(self):
+    def test_text_only_list_flattened_to_string(self):
         messages = [
             {"role": "system", "content": [{"type": "text", "text": "You are helpful."}]},
             {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
         ]
-        result = _normalize_message_content_format(messages)
-        assert result == messages
-        # Strings should NOT have been touched
-        for msg in result:
-            assert isinstance(msg["content"], list)
+        result = _flatten_message_content_to_strings(messages)
+        assert result[0]["content"] == "You are helpful."
+        assert result[1]["content"] == "Hello"
 
-    def test_mixed_formats_promotes_strings_to_list(self):
+    def test_multi_text_parts_concatenated(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Part one. "},
+                    {"type": "text", "text": "Part two."},
+                ],
+            },
+        ]
+        result = _flatten_message_content_to_strings(messages)
+        assert result[0]["content"] == "Part one. Part two."
+
+    def test_mixed_formats_flattens_lists_keeps_strings(self):
         messages = [
             {"role": "system", "content": "You are helpful."},
             {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
             {"role": "assistant", "content": "Hi there!"},
         ]
-        result = _normalize_message_content_format(messages)
+        result = _flatten_message_content_to_strings(messages)
 
-        assert result[0]["content"] == [{"type": "text", "text": "You are helpful."}]
-        assert result[1]["content"] == [{"type": "text", "text": "Hello"}]
-        assert result[2]["content"] == [{"type": "text", "text": "Hi there!"}]
+        assert result[0]["content"] == "You are helpful."
+        assert result[1]["content"] == "Hello"
+        assert result[2]["content"] == "Hi there!"
 
-    def test_mixed_formats_preserves_roles(self):
+    def test_preserves_roles(self):
         messages = [
-            {"role": "system", "content": "sys"},
+            {"role": "system", "content": [{"type": "text", "text": "sys"}]},
             {"role": "user", "content": [{"type": "text", "text": "usr"}]},
         ]
-        result = _normalize_message_content_format(messages)
+        result = _flatten_message_content_to_strings(messages)
         assert result[0]["role"] == "system"
         assert result[1]["role"] == "user"
 
     def test_does_not_mutate_original_messages(self):
-        original_msg = {"role": "user", "content": "Hello"}
-        messages = [
-            original_msg,
-            {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
-        ]
-        _normalize_message_content_format(messages)
+        original_content = [{"type": "text", "text": "Hello"}]
+        original_msg = {"role": "user", "content": original_content}
+        messages = [original_msg]
+        _flatten_message_content_to_strings(messages)
         # Original dict should be untouched
-        assert original_msg["content"] == "Hello"
+        assert original_msg["content"] is original_content
 
     def test_empty_list(self):
-        result = _normalize_message_content_format([])
+        result = _flatten_message_content_to_strings([])
         assert not result
 
     def test_none_content_left_alone(self):
@@ -69,13 +78,14 @@ class TestNormalizeMessageContentFormat:
             {"role": "assistant", "content": None},
             {"role": "user", "content": [{"type": "text", "text": "hi"}]},
         ]
-        result = _normalize_message_content_format(messages)
+        result = _flatten_message_content_to_strings(messages)
         assert result[0]["content"] is None
-        assert result[1]["content"] == [{"type": "text", "text": "hi"}]
+        assert result[1]["content"] == "hi"
 
-    def test_multimodal_content_preserved(self):
+    def test_multimodal_content_not_flattened(self):
+        """Messages with non-text parts (e.g. images) must be left as-is."""
         messages = [
-            {"role": "system", "content": "You are helpful."},
+            {"role": "system", "content": [{"type": "text", "text": "You are helpful."}]},
             {
                 "role": "user",
                 "content": [
@@ -84,23 +94,26 @@ class TestNormalizeMessageContentFormat:
                 ],
             },
         ]
-        result = _normalize_message_content_format(messages)
-        assert result[0]["content"] == [{"type": "text", "text": "You are helpful."}]
-        assert result[1]["content"] == messages[1]["content"]
+        result = _flatten_message_content_to_strings(messages)
+        # Text-only system message gets flattened
+        assert result[0]["content"] == "You are helpful."
+        # Multimodal user message stays as list
+        assert isinstance(result[1]["content"], list)
+        assert len(result[1]["content"]) == 2
 
     def test_extra_message_keys_preserved(self):
         messages = [
-            {"role": "user", "content": "hi", "name": "alice"},
-            {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+            {"role": "user", "content": [{"type": "text", "text": "hi"}], "name": "alice"},
         ]
-        result = _normalize_message_content_format(messages)
+        result = _flatten_message_content_to_strings(messages)
         assert result[0]["name"] == "alice"
+        assert result[0]["content"] == "hi"
 
 
-class TestBuildResponsesKwargsNormalization:
-    """Verify _build_responses_kwargs applies content normalization."""
+class TestBuildResponsesKwargsFlattening:
+    """Verify _build_responses_kwargs applies content flattening."""
 
-    def test_mixed_content_normalized_in_input(self):
+    def test_list_content_flattened_in_input(self):
         params = {
             "model": "xai/grok-test",
             "messages": [
@@ -110,9 +123,9 @@ class TestBuildResponsesKwargsNormalization:
             "timeout": 60,
         }
         kwargs = _build_responses_kwargs(params)
-        # Both messages should now be list-of-parts
-        assert kwargs["input"][0]["content"] == [{"type": "text", "text": "Be helpful."}]
-        assert kwargs["input"][1]["content"] == [{"type": "text", "text": "Hello"}]
+        # Both should be plain strings
+        assert kwargs["input"][0]["content"] == "Be helpful."
+        assert kwargs["input"][1]["content"] == "Hello"
 
     def test_plain_string_messages_left_as_strings(self):
         params = {

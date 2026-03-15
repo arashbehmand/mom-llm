@@ -100,13 +100,14 @@ def _convert_responses_to_model_response(
     )
 
 
-def _normalize_message_content_format(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Ensure all messages use a consistent content format.
+def _flatten_message_content_to_strings(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten list-of-parts content back to plain strings for the Responses API.
 
-    Some providers (e.g. XAI) reject requests where content format is mixed
-    (some messages use plain strings, others use list-of-parts objects).
-    If any message already uses the list-of-parts format we promote all
-    plain-string messages to match; otherwise we leave everything as-is.
+    Some providers (e.g. XAI) reject the list-of-content-parts format
+    (``[{"type": "text", "text": "..."}]``) that OpenAI chat completions
+    accept.  When all parts in a message are text-only we collapse them
+    into a single plain string.  Messages that contain non-text parts
+    (e.g. images) are left unchanged.
 
     TODO: Remove this workaround once LiteLLM handles the normalization
     upstream (see: https://github.com/BerriAI/litellm/issues/XXXXX).
@@ -118,8 +119,11 @@ def _normalize_message_content_format(messages: list[dict[str, Any]]) -> list[di
     normalized: list[dict[str, Any]] = []
     for msg in messages:
         content = msg.get("content")
-        if isinstance(content, str):
-            msg = {**msg, "content": [{"type": "text", "text": content}]}
+        if isinstance(content, list) and all(
+            isinstance(p, dict) and p.get("type") == "text" for p in content
+        ):
+            # Only flatten if every part is a text part
+            msg = {**msg, "content": "".join(p.get("text", "") for p in content)}
         normalized.append(msg)
     return normalized
 
@@ -127,7 +131,7 @@ def _normalize_message_content_format(messages: list[dict[str, Any]]) -> list[di
 def _build_responses_kwargs(params: dict[str, Any]) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "model": params["model"],
-        "input": _normalize_message_content_format(params["messages"]),
+        "input": _flatten_message_content_to_strings(params["messages"]),
         "stream": False,
         "timeout": params.get("timeout"),
     }
