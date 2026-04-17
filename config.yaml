@@ -1,313 +1,331 @@
 llm_definitions:
-- base_name: oai5m
-  model: openai/gpt-5-mini
-  variants:
-  - suffix: m
-    params:
-      reasoning_effort: medium
-  - suffix: h
-    params:
-      reasoning_effort: high
-- base_name: oai54
-  model: openai/gpt-5.4
-  variants:
-  - suffix: l
-    params:
-      reasoning_effort: low
-  - suffix: m
-    params:
-      reasoning_effort: medium
-  - suffix: h
-    params:
-      reasoning_effort: high
-  - suffix: xh
-    params:
-      reasoning_effort: xhigh
-- base_name: oai54pro
-  model: openai/gpt-5.4-pro
-  variants:
-  - suffix: h
-    params:
-      reasoning_effort: high
-  - suffix: xh
-    params:
-      reasoning_effort: xhigh
-- base_name: oai51cdxmax
-  model: openai/gpt-5.1-codex-max
-  variants:
-  - suffix: m
-    params:
-      reasoning_effort: medium
-  - suffix: h
-    params:
-      reasoning_effort: high
-  - suffix: xh
-    params:
-      reasoning_effort: xhigh
-- base_name: oai53cdx
-  model: openai/gpt-5.3-codex
-  variants:
-  - suffix: m
-    params:
-      reasoning_effort: medium
-  - suffix: h
-    params:
-      reasoning_effort: high
-- base_name: oaio4m
-  model: openai/o4-mini
-  variants:
-  - suffix: l
-    params:
-      reasoning_effort: low
-  - suffix: m
-    params:
-      reasoning_effort: medium
-  - suffix: h
-    params:
-      reasoning_effort: high
-- base_name: oaio3
-  model: openai/o3
-  variants:
-  - suffix: m
-    params:
-      reasoning_effort: medium
-  - suffix: h
-    params:
-      reasoning_effort: high
-- base_name: oaio3pro
-  model: openai/o3-pro
-  params:
-    reasoning_effort: high
-- base_name: g25f
-  model: gemini/gemini-2.5-flash
-  variants:
-  - suffix: l
-    params:
-      thinking_budget: 0
-  - suffix: m
-    params:
-      thinking_budget: 8192
-  - suffix: h
-    params:
-      thinking_budget: 24576
+  - base_name: oai54m
+    model: openai/gpt-5.4-mini
     variants:
-    - suffix: o
-      params:
-        web_search_options:
-          search_context_size: high
-  - suffix: lt
-    model: gemini/gemini-2.5-flash-lite
-- base_name: g25p
-  model: gemini/gemini-2.5-pro
-  variants:
-  - suffix: l
-    params:
-      thinking_budget: 1024
-  - suffix: m
-    params:
-      thinking_budget: 8192
-  - suffix: h
-    params:
-      thinking_budget: 32768
+      - suffix: l
+        params:
+          reasoning_effort: low
+      - suffix: m
+        params:
+          reasoning_effort: medium
+      - suffix: h
+        params:
+          reasoning_effort: high
+  - base_name: oai54
+    model: openai/gpt-5.4
     variants:
-    - suffix: o
-      params:
-        web_search_options:
-          search_context_size: high
-- base_name: g3f
-  model: gemini/gemini-3-flash-preview
-  variants:
-  - suffix: l
-    params:
-      thinking_level: low
-  - suffix: m
-    params:
-      thinking_level: medium
-  - suffix: h
-    params:
-      thinking_level: high
+      - suffix: l
+        params:
+          reasoning_effort: low
+      - suffix: m
+        params:
+          reasoning_effort: medium
+      - suffix: h
+        params:
+          reasoning_effort: high
+      - suffix: xh
+        params:
+          reasoning_effort: xhigh
+  - base_name: oai54pro
+    model: openai/gpt-5.4-pro
     variants:
-    - suffix: o
-      params:
-        web_search_options:
-          search_context_size: high
-- base_name: g31p
-  model: gemini/gemini-3.1-pro-preview
-  variants:
-  - suffix: l
-    params:
-      thinking_level: low
-  - suffix: h
-    params:
-      thinking_level: high
+      - suffix: h
+        params:
+          reasoning_effort: high
+      - suffix: xh
+        params:
+          reasoning_effort: xhigh
+  - base_name: oai51cdxmax
+    model: openai/gpt-5.1-codex-max
     variants:
-    - suffix: o
-      params:
-        web_search_options:
-          search_context_size: high
-- base_name: cl46st
-  model: anthropic/claude-sonnet-4-6
-  variants:
-  - suffix: l
-    params:
-      reasoning_effort: low
-      thinking:
-        type: adaptive
-  - suffix: m
-    params:
-      reasoning_effort: medium
-      thinking:
-        type: adaptive
-  - suffix: h
+      - suffix: m
+        params:
+          reasoning_effort: medium
+      - suffix: h
+        params:
+          reasoning_effort: high
+      - suffix: xh
+        params:
+          reasoning_effort: xhigh
+  - base_name: oai53cdx
+    model: openai/gpt-5.3-codex
+    variants:
+      - suffix: m
+        params:
+          reasoning_effort: medium
+      - suffix: h
+        params:
+          reasoning_effort: high
+  - base_name: oaio4m
+    model: openai/o4-mini
+    variants:
+      - suffix: l
+        params:
+          reasoning_effort: low
+      - suffix: m
+        params:
+          reasoning_effort: medium
+      - suffix: h
+        params:
+          reasoning_effort: high
+  - base_name: oaio3
+    model: openai/o3
+    variants:
+      - suffix: m
+        params:
+          reasoning_effort: medium
+      - suffix: h
+        params:
+          reasoning_effort: high
+  - base_name: oaio3pro
+    model: openai/o3-pro
     params:
       reasoning_effort: high
-      thinking:
-        type: adaptive
+  - base_name: g25f
+    model: gemini/gemini-2.5-flash
     variants:
-    - suffix: o
-      params:
-        web_search_options:
-          search_context_size: high
-  # - suffix: am
-  #   params:
-  #     reasoning_effort: max
-  #     thinking:
-  #       type: adaptive
-- base_name: cl45hk
-  model: anthropic/claude-haiku-4-5-20251001
-  variants:
-  - suffix: m
-    params:
-      thinking:
-        type: enabled
-        budget_tokens: 4096
-- base_name: cl46op
-  model: anthropic/claude-opus-4-6
-  variants:
-  - suffix: l
-    params:
-      reasoning_effort: low
-      thinking:
-        type: adaptive
-  - suffix: m
-    params:
-      reasoning_effort: medium
-      thinking:
-        type: adaptive
-  - suffix: h
-    params:
-      reasoning_effort: high
-      thinking:
-        type: adaptive
+      - suffix: l
+        params:
+          thinking_budget: 0
+      - suffix: m
+        params:
+          thinking_budget: 8192
+      - suffix: h
+        params:
+          thinking_budget: 24576
+        variants:
+          - suffix: o
+            params:
+              web_search_options:
+                search_context_size: high
+      - suffix: lt
+        model: gemini/gemini-2.5-flash-lite
+  - base_name: g25p
+    model: gemini/gemini-2.5-pro
     variants:
-    - suffix: o
-      params:
-        web_search_options:
-          search_context_size: high
-  - suffix: am
-    params:
-      reasoning_effort: max
-      thinking:
-        type: adaptive
-- base_name: grok4
-  model: xai/grok-4-0709
-  variants:
-  - suffix: o
-    api_mode: responses
-    params:
-      tools:
-      - type: web_search
-  - suffix: fr
-    model: xai/grok-4-fast-reasoning
-  - suffix: fnr
-    model: xai/grok-4-fast-non-reasoning
-- base_name: grok41
-  model: xai/grok-4-1-fast-reasoning
-  variants:
-  - suffix: fr
+      - suffix: l
+        params:
+          thinking_budget: 1024
+      - suffix: m
+        params:
+          thinking_budget: 8192
+      - suffix: h
+        params:
+          thinking_budget: 32768
+        variants:
+          - suffix: o
+            params:
+              web_search_options:
+                search_context_size: high
+  - base_name: g3f
+    model: gemini/gemini-3-flash-preview
+    variants:
+      - suffix: l
+        params:
+          thinking_level: low
+      - suffix: m
+        params:
+          thinking_level: medium
+      - suffix: h
+        params:
+          thinking_level: high
+        variants:
+          - suffix: o
+            params:
+              web_search_options:
+                search_context_size: high
+  - base_name: g31p
+    model: gemini/gemini-3.1-pro-preview
+    variants:
+      - suffix: l
+        params:
+          thinking_level: low
+      - suffix: h
+        params:
+          thinking_level: high
+        variants:
+          - suffix: o
+            params:
+              web_search_options:
+                search_context_size: high
+  - base_name: g31fl
+    model: gemini/gemini-3.1-flash-lite-preview
+    variants:
+      - suffix: mi
+        params:
+          thinking_level: minimal
+      - suffix: l
+        params:
+          thinking_level: low
+      - suffix: m
+        params:
+          thinking_level: medium
+      - suffix: h
+        params:
+          thinking_level: high
+  - base_name: cl46st
+    model: anthropic/claude-sonnet-4-6
+    variants:
+      - suffix: l
+        params:
+          reasoning_effort: low
+          thinking:
+            type: adaptive
+      - suffix: m
+        params:
+          reasoning_effort: medium
+          thinking:
+            type: adaptive
+      - suffix: h
+        params:
+          reasoning_effort: high
+          thinking:
+            type: adaptive
+        variants:
+          - suffix: o
+            params:
+              web_search_options:
+                search_context_size: high
+    # - suffix: am
+    #   params:
+    #     reasoning_effort: max
+    #     thinking:
+    #       type: adaptive
+  - base_name: cl45hk
+    model: anthropic/claude-haiku-4-5-20251001
+    variants:
+      - suffix: m
+        params:
+          thinking:
+            type: enabled
+            budget_tokens: 4096
+  - base_name: cl47op
+    model: anthropic/claude-opus-4-7
+    variants:
+      - suffix: l
+        params:
+          reasoning_effort: low
+          thinking:
+            type: adaptive
+      - suffix: m
+        params:
+          reasoning_effort: medium
+          thinking:
+            type: adaptive
+      - suffix: h
+        params:
+          reasoning_effort: high
+          thinking:
+            type: adaptive
+        variants:
+          - suffix: o
+            params:
+              web_search_options:
+                search_context_size: high
+      - suffix: am
+        params:
+          reasoning_effort: max
+          thinking:
+            type: adaptive
+  - base_name: grok4
+    model: xai/grok-4-0709
+    variants:
+      - suffix: o
+        api_mode: responses
+        params:
+          tools:
+            - type: web_search
+      - suffix: fr
+        model: xai/grok-4-fast-reasoning
+      - suffix: fnr
+        model: xai/grok-4-fast-non-reasoning
+  - base_name: grok41
     model: xai/grok-4-1-fast-reasoning
     variants:
-    - suffix: o
-      api_mode: responses
-      params:
-        tools:
-        - type: web_search
-        - type: x_search
-  - suffix: fnr
-    model: xai/grok-4-1-fast-non-reasoning
-- base_name: grok42b
-  model: xai/grok-4-1-fast-reasoning
-  variants:
-  - suffix: ma
-    api_mode: responses
-    model: xai/grok-4.20-multi-agent-beta-0309
-  - suffix: r
-    model: xai/grok-4.20-beta-0309-reasoning
-  - suffix: nr
-    model: xai/grok-4.20-beta-0309-non-reasoning
-- base_name: grokcode
-  model: xai/grok-code-fast-1
+      - suffix: fr
+        model: xai/grok-4-1-fast-reasoning
+        variants:
+          - suffix: o
+            api_mode: responses
+            params:
+              tools:
+                - type: web_search
+                - type: x_search
+      - suffix: fnr
+        model: xai/grok-4-1-fast-non-reasoning
+  - base_name: grok42b
+    model: xai/grok-4-1-fast-reasoning
+    variants:
+      - suffix: ma
+        api_mode: responses
+        model: xai/grok-4.20-multi-agent-beta-0309
+      - suffix: r
+        model: xai/grok-4.20-beta-0309-reasoning
+      - suffix: nr
+        model: xai/grok-4.20-beta-0309-non-reasoning
+  - base_name: grokcode
+    model: xai/grok-code-fast-1
 
-- base_name: dsv32
-  model: openrouter/deepseek/deepseek-v3.2
-  variants:
-  - suffix: exp
-    model: openrouter/deepseek/deepseek-v3.2-exp
-- base_name: r1
-  model: openrouter/deepseek/deepseek-r1-0528
-- base_name: dsr1
-  model: openrouter/deepseek/deepseek-r1
-- base_name: mstrll3
-  model: mistral/mistral-large-2512
-- base_name: mstrlm31
-  model: mistral/mistral-medium-2508
-- base_name: mstrls32
-  model: mistral/mistral-small-2506
-- base_name: magistralm
-  model: mistral/magistral-medium-2509
-  variants:
-  - suffix: l
+  - base_name: dsv32
+    model: openrouter/deepseek/deepseek-v3.2
+    variants:
+      - suffix: exp
+        model: openrouter/deepseek/deepseek-v3.2-exp
+  - base_name: r1
+    model: openrouter/deepseek/deepseek-r1-0528
+  - base_name: dsr1
+    model: openrouter/deepseek/deepseek-r1
+  - base_name: mstrll3
+    model: mistral/mistral-large-2512
+  - base_name: mstrlm31
+    model: mistral/mistral-medium-2508
+  - base_name: mstrls32
+    model: mistral/mistral-small-2506
+  - base_name: magistralm
+    model: mistral/magistral-medium-2509
+    variants:
+      - suffix: l
+        params:
+          reasoning_effort: low
+      - suffix: h
+        params:
+          reasoning_effort: high
+  - base_name: magistralsl
+    model: mistral/magistral-small-2509
     params:
       reasoning_effort: low
-  - suffix: h
-    params:
-      reasoning_effort: high
-- base_name: magistralsl
-  model: mistral/magistral-small-2509
-  params:
-    reasoning_effort: low
-- base_name: codestral
-  model: mistral/codestral-2508
-- base_name: qwn3max
-  model: openrouter/qwen/qwen3-max
-- base_name: qwn3coder
-  model: openrouter/qwen/qwen3-coder
-- base_name: k25
-  model: openrouter/moonshotai/kimi-k2.5-0127
-- base_name: glm5
-  model: openrouter/z-ai/glm-5
-- base_name: ernie45
-  model: openrouter/baidu/ernie-4.5-300b-a47b
-- base_name: ernie45t
-  model: openrouter/baidu/ernie-4.5-21b-a3b-thinking
-- base_name: m2
-  model: openrouter/minimax/minimax-m2.1
-# - base_name: oaio4mdr-o
-#   model: openai/o4-mini-deep-research-2025-06-26
-#   params:
-#     reasoning_effort: medium
-#     tools:
-#     - type: web_search_preview
-- base_name: oai4osp-o
-  model: openai/gpt-4o-search-preview
-- base_name: plx-snr-o
-  model: openrouter/perplexity/sonar
-- base_name: plx-snrp-o
-  model: openrouter/perplexity/sonar-pro
-- base_name: plx-snrrp-o
-  model: openrouter/perplexity/sonar-reasoning-pro
-- base_name: plx-dr-o
-  model: openrouter/perplexity/sonar-deep-research
+  - base_name: codestral
+    model: mistral/codestral-2508
+  - base_name: qwn3max
+    model: openrouter/qwen/qwen3-max
+  - base_name: qwn3coder
+    model: openrouter/qwen/qwen3-coder
+  - base_name: k25
+    model: openrouter/moonshotai/kimi-k2.5-0127
+  - base_name: glm51
+    model: openrouter/z-ai/glm-5.1
+  - base_name: ernie45
+    model: openrouter/baidu/ernie-4.5-300b-a47b
+  - base_name: ernie45t
+    model: openrouter/baidu/ernie-4.5-21b-a3b-thinking
+  - base_name: m2
+    model: openrouter/minimax/minimax-m2.1
+  # - base_name: oaio4mdr-o
+  #   model: openai/o4-mini-deep-research-2025-06-26
+  #   params:
+  #     reasoning_effort: medium
+  #     tools:
+  #     - type: web_search_preview
+  - base_name: oai4osp-o
+    model: openai/gpt-4o-search-preview
+  - base_name: plx-snr-o
+    model: openrouter/perplexity/sonar
+  - base_name: plx-snrp-o
+    model: openrouter/perplexity/sonar-pro
+  - base_name: plx-snrrp-o
+    model: openrouter/perplexity/sonar-reasoning-pro
+  - base_name: plx-dr-o
+    model: openrouter/perplexity/sonar-deep-research
 
 prompt_definitions:
   - name: "synth_default"
@@ -317,16 +335,16 @@ prompt_definitions:
       1. Identify each response's key insight(s) and any conflicting points.
          - Note that not all experts are equally reliable.
          - If no assistant-role messages appear after the separator, state: "No expert responses were available."
-         - If only one response appears, relay its key insight.  
+         - If only one response appears, relay its key insight.
          - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
 
-      2. Synthesize a single, cohesive answer that:  
-         - Maintains the big picture and context of the original question.  
-         - Follows any output format or structure the user originally requested (e.g., JSON schema, bullet list, code block).  
-         - Considers each relevant expert perspective—and when an expert's underlying approach is sound but their stated conclusion is factually wrong, adopt the rationale but correct the mistake to present the accurate conclusion.  
-         - Combines and integrates only the strongest, most accurate insights.  
-         - Resolves or clearly explains any disagreements by choosing the most plausible, well-supported position.  
-         - Fills in missing information as needed, based on verified insights and logical inference.  
+      2. Synthesize a single, cohesive answer that:
+         - Maintains the big picture and context of the original question.
+         - Follows any output format or structure the user originally requested (e.g., JSON schema, bullet list, code block).
+         - Considers each relevant expert perspective—and when an expert's underlying approach is sound but their stated conclusion is factually wrong, adopt the rationale but correct the mistake to present the accurate conclusion.
+         - Combines and integrates only the strongest, most accurate insights.
+         - Resolves or clearly explains any disagreements by choosing the most plausible, well-supported position.
+         - Fills in missing information as needed, based on verified insights and logical inference.
          - If no relevant insights are available, indicate this or, if appropriate, answer the original question based on prior context.
 
       Only output the final synthesized answer—omit any private analysis or mention of consolidation. The response should read as a single, direct answer to the user.
@@ -338,13 +356,13 @@ prompt_definitions:
       1. Identify each response's key insight(s) and any conflicting points.
          - Note that not all experts are equally reliable.
          - If no assistant-role messages appear after the separator, state: "No expert responses were available."
-         - If only one response appears, relay its key insight.  
+         - If only one response appears, relay its key insight.
          - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
-      2. Synthesize a single, cohesive answer that:  
+      2. Synthesize a single, cohesive answer that:
          - Maintains the big picture and context of the original question.
          - Creatively mix the creativity elements from the different responses.
-         - Follows any output format or structure the user originally requested (e.g., JSON schema, bullet list, code block).  
-         - Considers each relevant expert perspective—and when an expert's underlying approach is sound but their stated conclusion is factually wrong, adopt the rationale but correct the mistake to present the accurate conclusion.  
+         - Follows any output format or structure the user originally requested (e.g., JSON schema, bullet list, code block).
+         - Considers each relevant expert perspective—and when an expert's underlying approach is sound but their stated conclusion is factually wrong, adopt the rationale but correct the mistake to present the accurate conclusion.
          - If no relevant insights are available, indicate this or, if appropriate, answer the original question based on prior context.
 
       Only output the final synthesized answer—omit any private analysis or mention of consolidation. The response should read as a single, direct answer to the user.
@@ -356,17 +374,17 @@ prompt_definitions:
       1. Identify each response's key insight(s) and any conflicting points.
          - Note that not all experts are equally reliable.
          - If no assistant-role messages appear after the separator, state: "No expert responses were available."
-         - If only one response appears, relay its key insight.  
+         - If only one response appears, relay its key insight.
          - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
          - If the original question involved a request for up-to-date information, prioritize insights that reference recent data or events, you can use search tools yourself to gather more information.
 
-      2. Synthesize a single, cohesive answer that:  
-         - Maintains the big picture and context of the original question.  
-         - Follows any output format or structure the user originally requested (e.g., JSON schema, bullet list, code block).  
-         - Considers each relevant expert perspective—and when an expert's underlying approach is sound but their stated conclusion is factually wrong, adopt the rationale but correct the mistake to present the accurate conclusion.  
-         - Combines and integrates only the strongest, most accurate insights.  
-         - Resolves or clearly explains any disagreements by choosing the most plausible, well-supported position.  
-         - Fills in missing information as needed, based on verified insights and logical inference.  
+      2. Synthesize a single, cohesive answer that:
+         - Maintains the big picture and context of the original question.
+         - Follows any output format or structure the user originally requested (e.g., JSON schema, bullet list, code block).
+         - Considers each relevant expert perspective—and when an expert's underlying approach is sound but their stated conclusion is factually wrong, adopt the rationale but correct the mistake to present the accurate conclusion.
+         - Combines and integrates only the strongest, most accurate insights.
+         - Resolves or clearly explains any disagreements by choosing the most plausible, well-supported position.
+         - Fills in missing information as needed, based on verified insights and logical inference.
          - If no relevant insights are available, indicate this or, if appropriate, answer the original question based on prior context.
 
       Only output the final synthesized answer—omit any private analysis or mention of consolidation. The response should read as a single, direct answer to the user.
@@ -381,10 +399,10 @@ models:
       - "oai54:l"
       - "oaio4m:l"
       - "g31p"
-      - "cl46op:l"
+      - "cl47op:l"
       - "grok42b:nr"
       - "qwn3max"
-      - "glm5"
+      - "glm51"
       - "k25"
     concluding_llm: "g25f"
     concluding_prompt: "synth_default"
@@ -397,11 +415,11 @@ models:
       - "oaio4m:h"
       - "g31p:h"
       - "g3f:h"
-      - "cl46op:m"
+      - "cl47op:m"
       - "grok41:fr"
       - "grok42b:nr"
       - "k25"
-      - "glm5"
+      - "glm51"
       - "qwn3max"
       - "ernie45t"
     concluding_llm: "g31p"
@@ -416,13 +434,13 @@ models:
       - "g31p:h"
       - "g25p:h"
       - "g3f:h"
-      - "cl46op:h"
+      - "cl47op:h"
       - "cl46st:h"
       - "grok41:fr"
       - "grok42b:r"
       - "qwn3max"
       - "k25"
-      - "glm5"
+      - "glm51"
       - "ernie45t"
       - "m2"
     concluding_llm: "g31p:h"
@@ -433,13 +451,13 @@ models:
   - name: "emom"
     llms_to_query:
       - "oai54:xh"
-      - "cl46op:am"
+      - "cl47op:am"
       - "cl46st:h"
       - "g31p:h"
       - "grok41:fr"
       - "grok42b:ma"
       - "k25"
-    concluding_llm: "g31p:h"
+    concluding_llm: "cl46st:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -449,7 +467,7 @@ models:
       - "oai53cdx:m"
       - "oaio4m:m"
       - "g31p:h"
-      - "cl46op:m"
+      - "cl47op:m"
       - "grokcode"
       - "qwn3coder"
       - "k25"
@@ -462,7 +480,7 @@ models:
     llms_to_query:
       - "oai54:m"
       - "g3f:h"
-      - "cl46op:m"
+      - "cl47op:m"
       - "cl46st:l"
       - "grok41:fr"
       - "qwn3max"
@@ -477,7 +495,7 @@ models:
       # - "oaio4mdr-o"
       - "g31p:h:o"
       - "g25p:h:o"
-      - "cl46op:h:o"
+      - "cl47op:h:o"
       - "cl46st:h:o"
       - "grok41:fr:o"
       - "plx-snrrp-o"
@@ -495,13 +513,13 @@ models:
       - "oaio4m:h"
       - "g31p:h"
       - "g25p:h"
-      - "cl46op:h"
+      - "cl47op:h"
       - "grokcode"
       - "codestral"
       - "qwn3coder"
       - "k25"
-      - "glm5"
-    concluding_llm: "cl46op:h"
+      - "glm51"
+    concluding_llm: "cl47op:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -527,7 +545,7 @@ models:
   # Mini mom - cost-effective with gpt-5-mini
   - name: "mom-mini"
     llms_to_query:
-      - "oai5m:h"
+      - "oai54m:h"
       - "g3f:m"
       - "cl45hk:m"
       - "dsv32"
@@ -537,10 +555,10 @@ models:
 
   # - name: "mom-test-claude"
   #   llms_to_query:
-  #     - "cl46op:l"
-  #     - "cl46op:m"
-  #     - "cl46op:h"
-  #     - "cl46op:am"
+  #     - "cl47op:l"
+  #     - "cl47op:m"
+  #     - "cl47op:h"
+  #     - "cl47op:am"
   #     - "cl46st:l"
   #     - "cl46st:m"
   #     - "cl46st:h"
