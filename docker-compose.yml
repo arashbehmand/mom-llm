@@ -35,7 +35,13 @@ services:
       # - AZURE_API_KEY=${AZURE_API_KEY:-}
       # - COHERE_API_KEY=${COHERE_API_KEY:-}
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import requests; requests.get('http://localhost:8000/health', timeout=5)",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -73,6 +79,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: mom-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
