@@ -134,16 +134,14 @@ def _init_cache_db():
     try:
         with sqlite3.connect(CACHE_DB_PATH) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS cache (
                     key TEXT PRIMARY KEY,
                     request_messages TEXT,
                     response_json TEXT,
                     timestamp REAL
                 )
-            """
-            )
+            """)
             conn.commit()
         logger.info(f"SQLite cache database initialized at {CACHE_DB_PATH}")
     except Exception as e:
@@ -463,7 +461,8 @@ async def _call_lite_llm(
             if trace:
                 langfuse_params = _build_langfuse_model_parameters(params, api_route)
 
-                generation = trace.generation(
+                generation = trace.start_observation(
+                    as_type="generation",
                     name=generation_name,
                     metadata={
                         "call_type": call_type,
@@ -476,39 +475,32 @@ async def _call_lite_llm(
                     model_parameters=langfuse_params,
                 )
 
-                # End generation immediately for cache hit with usage info
                 if cached_response.usage:
                     output_dict = litellm.utils.convert_to_dict(cached_response)
 
-                    # For cache hits, report actual tokens and $0 cost
                     actual_input = getattr(cached_response.usage, "prompt_tokens", 0)
                     actual_output = getattr(cached_response.usage, "completion_tokens", 0)
 
-                    generation.end(
+                    generation.update(
                         output=output_dict,
                         level="DEFAULT",
                         status_message="Cache hit - instant response (cost: $0)",
-                        usage={
+                        usage_details={
                             "input": actual_input,
                             "output": actual_output,
                             "total": actual_input + actual_output,
                         },
                         metadata={"cached": True},
-                    )
-
-                    # Cache hits have $0 cost
-                    generation.update(
-                        cost_details={
-                            "total": 0.0,
-                        }
+                        cost_details={"total": 0.0},
                     )
                 else:
-                    generation.end(
+                    generation.update(
                         output=litellm.utils.convert_to_dict(cached_response),
                         level="DEFAULT",
                         status_message="Cache hit - instant response (cost: $0)",
                         metadata={"cached": True},
                     )
+                generation.end()
 
             yield cached_response
             return
@@ -519,7 +511,8 @@ async def _call_lite_llm(
     if trace:
         langfuse_params = _build_langfuse_model_parameters(params, api_route)
 
-        generation = trace.generation(
+        generation = trace.start_observation(
+            as_type="generation",
             name=generation_name,
             metadata={"call_type": call_type, "llm_name": llm_def.name, "api_route": api_route},
             input=sanitized_messages,
@@ -671,29 +664,27 @@ async def _call_lite_llm(
                         for key, value in prompt_details.items():
                             usage_dict[f"input_{key}"] = value
 
-                    # Update with granular cost details BEFORE ending
-                    if cost_breakdown:
-                        generation.update(cost_details=cost_breakdown)
-                        logger.info(
-                            f"Updated Langfuse with detailed costs for {llm_def.name}: {cost_breakdown}"
-                        )
-
-                    # Report detailed tokens and costs
-                    generation.end(
+                    generation.update(
                         output={"content": complete_content, "status": "streaming_completed"},
                         level="DEFAULT",
                         status_message="Streaming response completed successfully",
-                        usage=usage_dict,
+                        usage_details=usage_dict,
+                        **({"cost_details": cost_breakdown} if cost_breakdown else {}),
                     )
+                    if cost_breakdown:
+                        logger.info(
+                            f"Updated Langfuse with detailed costs for {llm_def.name}: {cost_breakdown}"
+                        )
+                    generation.end()
             else:
                 logger.warning(f"No usage info received in streaming response for {llm_def.name}")
-                # End Langfuse generation without usage
                 if generation:
-                    generation.end(
+                    generation.update(
                         output={"content": complete_content, "status": "streaming_completed"},
                         level="DEFAULT",
                         status_message="Streaming response completed (no usage info)",
                     )
+                    generation.end()
         else:
             if api_route == RESPONSES_API_ROUTE:
                 logger.info(
@@ -803,25 +794,25 @@ async def _call_lite_llm(
                         for key, value in prompt_details.items():
                             usage_dict[f"input_{key}"] = value
 
-                    # Update with granular cost details BEFORE ending
+                    generation.update(
+                        output=output_dict,
+                        level="DEFAULT",
+                        status_message="LLM call completed successfully",
+                        usage_details=usage_dict,
+                        **({"cost_details": cost_breakdown} if cost_breakdown else {}),
+                    )
                     if cost_breakdown:
-                        generation.update(cost_details=cost_breakdown)
                         logger.info(
                             f"Updated Langfuse with detailed costs for {llm_def.name}: {cost_breakdown}"
                         )
-
-                    generation.end(
-                        output=output_dict,
-                        level="DEFAULT",
-                        status_message="LLM call completed successfully",
-                        usage=usage_dict,
-                    )
+                    generation.end()
                 else:
-                    generation.end(
+                    generation.update(
                         output=output_dict,
                         level="DEFAULT",
                         status_message="LLM call completed successfully",
                     )
+                    generation.end()
 
             yield response
 
@@ -850,9 +841,10 @@ async def _call_lite_llm(
         )
 
         if generation:
-            generation.end(
+            generation.update(
                 level="ERROR",
                 status_message=str(e),
             )
+            generation.end()
         # Re-raise the exception to be handled by the caller
         raise

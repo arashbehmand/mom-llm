@@ -27,8 +27,7 @@ def _init_metrics_db():
     try:
         with sqlite3.connect(METRICS_DB_PATH) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS usage_metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     request_id TEXT NOT NULL,
@@ -45,29 +44,22 @@ def _init_metrics_db():
                     error_message TEXT,
                     cache_hit BOOLEAN DEFAULT 0
                 )
-                """
-            )
+                """)
             # Create index on request_id for faster lookups
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_request_id
                 ON usage_metrics(request_id)
-                """
-            )
+                """)
             # Create index on timestamp for time-range queries
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_timestamp
                 ON usage_metrics(timestamp)
-                """
-            )
+                """)
             # Create index on mom_model_name for model-specific queries
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_mom_model_name
                 ON usage_metrics(mom_model_name)
-                """
-            )
+                """)
             conn.commit()
         logger.info(f"SQLite metrics database initialized at {METRICS_DB_PATH}")
     except Exception as e:

@@ -148,16 +148,14 @@ class TestLoadConfig:
     def test_load_config_invalid_schema(self, tmp_path):
         """Test that RuntimeError is raised for invalid schema"""
         invalid_config = tmp_path / "invalid_schema.yaml"
-        invalid_config.write_text(
-            """
+        invalid_config.write_text("""
 llm_definitions:
   - name: test
     # Missing required fields
 models: []
 service:
   timeout_seconds: 30
-"""
-        )
+""")
 
         with pytest.raises(RuntimeError) as exc_info:
             load_config(config_path=str(invalid_config))
@@ -173,8 +171,7 @@ service:
     def test_load_config_with_base_and_variants(self, tmp_path):
         """Test loading config using base/variant syntax"""
         config_file = tmp_path / "variant_config.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - base_name: oai5m
     model: openai/gpt-5-mini
@@ -198,8 +195,7 @@ models:
 
 service:
   timeout_seconds: 30
-"""
-        )
+""")
 
         config = load_config(config_path=str(config_file))
         llm_map = {llm.name: llm for llm in config.llm_definitions}
@@ -216,8 +212,7 @@ service:
     def test_load_config_with_nested_subvariants(self, tmp_path):
         """Test recursive variants with deep param inheritance"""
         config_file = tmp_path / "nested_variant_config.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - base_name: g3p
     model: gemini/gemini-3-pro-preview
@@ -246,8 +241,7 @@ models:
 
 service:
   timeout_seconds: 30
-"""
-        )
+""")
 
         config = load_config(config_path=str(config_file))
         llm_map = {llm.name: llm for llm in config.llm_definitions}
@@ -263,8 +257,7 @@ service:
     def test_load_config_with_api_mode_inheritance_and_override(self, tmp_path):
         """Test api_mode inherits from base and can be overridden in variants."""
         config_file = tmp_path / "api_mode_variant_config.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - base_name: grok
     model: xai/grok-4-1-fast-reasoning
@@ -286,8 +279,7 @@ models:
 
 service:
   timeout_seconds: 30
-"""
-        )
+""")
 
         config = load_config(config_path=str(config_file))
         llm_map = {llm.name: llm for llm in config.llm_definitions}
@@ -298,8 +290,7 @@ service:
     def test_load_config_rejects_duplicate_variant_names(self, tmp_path):
         """Test duplicate names emitted from variants are rejected"""
         config_file = tmp_path / "duplicate_variant_config.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - base_name: dup
     model: openai/gpt-5-mini
@@ -315,8 +306,7 @@ models:
 
 service:
   timeout_seconds: 30
-"""
-        )
+""")
 
         with pytest.raises(RuntimeError) as exc_info:
             load_config(config_path=str(config_file))
@@ -325,8 +315,7 @@ service:
     def test_load_config_rejects_variant_without_name_or_suffix(self, tmp_path):
         """Test variants must specify either name or suffix"""
         config_file = tmp_path / "invalid_variant_config.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - base_name: invalid
     model: openai/gpt-5-mini
@@ -342,8 +331,7 @@ models:
 
 service:
   timeout_seconds: 30
-"""
-        )
+""")
 
         with pytest.raises(RuntimeError) as exc_info:
             load_config(config_path=str(config_file))
@@ -352,8 +340,7 @@ service:
     def test_load_config_missing_api_key_env_uses_inferred_default(self, tmp_path):
         """Test api_key_env is inferred from provider when omitted"""
         config_file = tmp_path / "inferred_api_key_env.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - name: test-openai
     model: openai/gpt-5-mini
@@ -366,8 +353,7 @@ models:
 
 service:
   timeout_seconds: 30
-"""
-        )
+""")
 
         config = load_config(config_path=str(config_file))
         assert config.llm_definitions[0].api_key_env == "OPENAI_API_KEY"
@@ -375,8 +361,7 @@ service:
     def test_load_config_rejects_unknown_model_references(self, tmp_path):
         """Test models referencing unknown llm_definitions fail fast at config load."""
         config_file = tmp_path / "invalid_model_refs.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - name: test-openai
     model: openai/gpt-5-mini
@@ -390,8 +375,7 @@ models:
 
 service:
   timeout_seconds: 30
-"""
-        )
+""")
 
         with pytest.raises(RuntimeError) as exc_info:
             load_config(config_path=str(config_file))
@@ -404,8 +388,7 @@ service:
     def test_load_config_auto_adds_mom_debug_when_enabled(self, tmp_path):
         """Test mom-debug is auto-created and populated with all LLMs when enabled."""
         config_file = tmp_path / "mom_debug_enabled.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - base_name: oai5m
     model: openai/gpt-5-mini
@@ -423,8 +406,7 @@ models:
 service:
   timeout_seconds: 30
   enable_mom_debug_model: true
-"""
-        )
+""")
 
         config = load_config(config_path=str(config_file))
         llm_names = [llm.name for llm in config.llm_definitions]
@@ -439,8 +421,7 @@ service:
     def test_load_config_does_not_add_mom_debug_when_disabled(self, tmp_path):
         """Test mom-debug is not created when flag is omitted/disabled."""
         config_file = tmp_path / "mom_debug_disabled.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - name: test-openai
     model: openai/gpt-5-mini
@@ -453,8 +434,7 @@ models:
 
 service:
   timeout_seconds: 30
-"""
-        )
+""")
 
         config = load_config(config_path=str(config_file))
         assert all(model.name != "mom-debug" for model in config.models)
@@ -462,8 +442,7 @@ service:
     def test_load_config_overwrites_manual_mom_debug_when_enabled(self, tmp_path):
         """Test auto generation overwrites manual mom-debug config when enabled."""
         config_file = tmp_path / "mom_debug_overwrite.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 llm_definitions:
   - name: test-openai
     model: openai/gpt-5-mini
@@ -481,8 +460,7 @@ models:
 service:
   timeout_seconds: 30
   enable_mom_debug_model: true
-"""
-        )
+""")
 
         config = load_config(config_path=str(config_file))
         llm_names = [llm.name for llm in config.llm_definitions]

@@ -31,8 +31,8 @@ def mock_langfuse_client():
     mock_trace = MagicMock()
     mock_generation = MagicMock()
 
-    mock_client.trace.return_value = mock_trace
-    mock_trace.generation.return_value = mock_generation
+    mock_client.start_observation.return_value = mock_trace
+    mock_trace.start_observation.return_value = mock_generation
 
     return mock_client
 

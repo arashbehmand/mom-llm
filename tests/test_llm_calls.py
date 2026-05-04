@@ -321,7 +321,7 @@ class TestCallLiteLLM:
                     "request_id": "test-stream-error",
                     "mom_model_name": "test-model",
                     "call_type": "concluding",
-                    "trace": mock_langfuse_client.trace.return_value,
+                    "trace": mock_langfuse_client.start_observation.return_value,
                     "generation_name": "test-concluding-stream",
                 },
             )
@@ -329,11 +329,13 @@ class TestCallLiteLLM:
             with pytest.raises(RuntimeError, match="upstream outage"):
                 await anext(result_gen)
 
-            generation = mock_langfuse_client.trace.return_value.generation.return_value
+            generation = (
+                mock_langfuse_client.start_observation.return_value.start_observation.return_value
+            )
             generation.end.assert_called_once()
-            end_kwargs = generation.end.call_args.kwargs
-            assert end_kwargs["level"] == "ERROR"
-            assert "upstream outage" in end_kwargs["status_message"]
+            update_kwargs = generation.update.call_args.kwargs
+            assert update_kwargs["level"] == "ERROR"
+            assert "upstream outage" in update_kwargs["status_message"]
 
     @respx.mock
     # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -370,7 +372,7 @@ class TestCallLiteLLM:
                     "request_id": "test-trace",
                     "mom_model_name": "test-model",
                     "call_type": "fanout",
-                    "trace": mock_langfuse_client.trace.return_value,
+                    "trace": mock_langfuse_client.start_observation.return_value,
                     "generation_name": "test-generation",
                 },
             )
@@ -378,8 +380,8 @@ class TestCallLiteLLM:
             result = await anext(result_gen)
 
             assert result is not None
-            # Verify that trace.generation was called
-            mock_langfuse_client.trace.return_value.generation.assert_called_once()
+            # Verify that trace.start_generation was called
+            mock_langfuse_client.start_observation.return_value.start_observation.assert_called_once()
 
     @respx.mock
     async def test_call_litellm_trace_does_not_include_api_key(
@@ -422,7 +424,7 @@ class TestCallLiteLLM:
                     "request_id": "trace-safety-test",
                     "mom_model_name": "test-model",
                     "call_type": "fanout",
-                    "trace": mock_langfuse_client.trace.return_value,
+                    "trace": mock_langfuse_client.start_observation.return_value,
                     "generation_name": "trace-safe-generation",
                 },
             )
@@ -430,7 +432,9 @@ class TestCallLiteLLM:
             result = await anext(result_gen)
             assert result is not None
 
-            generation_kwargs = mock_langfuse_client.trace.return_value.generation.call_args.kwargs
+            generation_kwargs = (
+                mock_langfuse_client.start_observation.return_value.start_observation.call_args.kwargs
+            )
             model_parameters = generation_kwargs["model_parameters"]
 
             assert "api_key" not in model_parameters

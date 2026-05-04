@@ -342,14 +342,16 @@ async def _process_mom_chat_request(
 
     trace = None
     if LANGFUSE_CLIENT:
-        trace = LANGFUSE_CLIENT.trace(
+        user_id = fastapi_request_obj.headers.get("x-user-id", "anon")
+        trace = LANGFUSE_CLIENT.start_observation(
+            as_type="span",
             name=f"MoM-{model_conf.name}-{str(uuid.uuid4())[:8]}",
-            user_id=fastapi_request_obj.headers.get("x-user-id", "anon"),
             metadata={
                 "model_requested": model_conf.name,
                 "num_messages": len(processed_request_messages),
                 "streaming": stream,
                 "request_id": request_id,
+                "user_id": user_id,
             },
             input={
                 "model": mom_model_name,
@@ -512,6 +514,8 @@ async def _process_mom_chat_request(
                         },
                     }
                     yield error_data
+                    if trace:
+                        trace.end()
                     return
 
             concl_msgs_for_llm = _prepare_concluding_messages(
@@ -641,6 +645,7 @@ async def _process_mom_chat_request(
 
             if trace:
                 trace.update(output={"final_content_streamed": final_content_streamed})
+                trace.end()
 
             # Publish request_complete event
             if redis_publisher and redis_publisher.enabled:
@@ -759,6 +764,7 @@ async def _process_mom_chat_request(
             level="DEFAULT",
             status_message="MoM request completed successfully",
         )
+        trace.end()
 
     # Publish request_complete event (non-streaming)
     if redis_publisher and redis_publisher.enabled:
