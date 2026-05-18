@@ -26,8 +26,8 @@ llm_definitions:
       - suffix: xh
         params:
           reasoning_effort: xhigh
-  - base_name: oai54pro
-    model: openai/gpt-5.4-pro
+  - base_name: oai55pro
+    model: openai/gpt-5.5-pro
     variants:
       - suffix: h
         params:
@@ -35,30 +35,12 @@ llm_definitions:
       - suffix: xh
         params:
           reasoning_effort: xhigh
-  - base_name: oai51cdxmax
-    model: openai/gpt-5.1-codex-max
+  - base_name: oai55
+    model: openai/gpt-5.5
     variants:
-      - suffix: m
+      - suffix: n
         params:
-          reasoning_effort: medium
-      - suffix: h
-        params:
-          reasoning_effort: high
-      - suffix: xh
-        params:
-          reasoning_effort: xhigh
-  - base_name: oai53cdx
-    model: openai/gpt-5.3-codex
-    variants:
-      - suffix: m
-        params:
-          reasoning_effort: medium
-      - suffix: h
-        params:
-          reasoning_effort: high
-  - base_name: oaio4m
-    model: openai/o4-mini
-    variants:
+          reasoning_effort: none
       - suffix: l
         params:
           reasoning_effort: low
@@ -68,8 +50,13 @@ llm_definitions:
       - suffix: h
         params:
           reasoning_effort: high
-  - base_name: oaio3
-    model: openai/o3
+      - suffix: xh
+        params:
+          reasoning_effort: xhigh
+  - base_name: oai54n
+    model: openai/gpt-5.4-nano
+  - base_name: oai53cdx
+    model: openai/gpt-5.3-codex
     variants:
       - suffix: m
         params:
@@ -77,46 +64,6 @@ llm_definitions:
       - suffix: h
         params:
           reasoning_effort: high
-  - base_name: oaio3pro
-    model: openai/o3-pro
-    params:
-      reasoning_effort: high
-  - base_name: g25f
-    model: gemini/gemini-2.5-flash
-    variants:
-      - suffix: l
-        params:
-          thinking_budget: 0
-      - suffix: m
-        params:
-          thinking_budget: 8192
-      - suffix: h
-        params:
-          thinking_budget: 24576
-        variants:
-          - suffix: o
-            params:
-              web_search_options:
-                search_context_size: high
-      - suffix: lt
-        model: gemini/gemini-2.5-flash-lite
-  - base_name: g25p
-    model: gemini/gemini-2.5-pro
-    variants:
-      - suffix: l
-        params:
-          thinking_budget: 1024
-      - suffix: m
-        params:
-          thinking_budget: 8192
-      - suffix: h
-        params:
-          thinking_budget: 32768
-        variants:
-          - suffix: o
-            params:
-              web_search_options:
-                search_context_size: high
   - base_name: g3f
     model: gemini/gemini-3-flash-preview
     variants:
@@ -149,7 +96,7 @@ llm_definitions:
               web_search_options:
                 search_context_size: high
   - base_name: g31fl
-    model: gemini/gemini-3.1-flash-lite-preview
+    model: gemini/gemini-3.1-flash-lite
     variants:
       - suffix: mi
         params:
@@ -227,62 +174,11 @@ llm_definitions:
           reasoning_effort: max
           thinking:
             type: adaptive
-  - base_name: grok4
-    model: xai/grok-4-0709
-    variants:
-      - suffix: o
-        api_mode: responses
-        params:
-          tools:
-            - type: web_search
-      - suffix: fr
-        model: xai/grok-4-fast-reasoning
-      - suffix: fnr
-        model: xai/grok-4-fast-non-reasoning
-  - base_name: grok41
-    model: xai/grok-4-1-fast-reasoning
-    variants:
-      - suffix: fr
-        model: xai/grok-4-1-fast-reasoning
-        variants:
-          - suffix: o
-            api_mode: responses
-            params:
-              tools:
-                - type: web_search
-                - type: x_search
-      - suffix: fnr
-        model: xai/grok-4-1-fast-non-reasoning
-  - base_name: grok42b
-    model: xai/grok-4-1-fast-reasoning
-    variants:
-      - suffix: ma
-        api_mode: responses
-        model: xai/grok-4.20-multi-agent-beta-0309
-      - suffix: r
-        model: xai/grok-4.20-beta-0309-reasoning
-      - suffix: nr
-        model: xai/grok-4.20-beta-0309-non-reasoning
-  - base_name: grokcode
-    model: xai/grok-code-fast-1
-
-  - base_name: dsv32
-    model: openrouter/deepseek/deepseek-v3.2
-    variants:
-      - suffix: exp
-        model: openrouter/deepseek/deepseek-v3.2-exp
-  - base_name: r1
-    model: openrouter/deepseek/deepseek-r1-0528
-  - base_name: dsr1
-    model: openrouter/deepseek/deepseek-r1
-  - base_name: mstrll3
-    model: mistral/mistral-large-2512
-  - base_name: mstrlm31
-    model: mistral/mistral-medium-2508
-  - base_name: mstrls32
-    model: mistral/mistral-small-2506
-  - base_name: magistralm
-    model: mistral/magistral-medium-2509
+  - base_name: grok420ma
+    model: xai/grok-4.20-multi-agent
+    api_mode: responses
+  - base_name: grok43
+    model: xai/grok-4.3
     variants:
       - suffix: l
         params:
@@ -290,38 +186,43 @@ llm_definitions:
       - suffix: h
         params:
           reasoning_effort: high
-  - base_name: magistralsl
-    model: mistral/magistral-small-2509
-    params:
-      reasoning_effort: low
+        variants:
+          - suffix: o
+            api_mode: responses
+            params:
+              tools:
+                - type: web_search
+      - suffix: nr
+        params:
+          reasoning_effort: none
+
+  - base_name: dsv4
+    model: openrouter/deepseek/deepseek-v4-pro
+    variants:
+      - suffix: f
+        model: openrouter/deepseek/deepseek-v4-flash
   - base_name: codestral
     model: mistral/codestral-2508
-  - base_name: qwn3max
-    model: openrouter/qwen/qwen3-max
+  - base_name: qwn36max
+    model: openrouter/qwen/qwen3.6-max-preview
   - base_name: qwn3coder
-    model: openrouter/qwen/qwen3-coder
-  - base_name: k25
-    model: openrouter/moonshotai/kimi-k2.5-0127
+    model: openrouter/qwen/qwen3-coder-next
+  - base_name: k26
+    model: openrouter/moonshotai/kimi-k2.6
   - base_name: glm51
     model: openrouter/z-ai/glm-5.1
-  - base_name: ernie45
-    model: openrouter/baidu/ernie-4.5-300b-a47b
   - base_name: ernie45t
-    model: openrouter/baidu/ernie-4.5-21b-a3b-thinking
-  - base_name: m2
-    model: openrouter/minimax/minimax-m2.1
+    model: openrouter/baidu/ernie-4.5-300b-a47b
+  - base_name: m27
+    model: openrouter/minimax/minimax-m2.7
   # - base_name: oaio4mdr-o
   #   model: openai/o4-mini-deep-research-2025-06-26
   #   params:
   #     reasoning_effort: medium
   #     tools:
   #     - type: web_search_preview
-  - base_name: oai4osp-o
-    model: openai/gpt-4o-search-preview
-  - base_name: plx-snr-o
-    model: openrouter/perplexity/sonar
   - base_name: plx-snrp-o
-    model: openrouter/perplexity/sonar-pro
+    model: openrouter/perplexity/sonar-pro-search
   - base_name: plx-snrrp-o
     model: openrouter/perplexity/sonar-reasoning-pro
   - base_name: plx-dr-o
@@ -396,31 +297,31 @@ models:
   # Standard mom - balanced mix of models, low reasoning
   - name: "mom"
     llms_to_query:
-      - "oai54:l"
-      - "oaio4m:l"
+      - "oai55:l"
+      - "oai54m:l"
       - "g31p"
       - "cl47op:l"
-      - "grok42b:nr"
-      - "qwn3max"
+      - "grok43:nr"
+      - "qwn36max"
       - "glm51"
-      - "k25"
-    concluding_llm: "g25f"
+      - "k26"
+    concluding_llm: "g31fl"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
   # Big mom - medium/high reasoning across providers
   - name: "bmom"
     llms_to_query:
-      - "oai54:m"
-      - "oaio4m:h"
+      - "oai55:m"
+      - "oai54m:h"
       - "g31p:h"
       - "g3f:h"
       - "cl47op:m"
-      - "grok41:fr"
-      - "grok42b:nr"
-      - "k25"
+      - "grok43:h"
+      - "grok43:nr"
+      - "k26"
       - "glm51"
-      - "qwn3max"
+      - "qwn36max"
       - "ernie45t"
     concluding_llm: "g31p"
     concluding_prompt: "synth_default"
@@ -429,20 +330,17 @@ models:
   # Huge mom - maximum coverage with all flagship models
   - name: "hmom"
     llms_to_query:
-      - "oai54:h"
-      - "oaio4m:h"
+      - "oai55:h"
+      - "oai54m:h"
       - "g31p:h"
-      - "g25p:h"
       - "g3f:h"
       - "cl47op:h"
       - "cl46st:h"
-      - "grok41:fr"
-      - "grok42b:r"
-      - "qwn3max"
-      - "k25"
+      - "grok43:h"
+      - "qwn36max"
+      - "k26"
       - "glm51"
-      - "ernie45t"
-      - "m2"
+      - "m27"
     concluding_llm: "g31p:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -450,27 +348,29 @@ models:
   # Elite mom - top-tier models only
   - name: "emom"
     llms_to_query:
-      - "oai54:xh"
+      - "oai55:h"
       - "cl47op:am"
       - "cl46st:h"
       - "g31p:h"
-      - "grok41:fr"
-      - "grok42b:ma"
-      - "k25"
+      - "grok43:h"
+      - "grok420ma"
+      - "k26"
+      # - "oai55pro:xh"   # pro family; uncomment when cost is acceptable
     concluding_llm: "cl46st:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
-  # Code mom - coding-optimized models (with Codex!)
+  # Code mom - coding-optimized models
   - name: "mom-code"
     llms_to_query:
+      - "oai55:m"
       - "oai53cdx:m"
-      - "oaio4m:m"
+      - "oai54m:m"
       - "g31p:h"
       - "cl47op:m"
-      - "grokcode"
+      - "grok43:h"
       - "qwn3coder"
-      - "k25"
+      - "k26"
     concluding_llm: "g31p"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -478,14 +378,13 @@ models:
   # Creative mom - for creative/writing tasks
   - name: "mom-creative"
     llms_to_query:
-      - "oai54:m"
+      - "oai55:m"
       - "g3f:h"
       - "cl47op:m"
       - "cl46st:l"
-      - "grok41:fr"
-      - "qwn3max"
-      - "ernie45t"
-    concluding_llm: "oai54:m"
+      - "grok43:h"
+      - "qwn36max"
+    concluding_llm: "oai55:m"
     concluding_prompt: "synth_creative"
     include_thinking_context: true
 
@@ -494,10 +393,9 @@ models:
     llms_to_query:
       # - "oaio4mdr-o"
       - "g31p:h:o"
-      - "g25p:h:o"
       - "cl47op:h:o"
       - "cl46st:h:o"
-      - "grok41:fr:o"
+      - "grok43:h:o"
       - "plx-snrrp-o"
       - "plx-dr-o"
     concluding_llm: "g3f:h:o"
@@ -507,17 +405,16 @@ models:
   # Elite huge mom code - top-tier coding models, expensive but best quality
   - name: "ehmom-code"
     llms_to_query:
+      - "oai55:h"
+      - "oai55:xh"
       - "oai53cdx:h"
-      - "oai51cdxmax:xh"
-      - "oai54:xh"
-      - "oaio4m:h"
+      - "oai54m:h"
       - "g31p:h"
-      - "g25p:h"
       - "cl47op:h"
-      - "grokcode"
+      - "grok43:h"
       - "codestral"
       - "qwn3coder"
-      - "k25"
+      - "k26"
       - "glm51"
     concluding_llm: "cl47op:h"
     concluding_prompt: "synth_default"
@@ -526,7 +423,7 @@ models:
   # Online mom light - faster search ensemble
   - name: "mom-ol"
     llms_to_query:
-      - "oai4osp-o"
+      - "grok43:h:o"
       - "g3f:h:o"
       - "plx-snrp-o"
     concluding_llm: "g3f:h:o"
@@ -536,19 +433,19 @@ models:
   # Cheap mom - minimal models for testing
   - name: "mom-cheap"
     llms_to_query:
-      - "mstrls32"
-      - "g25f:lt"
-    concluding_llm: "g25f:lt"
+      - "oai54n"
+      - "g31fl:mi"
+    concluding_llm: "g31fl:mi"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
-  # Mini mom - cost-effective with gpt-5-mini
+  # Mini mom - cost-effective small models
   - name: "mom-mini"
     llms_to_query:
-      - "oai54m:h"
+      - "oai54n"
       - "g3f:m"
       - "cl45hk:m"
-      - "dsv32"
+      - "dsv4:f"
     concluding_llm: "g3f:m"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -574,7 +471,7 @@ service:
   timeout_seconds: 1200
   exposed_apis: ["openai"]
   cache_enabled: true
-  enable_mom_debug_model: false
+  enable_mom_debug_model: true
 
 # ==============================================================================
 # Langfuse Integration

@@ -1,6 +1,6 @@
 fastapi==0.136.1
 langfuse==4.5.1
-litellm==1.83.14
+litellm==1.85.0
 python-dotenv==1.2.2
 PyYAML==6.0.3
 uvicorn==0.46.0
