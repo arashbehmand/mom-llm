@@ -110,6 +110,26 @@ llm_definitions:
       - suffix: h
         params:
           thinking_level: high
+  - base_name: g35f
+    model: gemini/gemini-3.5-flash
+    variants:
+      - suffix: mi
+        params:
+          thinking_level: minimal
+      - suffix: l
+        params:
+          thinking_level: low
+      - suffix: m
+        params:
+          thinking_level: medium
+      - suffix: h
+        params:
+          thinking_level: high
+        variants:
+          - suffix: o
+            params:
+              web_search_options:
+                search_context_size: high
   - base_name: cl46st
     model: anthropic/claude-sonnet-4-6
     variants:
@@ -195,6 +215,8 @@ llm_definitions:
       - suffix: nr
         params:
           reasoning_effort: none
+  - base_name: grokbuild
+    model: openrouter/x-ai/grok-build-0.1
 
   - base_name: dsv4
     model: openrouter/deepseek/deepseek-v4-pro
@@ -315,7 +337,7 @@ models:
       - "oai55:m"
       - "oai54m:h"
       - "g31p:h"
-      - "g3f:h"
+      - "g35f:h"
       - "cl47op:m"
       - "grok43:h"
       - "grok43:nr"
@@ -333,7 +355,7 @@ models:
       - "oai55:h"
       - "oai54m:h"
       - "g31p:h"
-      - "g3f:h"
+      - "g35f:h"
       - "cl47op:h"
       - "cl46st:h"
       - "grok43:h"
@@ -352,6 +374,7 @@ models:
       - "cl47op:am"
       - "cl46st:h"
       - "g31p:h"
+      - "g35f:h"
       - "grok43:h"
       - "grok420ma"
       - "k26"
@@ -369,6 +392,7 @@ models:
       - "g31p:h"
       - "cl47op:m"
       - "grok43:h"
+      - "grokbuild"
       - "qwn3coder"
       - "k26"
     concluding_llm: "g31p"
@@ -379,7 +403,7 @@ models:
   - name: "mom-creative"
     llms_to_query:
       - "oai55:m"
-      - "g3f:h"
+      - "g35f:h"
       - "cl47op:m"
       - "cl46st:l"
       - "grok43:h"
@@ -398,7 +422,7 @@ models:
       - "grok43:h:o"
       - "plx-snrrp-o"
       - "plx-dr-o"
-    concluding_llm: "g3f:h:o"
+    concluding_llm: "g35f:h:o"
     concluding_prompt: "synth_search"
     include_thinking_context: true
 
@@ -412,6 +436,7 @@ models:
       - "g31p:h"
       - "cl47op:h"
       - "grok43:h"
+      - "grokbuild"
       - "codestral"
       - "qwn3coder"
       - "k26"
@@ -424,9 +449,9 @@ models:
   - name: "mom-ol"
     llms_to_query:
       - "grok43:h:o"
-      - "g3f:h:o"
+      - "g35f:h:o"
       - "plx-snrp-o"
-    concluding_llm: "g3f:h:o"
+    concluding_llm: "g35f:h:o"
     concluding_prompt: "synth_search"
     include_thinking_context: true
 
