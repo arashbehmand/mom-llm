@@ -9,7 +9,9 @@ python-dotenv==1.2.2
 PyYAML==6.0.3
 uvicorn==0.46.0
 watchfiles==1.1.1
-redis>=5.0.0
+# Pin the major: an unpinned float to a newer redis-py changed async pubsub
+# idle-read behavior and silently broke the reporting listener in prod.
+redis>=5.0.0,<7.0.0
 
 # Testing dependencies
 pytest==9.0.3

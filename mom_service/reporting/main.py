@@ -123,47 +123,76 @@ def apply_event_to_state(
             req_state["concluding"]["status"] = "error"
 
 
+def _handle_event_payload(payload: Any) -> None:
+    """Decode a single pubsub payload and apply it to the in-memory state."""
+    try:
+        event_dict = json.loads(payload)
+        apply_event_to_state(active_requests, event_dict)
+    except json.JSONDecodeError:
+        logger.error(f"Failed to decode event payload: {payload}")
+    except Exception as e:
+        logger.error(f"Error processing event: {e}")
+
+
 async def event_listener():
     """
     Background task that listens for events on the Redis 'mom_events' channel
-    and updates the local metrics database.
+    and updates the in-memory request state.
+
+    Resilient by design: idle read timeouts and dropped connections are
+    expected for a long-lived subscriber and must NOT terminate the listener.
+    We poll with get_message() (tolerating timeouts/None) and reconnect with
+    backoff on connection errors, only exiting on cancellation.
     """
     if not REDIS_URL:
         logger.warning("Redis URL not set. Event listener disabled.")
         return
 
     logger.info(f"Starting event listener on {REDIS_URL}...")
+    backoff = 1.0
 
-    # Use a separate connection for subscription
-    sub_client = redis.from_url(REDIS_URL, decode_responses=True)
-    pubsub = sub_client.pubsub()
+    while True:
+        sub_client = redis.from_url(REDIS_URL, decode_responses=True)
+        pubsub = sub_client.pubsub()
+        try:
+            await pubsub.subscribe("mom_events")
+            logger.info("Subscribed to 'mom_events' channel.")
+            backoff = 1.0  # reset after a successful (re)connect
 
-    try:
-        await pubsub.subscribe("mom_events")
-        logger.info("Subscribed to 'mom_events' channel.")
+            while True:
+                try:
+                    # timeout returns None when idle instead of raising; this is
+                    # what keeps an otherwise-quiet channel from killing us.
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=1.0
+                    )
+                except (redis.RedisError, OSError, asyncio.TimeoutError) as e:
+                    # Connection-level hiccup: break to the reconnect loop.
+                    logger.warning(f"Event listener read error, reconnecting: {e}")
+                    break
 
-        async for message in pubsub.listen():
-            if message["type"] != "message":
-                continue
+                if message and message.get("type") == "message":
+                    _handle_event_payload(message["data"])
 
-            try:
-                payload = message["data"]
-                event_dict = json.loads(payload)
-                apply_event_to_state(active_requests, event_dict)
+        except asyncio.CancelledError:
+            logger.info("Event listener cancelled.")
+            with suppress(Exception):
+                await pubsub.aclose()
+            with suppress(Exception):
+                await sub_client.aclose()
+            return
+        except Exception as e:
+            logger.error(f"Event listener error: {e}")
+        finally:
+            with suppress(Exception):
+                await pubsub.aclose()
+            with suppress(Exception):
+                await sub_client.aclose()
 
-            except json.JSONDecodeError:
-                logger.error(f"Failed to decode event payload: {message['data']}")
-            except Exception as e:
-                logger.error(f"Error processing event: {e}")
-
-    except asyncio.CancelledError:
-        logger.info("Event listener cancelled.")
-    except Exception as e:
-        logger.error(f"Event listener error: {e}")
-    finally:
-        await pubsub.unsubscribe("mom_events")
-        await sub_client.close()
-        logger.info("Event listener stopped.")
+        # Reconnect with capped exponential backoff.
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, 30.0)
+        logger.info("Reconnecting event listener...")
 
 
 @asynccontextmanager
