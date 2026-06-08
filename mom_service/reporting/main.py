@@ -208,9 +208,7 @@ async def progress_page(request: Request, request_id: str):
     """
     Serve the progress page for a specific request.
     """
-    return templates.TemplateResponse(
-        request, "progress.html", {"request_id": request_id}
-    )
+    return templates.TemplateResponse(request, "progress.html", {"request_id": request_id})
 
 
 @app.get("/api/progress/{request_id}")

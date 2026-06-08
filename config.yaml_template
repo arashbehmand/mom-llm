@@ -36,11 +36,11 @@ llm_definitions:
 prompt_definitions:
   - name: "synth_default"
     content: |
-      Please review all llm replies found above, specifically after the `<<<<<<>>>>>>` separator, which appear after the final user message. These replies come from different LLM providers (e.g., OpenAI, Google, Anthropic, OpenModels) in response to the last user's input. Then proceed with the following:
+      Please review all the expert LLM responses provided above. They appear in the final user message, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. These responses come from different LLM providers (e.g., OpenAI, Google, Anthropic, OpenModels) in response to the last user's input. Then proceed with the following:
 
       1. Identify each response’s key insight(s) and any conflicting points.
         - Note that not all experts are equally reliable.
-        - If zero responses are provided after the separator, state that no expert responses were available.
+        - If no response blocks are present, state that no expert responses were available.
         - If only one response is provided, summarize its key insight.
         - If a response appears irrelevant to the original question, note this and exclude it from synthesis, or if all are irrelevant, state that.
       2. Synthesize a single, cohesive answer that:

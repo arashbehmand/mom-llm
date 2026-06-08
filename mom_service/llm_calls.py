@@ -527,6 +527,7 @@ async def _call_lite_llm(
             response_stream = await litellm.acompletion(**params)
             accumulated_usage = None
             complete_content = ""
+            complete_reasoning_content = ""
             chunk_count = 0
 
             async for chunk in response_stream:
@@ -574,10 +575,20 @@ async def _call_lite_llm(
                 # Accumulate content for Langfuse
                 if "choices" in chunk_dict and chunk_dict["choices"]:
                     for choice in chunk_dict["choices"]:
-                        if "delta" in choice and "content" in choice["delta"]:
-                            content = choice["delta"]["content"]
-                            if content:
-                                complete_content += content
+                        delta = choice.get("delta", {})
+                        if delta and chunk_count <= 3:
+                            logger.debug(
+                                f"[{llm_def.name}] chunk {chunk_count} delta keys: {list(delta.keys())}"
+                            )
+                        if "content" in delta and delta["content"]:
+                            complete_content += delta["content"]
+                        # Capture reasoning/thinking tokens (OpenAI o-series: reasoning_content,
+                        # Claude extended thinking: thinking)
+                        for thinking_key in ("reasoning_content", "thinking"):
+                            val = delta.get(thinking_key)
+                            if val:
+                                complete_reasoning_content += val
+                                break
 
                 yield chunk_dict
 
@@ -664,8 +675,14 @@ async def _call_lite_llm(
                         for key, value in prompt_details.items():
                             usage_dict[f"input_{key}"] = value
 
+                    output_payload: dict = {
+                        "content": complete_content,
+                        "status": "streaming_completed",
+                    }
+                    if complete_reasoning_content:
+                        output_payload["reasoning_content"] = complete_reasoning_content
                     generation.update(
-                        output={"content": complete_content, "status": "streaming_completed"},
+                        output=output_payload,
                         level="DEFAULT",
                         status_message="Streaming response completed successfully",
                         usage_details=usage_dict,

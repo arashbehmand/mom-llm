@@ -69,13 +69,13 @@ llm_definitions:
     variants:
       - suffix: l
         params:
-          thinking_level: low
+          reasoning_effort: low
       - suffix: m
         params:
-          thinking_level: medium
+          reasoning_effort: medium
       - suffix: h
         params:
-          thinking_level: high
+          reasoning_effort: high
         variants:
           - suffix: o
             params:
@@ -86,10 +86,10 @@ llm_definitions:
     variants:
       - suffix: l
         params:
-          thinking_level: low
+          reasoning_effort: low
       - suffix: h
         params:
-          thinking_level: high
+          reasoning_effort: high
         variants:
           - suffix: o
             params:
@@ -100,31 +100,31 @@ llm_definitions:
     variants:
       - suffix: mi
         params:
-          thinking_level: minimal
+          reasoning_effort: minimal
       - suffix: l
         params:
-          thinking_level: low
+          reasoning_effort: low
       - suffix: m
         params:
-          thinking_level: medium
+          reasoning_effort: medium
       - suffix: h
         params:
-          thinking_level: high
+          reasoning_effort: high
   - base_name: g35f
     model: gemini/gemini-3.5-flash
     variants:
       - suffix: mi
         params:
-          thinking_level: minimal
+          reasoning_effort: minimal
       - suffix: l
         params:
-          thinking_level: low
+          reasoning_effort: low
       - suffix: m
         params:
-          thinking_level: medium
+          reasoning_effort: medium
       - suffix: h
         params:
-          thinking_level: high
+          reasoning_effort: high
         variants:
           - suffix: o
             params:
@@ -166,8 +166,8 @@ llm_definitions:
           thinking:
             type: enabled
             budget_tokens: 4096
-  - base_name: cl47op
-    model: anthropic/claude-opus-4-7
+  - base_name: cl48op
+    model: anthropic/claude-opus-4-8
     variants:
       - suffix: l
         params:
@@ -225,18 +225,16 @@ llm_definitions:
         model: openrouter/deepseek/deepseek-v4-flash
   - base_name: codestral
     model: mistral/codestral-2508
-  - base_name: qwn36max
-    model: openrouter/qwen/qwen3.6-max-preview
-  - base_name: qwn3coder
-    model: openrouter/qwen/qwen3-coder-next
+  - base_name: qwn37max
+    model: openrouter/qwen/qwen3.7-max
   - base_name: k26
     model: openrouter/moonshotai/kimi-k2.6
   - base_name: glm51
     model: openrouter/z-ai/glm-5.1
   - base_name: ernie45t
     model: openrouter/baidu/ernie-4.5-300b-a47b
-  - base_name: m27
-    model: openrouter/minimax/minimax-m2.7
+  - base_name: m3
+    model: openrouter/minimax/minimax-m3
   # - base_name: oaio4mdr-o
   #   model: openai/o4-mini-deep-research-2025-06-26
   #   params:
@@ -249,15 +247,19 @@ llm_definitions:
     model: openrouter/perplexity/sonar-reasoning-pro
   - base_name: plx-dr-o
     model: openrouter/perplexity/sonar-deep-research
+  - base_name: mimo25
+    model: openrouter/xiaomi/mimo-v2.5-pro:nitro
+  - base_name: kimi26
+    model: openrouter/moonshotai/kimi-k2.6:nitro
 
 prompt_definitions:
   - name: "synth_default"
     content: |
-      Review all LLM replies in this conversation. They appear as assistant-role messages in the turns immediately following the `<<<<<<>>>>>>` separator (which comes after the final user message). Treat each such assistant-role message after that separator as a distinct expert response. Then proceed:
+      Review all the expert LLM responses provided above. They appear in the final user message, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. Treat each delimited block as a distinct expert response. Then proceed:
 
       1. Identify each response's key insight(s) and any conflicting points.
          - Note that not all experts are equally reliable.
-         - If no assistant-role messages appear after the separator, state: "No expert responses were available."
+         - If no response blocks are present, state: "No expert responses were available."
          - If only one response appears, relay its key insight.
          - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
 
@@ -274,11 +276,11 @@ prompt_definitions:
 
   - name: "synth_creative"
     content: |
-      Review all LLM replies in this conversation. They appear as assistant-role messages in the turns immediately following the `<<<<<<>>>>>>` separator (which comes after the final user message). Treat each such assistant-role message after that separator as a distinct expert response. Then proceed:
+      Review all the expert LLM responses provided above. They appear in the final user message, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. Treat each delimited block as a distinct expert response. Then proceed:
 
       1. Identify each response's key insight(s) and any conflicting points.
          - Note that not all experts are equally reliable.
-         - If no assistant-role messages appear after the separator, state: "No expert responses were available."
+         - If no response blocks are present, state: "No expert responses were available."
          - If only one response appears, relay its key insight.
          - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
       2. Synthesize a single, cohesive answer that:
@@ -290,13 +292,38 @@ prompt_definitions:
 
       Only output the final synthesized answer—omit any private analysis or mention of consolidation. The response should read as a single, direct answer to the user.
 
+  - name: "synth_translate"
+    content: |
+      Review all the expert LLM responses provided above. They appear in the final user message, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. Treat each delimited block as a distinct expert response for a translation or translation-related task. Then proceed:
+
+      1. Identify each response's key translation choices, interpretive observations, review findings, nuances, and any conflicting points.
+        - Pay attention to meaning, tone, register, rhythm, idiom, ambiguity, cultural connotation, terminology, names, subtext, and any issues or risks the responses identify.
+        - Note that not all responses are equally reliable.
+         - If no response blocks are present, state: "No expert responses were available."
+        - If only one response appears, use it as the base answer while preserving any important nuance it captures.
+         - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
+         - Not all responses have a similar level of qualiy, nuance, or insight. Consider the relative strengths of the responses when deciding how to weigh them in synthesis.
+
+      2. Synthesize a single, cohesive answer suited to the task that:
+        - Follows any output format or structure the user originally requested (e.g., JSON schema, bullet list, code block). Nothing less or more. Don't add extra explanation outside of the requested format.
+        - For translation requests, preserves the source meaning, intent, tone, voice, and subtext while producing a more all-round final translation.
+        - For translation-related tasks such as review, critique, comparison, or pre-translation reading, combines the strongest observations into a single clear answer that is genuinely useful for the task.
+        - Takes note of nuances noticed across responses, especially ambiguity, wordplay, emotional shading, cultural references, implied meaning, and translation risks.
+        - Resolves disagreements by choosing the most faithful and contextually appropriate interpretation, or by combining compatible strengths when that yields a better result.
+        - Corrects mistranslations, omissions, over-interpretations, awkward phrasing, and weak review judgments.
+        - Keeps terminology and named entities consistent unless there is a clear task-specific reason to change them.
+         - If the requested schema includes explanation or notes fields, use them to briefly capture the most important nuance decisions; otherwise, express those decisions through the translation itself without extra meta commentary.
+         - If no relevant insights are available, indicate this or, if appropriate, answer the original question based on prior context.
+
+      Only output the final synthesized answer—omit any private analysis or mention of consolidation. For direct translation requests, the response should read as a polished final translation. For translation-related tasks, it should read as a single, direct answer to the user.
+
   - name: "synth_search"
     content: |
-      Review all LLM replies in this conversation. They appear as assistant-role messages in the turns immediately following the `<<<<<<>>>>>>` separator (which comes after the final user message). Treat each such assistant-role message after that separator as a distinct expert response. Then proceed:
+      Review all the expert LLM responses provided above. They appear in the final user message, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. Treat each delimited block as a distinct expert response. Then proceed:
 
       1. Identify each response's key insight(s) and any conflicting points.
          - Note that not all experts are equally reliable.
-         - If no assistant-role messages appear after the separator, state: "No expert responses were available."
+         - If no response blocks are present, state: "No expert responses were available."
          - If only one response appears, relay its key insight.
          - If a response is irrelevant to the original question, exclude it from synthesis; if all are irrelevant, state that.
          - If the original question involved a request for up-to-date information, prioritize insights that reference recent data or events, you can use search tools yourself to gather more information.
@@ -322,9 +349,9 @@ models:
       - "oai55:l"
       - "oai54m:l"
       - "g31p"
-      - "cl47op:l"
+      - "cl48op:l"
       - "grok43:nr"
-      - "qwn36max"
+      - "qwn37max"
       - "glm51"
       - "k26"
     concluding_llm: "g31fl"
@@ -338,12 +365,12 @@ models:
       - "oai54m:h"
       - "g31p:h"
       - "g35f:h"
-      - "cl47op:m"
+      - "cl48op:m"
       - "grok43:h"
       - "grok43:nr"
       - "k26"
       - "glm51"
-      - "qwn36max"
+      - "qwn37max"
       - "ernie45t"
     concluding_llm: "g31p"
     concluding_prompt: "synth_default"
@@ -356,13 +383,13 @@ models:
       - "oai54m:h"
       - "g31p:h"
       - "g35f:h"
-      - "cl47op:h"
+      - "cl48op:h"
       - "cl46st:h"
       - "grok43:h"
-      - "qwn36max"
+      - "qwn37max"
       - "k26"
       - "glm51"
-      - "m27"
+      - "m3"
     concluding_llm: "g31p:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -371,7 +398,7 @@ models:
   - name: "emom"
     llms_to_query:
       - "oai55:h"
-      - "cl47op:am"
+      - "cl48op:am"
       - "cl46st:h"
       - "g31p:h"
       - "g35f:h"
@@ -390,11 +417,14 @@ models:
       - "oai53cdx:m"
       - "oai54m:m"
       - "g31p:h"
-      - "cl47op:m"
+      - "cl48op:m"
       - "grok43:h"
       - "grokbuild"
-      - "qwn3coder"
+      - "glm51"
       - "k26"
+      - "glm51"
+      - "m3"
+      - "mimo25"
     concluding_llm: "g31p"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -404,10 +434,10 @@ models:
     llms_to_query:
       - "oai55:m"
       - "g35f:h"
-      - "cl47op:m"
+      - "cl48op:m"
       - "cl46st:l"
       - "grok43:h"
-      - "qwn36max"
+      - "qwn37max"
     concluding_llm: "oai55:m"
     concluding_prompt: "synth_creative"
     include_thinking_context: true
@@ -417,7 +447,7 @@ models:
     llms_to_query:
       # - "oaio4mdr-o"
       - "g31p:h:o"
-      - "cl47op:h:o"
+      - "cl48op:h:o"
       - "cl46st:h:o"
       - "grok43:h:o"
       - "plx-snrrp-o"
@@ -434,14 +464,15 @@ models:
       - "oai53cdx:h"
       - "oai54m:h"
       - "g31p:h"
-      - "cl47op:h"
+      - "cl48op:h"
       - "grok43:h"
       - "grokbuild"
       - "codestral"
-      - "qwn3coder"
+      - "qwn37max"
       - "k26"
       - "glm51"
-    concluding_llm: "cl47op:h"
+      - "m3"
+    concluding_llm: "cl48op:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -475,12 +506,33 @@ models:
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
+  - name: "tmom"
+    llms_to_query:
+      - "g35f:m"
+      - "g3f:m"
+      - "oai54m:m"
+      - "mimo25"
+      # - "cl46st:l"
+    concluding_llm: "g35f:h"
+    concluding_prompt: "synth_translate"
+    include_thinking_context: true
+
+  - name: "tmoml"
+    llms_to_query:
+      - "g35f:l"
+      - "g3f:l"
+      - "g31fl:l"
+      - "oai54m:l"
+    concluding_llm: "g35f:m"
+    concluding_prompt: "synth_translate"
+    include_thinking_context: true
+
   # - name: "mom-test-claude"
   #   llms_to_query:
-  #     - "cl47op:l"
-  #     - "cl47op:m"
-  #     - "cl47op:h"
-  #     - "cl47op:am"
+  #     - "cl48op:l"
+  #     - "cl48op:m"
+  #     - "cl48op:h"
+  #     - "cl48op:am"
   #     - "cl46st:l"
   #     - "cl46st:m"
   #     - "cl46st:h"

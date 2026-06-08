@@ -136,12 +136,16 @@ class TestPrepareConcludingMessages:
             request_messages, intermediate_context, model_conf, sample_mom_config
         )
 
-        # Should have: original message + context separator + 2 assistant messages
-        assert len(result) >= 3
+        # Responses are embedded in a single user message with numbered delimiters.
+        assert len(result) >= 2
         assert result[0]["role"] == "user"
         assert result[0]["content"] == "What is AI?"
-        assert "llm responses" in result[1]["content"]
-        assert result[2]["role"] == "assistant"
+        assert result[1]["role"] == "user"
+        assert "2 independent LLM responses" in result[1]["content"]
+        assert "===== RESPONSE 1 of 2 =====" in result[1]["content"]
+        assert "===== RESPONSE 2 of 2 =====" in result[1]["content"]
+        assert "AI stands for Artificial Intelligence." in result[1]["content"]
+        assert "AI is a branch of computer science." in result[1]["content"]
 
     def test_prepare_messages_with_failed_fanout(self, sample_mom_config):
         """Test message preparation when all fanout calls failed"""
@@ -206,12 +210,13 @@ class TestPrepareConcludingMessages:
             request_messages, intermediate_context, model_conf, sample_mom_config
         )
 
-        # Should have original + separator + only the successful response
-        assert len(result) >= 3
-        # Count assistant messages (should be 1, not 2)
-        assistant_messages = [msg for msg in result if msg["role"] == "assistant"]
-        assert len(assistant_messages) == 1
-        assert "AI stands for Artificial Intelligence" in assistant_messages[0]["content"]
+        # Only the successful response should be embedded; the failed one excluded.
+        assert len(result) >= 2
+        combined = result[1]["content"]
+        assert "1 independent LLM responses" in combined
+        assert "===== RESPONSE 1 of 1 =====" in combined
+        assert "AI stands for Artificial Intelligence" in combined
+        assert "Error: Call failed." not in combined
 
     def test_prepare_messages_with_concluding_prompt(self):
         """Test message preparation with a custom concluding prompt"""

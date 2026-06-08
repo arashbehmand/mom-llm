@@ -137,3 +137,14 @@ class TestBuildResponsesKwargsFlattening:
         }
         kwargs = _build_responses_kwargs(params)
         assert kwargs["input"][0]["content"] == "Hello"
+
+    def test_reasoning_effort_is_forwarded(self):
+        params = {
+            "model": "xai/grok-test",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "reasoning_effort": "high",
+        }
+
+        kwargs = _build_responses_kwargs(params)
+
+        assert kwargs["reasoning_effort"] == "high"

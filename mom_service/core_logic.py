@@ -306,14 +306,25 @@ def _prepare_concluding_messages(
             }
         )
     else:
-        concl_msgs_for_llm.append(
-            {
-                "role": "user",
-                "content": "For the above content, we have the following llm responses:\n<<<<<<>>>>>>\n",
-            }
-        )
-        for item_ctx in successful_fanout_items:
-            concl_msgs_for_llm.append({"role": "assistant", "content": item_ctx.content})
+        # Embed all fan-out responses in a single user message with explicit,
+        # numbered delimiters. Per-response assistant messages get merged by
+        # providers that enforce role alternation (e.g. Gemini), collapsing N
+        # responses into one and making the synthesizer believe there is only
+        # a single candidate to work with.
+        num_responses = len(successful_fanout_items)
+        parts = [
+            f"For the above content, we received {num_responses} independent LLM "
+            f"responses. Each is a distinct expert response, delimited below. Treat "
+            f"them as separate candidates to compare and synthesize — they are NOT "
+            f"your own prior output.\n"
+        ]
+        for i, item_ctx in enumerate(successful_fanout_items, start=1):
+            parts.append(
+                f"\n===== RESPONSE {i} of {num_responses} =====\n"
+                f"{item_ctx.content}\n"
+                f"===== END RESPONSE {i} =====\n"
+            )
+        concl_msgs_for_llm.append({"role": "user", "content": "".join(parts)})
 
     if model_conf.concluding_prompt:
         prompt_defs = (
