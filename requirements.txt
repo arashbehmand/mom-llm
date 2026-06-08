@@ -1,4 +1,8 @@
 fastapi==0.136.1
+# Cap starlette: fastapi 0.136.1 only requires starlette>=0.46.0 (no upper bound),
+# but starlette 1.0.0 removed the on_startup/on_shutdown Router kwargs that fastapi
+# still passes internally, crashing app/router init on a clean build.
+starlette>=0.46.0,<1.0.0
 langfuse==4.5.1
 litellm==1.88.0
 python-dotenv==1.2.2
