@@ -130,8 +130,8 @@ llm_definitions:
             params:
               web_search_options:
                 search_context_size: high
-  - base_name: cl46st
-    model: anthropic/claude-sonnet-4-6
+  - base_name: cl5st
+    model: anthropic/claude-sonnet-5
     variants:
       - suffix: l
         params:
@@ -194,6 +194,29 @@ llm_definitions:
           reasoning_effort: max
           thinking:
             type: adaptive
+  - base_name: cl5f
+    model: anthropic/claude-fable-5
+    variants:
+      - suffix: l
+        params:
+          reasoning_effort: low
+          thinking:
+            type: adaptive
+      - suffix: m
+        params:
+          reasoning_effort: medium
+          thinking:
+            type: adaptive
+      - suffix: h
+        params:
+          reasoning_effort: high
+          thinking:
+            type: adaptive
+      - suffix: am
+        params:
+          reasoning_effort: max
+          thinking:
+            type: adaptive
   - base_name: grok420ma
     model: xai/grok-4.20-multi-agent
     api_mode: responses
@@ -229,8 +252,10 @@ llm_definitions:
     model: openrouter/qwen/qwen3.7-max
   - base_name: k26
     model: openrouter/moonshotai/kimi-k2.6
-  - base_name: glm51
-    model: openrouter/z-ai/glm-5.1
+  - base_name: k27code
+    model: openrouter/moonshotai/kimi-k2.7-code
+  - base_name: glm52
+    model: openrouter/z-ai/glm-5.2
   - base_name: ernie45t
     model: openrouter/baidu/ernie-4.5-300b-a47b
   - base_name: m3
@@ -352,7 +377,7 @@ models:
       - "cl48op:l"
       - "grok43:nr"
       - "qwn37max"
-      - "glm51"
+      - "glm52"
       - "k26"
     concluding_llm: "g31fl"
     concluding_prompt: "synth_default"
@@ -369,7 +394,7 @@ models:
       - "grok43:h"
       - "grok43:nr"
       - "k26"
-      - "glm51"
+      - "glm52"
       - "qwn37max"
       - "ernie45t"
     concluding_llm: "g31p"
@@ -384,11 +409,11 @@ models:
       - "g31p:h"
       - "g35f:h"
       - "cl48op:h"
-      - "cl46st:h"
+      - "cl5st:h"
       - "grok43:h"
       - "qwn37max"
       - "k26"
-      - "glm51"
+      - "glm52"
       - "m3"
     concluding_llm: "g31p:h"
     concluding_prompt: "synth_default"
@@ -397,16 +422,17 @@ models:
   # Elite mom - top-tier models only
   - name: "emom"
     llms_to_query:
-      - "oai55:h"
+      - "oai55:xh"
       - "cl48op:am"
-      - "cl46st:h"
+      - "cl5f:am"
+      - "cl5st:h"
       - "g31p:h"
       - "g35f:h"
       - "grok43:h"
       - "grok420ma"
       - "k26"
       # - "oai55pro:xh"   # pro family; uncomment when cost is acceptable
-    concluding_llm: "cl46st:h"
+    concluding_llm: "cl5st:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -420,9 +446,8 @@ models:
       - "cl48op:m"
       - "grok43:h"
       - "grokbuild"
-      - "glm51"
-      - "k26"
-      - "glm51"
+      - "glm52"
+      - "k27code"
       - "m3"
       - "mimo25"
     concluding_llm: "g31p"
@@ -435,7 +460,7 @@ models:
       - "oai55:m"
       - "g35f:h"
       - "cl48op:m"
-      - "cl46st:l"
+      - "cl5st:l"
       - "grok43:h"
       - "qwn37max"
     concluding_llm: "oai55:m"
@@ -448,7 +473,7 @@ models:
       # - "oaio4mdr-o"
       - "g31p:h:o"
       - "cl48op:h:o"
-      - "cl46st:h:o"
+      - "cl5st:h:o"
       - "grok43:h:o"
       - "plx-snrrp-o"
       - "plx-dr-o"
@@ -469,8 +494,8 @@ models:
       - "grokbuild"
       - "codestral"
       - "qwn37max"
-      - "k26"
-      - "glm51"
+      - "k27code"
+      - "glm52"
       - "m3"
     concluding_llm: "cl48op:h"
     concluding_prompt: "synth_default"
@@ -512,7 +537,7 @@ models:
       - "g3f:m"
       - "oai54m:m"
       - "mimo25"
-      # - "cl46st:l"
+      # - "cl5st:l"
     concluding_llm: "g35f:h"
     concluding_prompt: "synth_translate"
     include_thinking_context: true
@@ -527,16 +552,26 @@ models:
     concluding_prompt: "synth_translate"
     include_thinking_context: true
 
+  - name: "tmomh"
+    llms_to_query:
+      - "g35f:h"
+      - "g31p:h"
+      - "oai55:m"
+      - "cl5st:m"
+    concluding_llm: "cl5st:h"
+    concluding_prompt: "synth_translate"
+    include_thinking_context: true
+
   # - name: "mom-test-claude"
   #   llms_to_query:
   #     - "cl48op:l"
   #     - "cl48op:m"
   #     - "cl48op:h"
   #     - "cl48op:am"
-  #     - "cl46st:l"
-  #     - "cl46st:m"
-  #     - "cl46st:h"
-  #     - "cl46st:am"
+  #     - "cl5st:l"
+  #     - "cl5st:m"
+  #     - "cl5st:h"
+  #     - "cl5st:am"
   #   concluding_llm: "cl45hk"
   #   concluding_prompt: "synth_default"
   #   include_thinking_context: true

@@ -2,9 +2,11 @@
 Unit tests for mom_service.config module
 """
 
+from pathlib import Path
+
+from pydantic import ValidationError
 import pytest
 import yaml
-from pydantic import ValidationError
 
 from mom_service.config import (
     LLMDefinition,
@@ -123,6 +125,32 @@ class TestMoMConfig:
 
 class TestLoadConfig:
     """Tests for load_config function"""
+
+    def test_default_config_uses_current_verified_model_matrix(self):
+        """Project config should track current model replacements without broadening code models."""
+        config_path = Path(__file__).resolve().parents[1] / "config.yaml"
+
+        config = load_config(config_path=str(config_path))
+        llm_map = {llm.name: llm for llm in config.llm_definitions}
+        model_map = {model.name: model for model in config.models}
+
+        assert llm_map["cl5st"].model == "anthropic/claude-sonnet-5"
+        assert "cl46st" not in llm_map
+        assert llm_map["glm52"].model == "openrouter/z-ai/glm-5.2"
+        assert "glm51" not in llm_map
+        assert llm_map["k27code"].model == "openrouter/moonshotai/kimi-k2.7-code"
+
+        for model in config.models:
+            referenced_llms = [*model.llms_to_query, model.concluding_llm]
+            assert "cl46st" not in referenced_llms
+            assert "glm51" not in referenced_llms
+            if model.name != "mom-debug" and "k27code" in referenced_llms:
+                assert "code" in model.name
+
+        assert "oai55:xh" in model_map["emom"].llms_to_query
+        assert "oai55:h" not in model_map["emom"].llms_to_query
+        assert "k27code" in model_map["mom-code"].llms_to_query
+        assert "k27code" in model_map["ehmom-code"].llms_to_query
 
     def test_load_config_from_valid_file(self, temp_config_file):
         """Test loading configuration from a valid YAML file"""
