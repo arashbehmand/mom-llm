@@ -139,7 +139,15 @@ def _build_responses_kwargs(params: dict[str, Any]) -> dict[str, Any]:
     if params.get("api_key"):
         kwargs["api_key"] = params["api_key"]
 
-    for key in ("tools", "tool_choice", "temperature", "top_p", "user", "reasoning_effort"):
+    for key in (
+        "tools",
+        "tool_choice",
+        "temperature",
+        "top_p",
+        "user",
+        "reasoning_effort",
+        "reasoning",
+    ):
         if key in params and params[key] is not None:
             kwargs[key] = params[key]
 

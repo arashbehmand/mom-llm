@@ -148,3 +148,14 @@ class TestBuildResponsesKwargsFlattening:
         kwargs = _build_responses_kwargs(params)
 
         assert kwargs["reasoning_effort"] == "high"
+
+    def test_reasoning_config_is_forwarded(self):
+        params = {
+            "model": "openai/gpt-5.6-sol",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "reasoning": {"effort": "max", "mode": "pro"},
+        }
+
+        kwargs = _build_responses_kwargs(params)
+
+        assert kwargs["reasoning"] == {"effort": "max", "mode": "pro"}
