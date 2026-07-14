@@ -139,17 +139,18 @@ class TestLoadConfig:
         assert llm_map["glm52"].model == "openrouter/z-ai/glm-5.2"
         assert "glm51" not in llm_map
         assert llm_map["k27code"].model == "openrouter/moonshotai/kimi-k2.7-code"
-        assert llm_map["oai56"].model == "openai/gpt-5.6-sol"
+        assert llm_map["oai56s"].model == "openai/gpt-5.6-sol"
         assert llm_map["oai56t"].model == "openai/gpt-5.6-terra"
         assert llm_map["oai56l"].model == "openai/gpt-5.6-luna"
-        assert llm_map["oai56:am"].params["reasoning_effort"] == "max"
-        assert llm_map["oai56:p"].api_mode == "responses"
-        assert llm_map["oai56:p"].params["reasoning"] == {"effort": "max", "mode": "pro"}
+        assert llm_map["oai56s:xh"].params["reasoning_effort"] == "xhigh"
+        assert llm_map["oai56s:p"].api_mode == "responses"
+        assert llm_map["oai56s:p"].params["reasoning"] == {"effort": "max", "mode": "pro"}
         assert llm_map["grok45"].model == "xai/grok-4.5"
         assert "oai55" not in llm_map
         assert "oai54" not in llm_map
         assert "oai54m" not in llm_map
         assert "oai54n" not in llm_map
+        assert "oai56" not in llm_map
         assert "grok43" not in llm_map
 
         for model in config.models:
@@ -163,13 +164,13 @@ class TestLoadConfig:
             if model.name != "mom-debug" and "k27code" in referenced_llms:
                 assert "code" in model.name
 
-        assert "oai56:p" in model_map["emom"].llms_to_query
-        assert "oai56:am" not in model_map["emom"].llms_to_query
+        assert "oai56s:p" not in model_map["emom"].llms_to_query
+        assert "oai56s:p" not in model_map["ehmom-code"].llms_to_query
+        assert "oai56s:xh" in model_map["emom"].llms_to_query
         assert "grok45:l" in model_map["mom"].llms_to_query
         assert "grok45:h" in model_map["emom"].llms_to_query
         assert "oai56l" in model_map["mom-cheap"].llms_to_query
         assert "oai56l" in model_map["mom-mini"].llms_to_query
-        assert "oai56:p" in model_map["ehmom-code"].llms_to_query
         assert "k27code" in model_map["mom-code"].llms_to_query
         assert "k27code" in model_map["ehmom-code"].llms_to_query
 
