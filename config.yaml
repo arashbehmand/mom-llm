@@ -225,13 +225,16 @@ llm_definitions:
     variants:
       - suffix: l
         params:
-          reasoning_effort: low
+          reasoning:
+            effort: low
       - suffix: h
         params:
-          reasoning_effort: high
+          reasoning:
+            effort: high
       - suffix: am
         params:
-          reasoning_effort: max
+          reasoning:
+            effort: max
   - base_name: k27code
     model: openrouter/moonshotai/kimi-k2.7-code
   - base_name: muse11
@@ -240,40 +243,51 @@ llm_definitions:
     variants:
       - suffix: mi
         params:
-          reasoning_effort: minimal
+          reasoning:
+            effort: minimal
       - suffix: l
         params:
-          reasoning_effort: low
+          reasoning:
+            effort: low
       - suffix: m
         params:
-          reasoning_effort: medium
+          reasoning:
+            effort: medium
       - suffix: h
         params:
-          reasoning_effort: high
+          reasoning:
+            effort: high
       - suffix: xh
         params:
-          reasoning_effort: xhigh
+          reasoning:
+            effort: xhigh
   - base_name: ink
     model: openrouter/thinkingmachines/inkling
     variants:
       - suffix: n
         params:
-          reasoning_effort: none
+          reasoning:
+            effort: none
       - suffix: mi
         params:
-          reasoning_effort: minimal
+          reasoning:
+            effort: minimal
       - suffix: l
         params:
-          reasoning_effort: low
+          reasoning:
+            effort: low
       - suffix: m
         params:
-          reasoning_effort: medium
+          reasoning:
+            effort: medium
       - suffix: h
         params:
-          reasoning_effort: high
+          reasoning:
+            effort: high
       - suffix: am
         params:
-          reasoning_effort: max
+          reasoning:
+            effort: max
   - base_name: nem3u
     model: openrouter/nvidia/nemotron-3-ultra-550b-a55b
     params:

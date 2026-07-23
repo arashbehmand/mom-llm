@@ -175,9 +175,11 @@ class TestLoadConfig:
         assert llm_map["nem3u"].model == "openrouter/nvidia/nemotron-3-ultra-550b-a55b"
         assert llm_map["g36f:h"].params["reasoning_effort"] == "high"
         assert llm_map["g35fl:mi"].params["reasoning_effort"] == "minimal"
-        assert llm_map["k3:am"].params["reasoning_effort"] == "max"
-        assert llm_map["muse11:xh"].params["reasoning_effort"] == "xhigh"
-        assert llm_map["ink:am"].params["reasoning_effort"] == "max"
+        # OpenRouter models use the provider-native reasoning object (litellm rejects
+        # bare reasoning_effort for models it doesn't yet map as reasoning-capable).
+        assert llm_map["k3:am"].params["reasoning"] == {"effort": "max"}
+        assert llm_map["muse11:xh"].params["reasoning"] == {"effort": "xhigh"}
+        assert llm_map["ink:am"].params["reasoning"] == {"effort": "max"}
         assert "g3f" not in llm_map
         assert "g35f" not in llm_map
         assert "g31fl" not in llm_map
