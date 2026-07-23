@@ -17,20 +17,20 @@ fan-out calls succeed while others fail, ensuring the service remains resilient.
 """
 
 import asyncio
-import html
-import logging
 
 # anext is available in Python 3.10+
 from builtins import anext
 from collections.abc import AsyncGenerator
+import html
+import logging
 from typing import Any, Optional
 
-from .config import LLMDefinition
+from .config import LLMDefinition, MoMConfig
 from .config import ModelConfig as MoMModelConfig
-from .config import MoMConfig
 from .endpoints.models import LLMCallParams, ThinkingContextItem, UsageInfo
 from .events import MoMEvent
 from .llm_calls import _call_lite_llm
+
 
 logger = logging.getLogger(__name__)
 
@@ -51,15 +51,19 @@ async def call_llm(
     options = options or {}
     # Ensure the stream flag from params_obj is available to the underlying call
     options = {**options, "stream": params_obj.stream}
-    # Delegate to the low-level call with messages from params_obj
-    async for item in _call_lite_llm(
+    # Keep an explicit handle so early closure of this wrapper propagates to the provider call.
+    call_generator = _call_lite_llm(
         llm_def,
         params_obj.messages,
         timeout,
         config,
         options=options,
-    ):
-        yield item
+    )
+    try:
+        async for item in call_generator:
+            yield item
+    finally:
+        await call_generator.aclose()
 
 
 async def _perform_fanout_calls(

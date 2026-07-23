@@ -159,3 +159,15 @@ class TestBuildResponsesKwargsFlattening:
         kwargs = _build_responses_kwargs(params)
 
         assert kwargs["reasoning"] == {"effort": "max", "mode": "pro"}
+
+    def test_explicit_http_client_is_forwarded(self):
+        client = object()
+        params = {
+            "model": "openai/gpt-5.6-sol",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "client": client,
+        }
+
+        kwargs = _build_responses_kwargs(params)
+
+        assert kwargs["client"] is client

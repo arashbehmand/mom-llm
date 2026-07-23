@@ -35,6 +35,26 @@ class TestLLMDefinition:
         assert llm_def.api_mode == "auto"
         assert llm_def.params == {"temperature": 0.7}
 
+    def test_llm_definition_with_proxy_environment_variable(self):
+        llm_def = LLMDefinition(
+            name="proxied-llm",
+            model="openrouter/meta/muse-spark-1.1",
+            api_key_env="OPENROUTER_API_KEY",
+            proxy_url_env="MUSE_SPARK_PROXY_URL",
+        )
+
+        assert llm_def.proxy_url_env == "MUSE_SPARK_PROXY_URL"
+
+    @pytest.mark.parametrize("proxy_url_env", ["http://proxy.example", "9PROXY", "BAD-NAME"])
+    def test_llm_definition_rejects_invalid_proxy_environment_variable_name(self, proxy_url_env):
+        with pytest.raises(ValidationError):
+            LLMDefinition(
+                name="proxied-llm",
+                model="openrouter/meta/muse-spark-1.1",
+                api_key_env="OPENROUTER_API_KEY",
+                proxy_url_env=proxy_url_env,
+            )
+
     def test_llm_definition_without_params(self):
         """Test LLM definition with no params (should default to None)"""
         llm_def = LLMDefinition(name="test-llm", model="gpt-4", api_key_env="OPENAI_API_KEY")
@@ -146,6 +166,23 @@ class TestLoadConfig:
         assert llm_map["oai56:p"].api_mode == "responses"
         assert llm_map["oai56:p"].params["reasoning"] == {"effort": "max", "mode": "pro"}
         assert llm_map["grok45"].model == "xai/grok-4.5"
+        assert llm_map["g36f"].model == "gemini/gemini-3.6-flash"
+        assert llm_map["g35fl"].model == "gemini/gemini-3.5-flash-lite"
+        assert llm_map["k3"].model == "openrouter/moonshotai/kimi-k3"
+        assert llm_map["muse11"].model == "openrouter/meta/muse-spark-1.1"
+        assert llm_map["muse11"].proxy_url_env == "MUSE_SPARK_PROXY_URL"
+        assert llm_map["ink"].model == "openrouter/thinkingmachines/inkling"
+        assert llm_map["nem3u"].model == "openrouter/nvidia/nemotron-3-ultra-550b-a55b"
+        assert llm_map["g36f:h"].params["reasoning_effort"] == "high"
+        assert llm_map["g35fl:mi"].params["reasoning_effort"] == "minimal"
+        assert llm_map["k3:am"].params["reasoning_effort"] == "max"
+        assert llm_map["muse11:xh"].params["reasoning_effort"] == "xhigh"
+        assert llm_map["ink:am"].params["reasoning_effort"] == "max"
+        assert "g3f" not in llm_map
+        assert "g35f" not in llm_map
+        assert "g31fl" not in llm_map
+        assert "k26" not in llm_map
+        assert "kimi26" not in llm_map
         assert "oai55" not in llm_map
         assert "oai54" not in llm_map
         assert "oai54m" not in llm_map
@@ -172,6 +209,140 @@ class TestLoadConfig:
         assert "oai56:p" in model_map["ehmom-code"].llms_to_query
         assert "k27code" in model_map["mom-code"].llms_to_query
         assert "k27code" in model_map["ehmom-code"].llms_to_query
+        assert "k3:h" in model_map["hmom"].llms_to_query
+        assert "k3:am" in model_map["emom"].llms_to_query
+        assert "muse11:h" in model_map["hmom"].llms_to_query
+        assert "muse11:xh" in model_map["emom"].llms_to_query
+        assert "ink:h" in model_map["hmom"].llms_to_query
+        assert "ink:am" in model_map["emom"].llms_to_query
+        assert "nem3u" in model_map["hmom"].llms_to_query
+        assert "nem3u" in model_map["emom"].llms_to_query
+        assert model_map["mom-cheap"].concluding_llm == "g35fl:mi"
+
+    def test_load_config_materializes_invocation_aliases(self, tmp_path):
+        config_file = tmp_path / "alias_config.yaml"
+        config_file.write_text("""
+llm_definitions:
+  - base_name: g36f
+    model: gemini/gemini-3.6-flash
+    variants:
+      - suffix: h
+        params:
+          reasoning_effort: high
+
+models:
+  - name: test-model
+    llms_to_query:
+      - g36f:h
+      - g36f:h+a
+      - g36f:h+b
+    concluding_llm: g36f:h+a
+
+service:
+  timeout_seconds: 30
+""")
+
+        config = load_config(config_path=str(config_file))
+        llm_map = {llm.name: llm for llm in config.llm_definitions}
+
+        assert {"g36f:h", "g36f:h+a", "g36f:h+b"} <= set(llm_map)
+        assert llm_map["g36f:h+a"].model == llm_map["g36f:h"].model
+        assert llm_map["g36f:h+a"].params == llm_map["g36f:h"].params
+        assert llm_map["g36f:h+a"].name == "g36f:h+a"
+        assert llm_map["g36f:h+b"].name == "g36f:h+b"
+
+    @pytest.mark.parametrize(
+        "reference",
+        ["g36f:h+", "g36f:h+a+b", "+a", "g36f:h+bad alias"],
+    )
+    def test_load_config_rejects_malformed_invocation_aliases(self, tmp_path, reference):
+        config_file = tmp_path / "invalid_alias_config.yaml"
+        config_file.write_text(f"""
+llm_definitions:
+  - name: g36f:h
+    model: gemini/gemini-3.6-flash
+
+models:
+  - name: alias-model
+    llms_to_query:
+      - "{reference}"
+    concluding_llm: g36f:h
+
+service:
+  timeout_seconds: 30
+""")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            load_config(config_path=str(config_file))
+
+        assert "Invalid invocation alias" in str(exc_info.value)
+
+    def test_load_config_rejects_alias_with_unknown_base(self, tmp_path):
+        config_file = tmp_path / "unknown_alias_base_config.yaml"
+        config_file.write_text("""
+llm_definitions:
+  - name: g36f:h
+    model: gemini/gemini-3.6-flash
+
+models:
+  - name: test-model
+    llms_to_query:
+      - missing:h+a
+    concluding_llm: g36f:h
+
+service:
+  timeout_seconds: 30
+""")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            load_config(config_path=str(config_file))
+
+        assert "Unknown invocation alias base 'missing:h'" in str(exc_info.value)
+
+    def test_load_config_rejects_duplicate_model_references(self, tmp_path):
+        config_file = tmp_path / "duplicate_model_reference_config.yaml"
+        config_file.write_text("""
+llm_definitions:
+  - name: g36f:h
+    model: gemini/gemini-3.6-flash
+
+models:
+  - name: test-model
+    llms_to_query:
+      - g36f:h
+      - g36f:h
+    concluding_llm: g36f:h
+
+service:
+  timeout_seconds: 30
+""")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            load_config(config_path=str(config_file))
+
+        assert "duplicate llms_to_query reference 'g36f:h'" in str(exc_info.value)
+
+    def test_load_config_rejects_plus_in_declared_definition_name(self, tmp_path):
+        config_file = tmp_path / "reserved_plus_config.yaml"
+        config_file.write_text("""
+llm_definitions:
+  - name: custom+name
+    model: openai/gpt-5.6-luna
+
+models:
+  - name: test-model
+    llms_to_query:
+      - custom+name
+    concluding_llm: custom+name
+
+service:
+  timeout_seconds: 30
+""")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            load_config(config_path=str(config_file))
+
+        assert "reserved" in str(exc_info.value).lower()
 
     def test_load_config_from_valid_file(self, temp_config_file):
         """Test loading configuration from a valid YAML file"""

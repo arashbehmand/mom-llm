@@ -18,6 +18,7 @@ The cache is implemented using SQLite and stores requests/responses as JSON,
 keyed by a SHA256 hash of the model configuration and messages.
 """
 
+from collections.abc import AsyncGenerator
 import hashlib
 import json
 import logging
@@ -25,22 +26,25 @@ import os
 import re
 import sqlite3
 import time
-from collections.abc import AsyncGenerator
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+import httpx
 import litellm
+from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 from litellm.utils import Choices, Message, ModelResponse, Usage
 
 from . import metrics_db
 from .config import LLMDefinition, MoMConfig
 from .responses_api import call_responses_non_stream
 
+
 logger = logging.getLogger(__name__)
 
 COMPLETION_API_ROUTE = "completion"
 RESPONSES_API_ROUTE = "responses"
 REDACTED = "[REDACTED]"
+PROXIED_CALL_ERROR = "Provider request failed through configured proxy."
 
 CACHE_KEY_IGNORED_PARAMS = frozenset(
     {
@@ -200,6 +204,55 @@ def _normalize_cache_params(params: Optional[dict[str, Any]]) -> dict[str, Any]:
             continue
         normalized[key] = _normalize_nested_data(raw_value, redact_sensitive=False)
     return normalized
+
+
+class _ProxyAsyncHTTPHandler(AsyncHTTPHandler):
+    """Request-scoped LiteLLM client that never falls back to a direct connection."""
+
+    def __init__(self, proxy_url: str, timeout: int) -> None:
+        self._proxy_url = proxy_url
+        super().__init__(timeout=timeout, client_alias="mom-proxied-llm")
+
+    def create_client(
+        self,
+        timeout: Any,
+        event_hooks: Any,
+        ssl_verify: Any = None,
+        shared_session: Any = None,
+    ) -> httpx.AsyncClient:
+        del ssl_verify, shared_session
+        return httpx.AsyncClient(
+            proxy=self._proxy_url,
+            timeout=timeout,
+            event_hooks=event_hooks,
+            follow_redirects=True,
+            trust_env=False,
+        )
+
+
+class _ProxyConfigurationError(ValueError):
+    """Safe configuration error that may be returned to operators unchanged."""
+
+
+def _create_proxy_http_client(llm_def: LLMDefinition, timeout: int) -> AsyncHTTPHandler | None:
+    if not llm_def.proxy_url_env:
+        return None
+
+    proxy_url = os.getenv(llm_def.proxy_url_env)
+    if not proxy_url:
+        raise _ProxyConfigurationError(
+            f"Proxy environment variable '{llm_def.proxy_url_env}' is required for "
+            f"LLM definition '{llm_def.name}'."
+        )
+
+    parsed_proxy = urlparse(proxy_url)
+    if parsed_proxy.scheme not in {"http", "https"} or not parsed_proxy.hostname:
+        raise _ProxyConfigurationError(
+            f"Proxy environment variable '{llm_def.proxy_url_env}' must contain a valid "
+            "HTTP(S) proxy URL."
+        )
+
+    return _ProxyAsyncHTTPHandler(proxy_url=proxy_url, timeout=timeout)
 
 
 def _build_langfuse_model_parameters(params: dict[str, Any], api_route: str) -> dict[str, Any]:
@@ -522,9 +575,14 @@ async def _call_lite_llm(
 
     start_time = time.time()
     response = None
+    proxy_client: AsyncHTTPHandler | None = None
+    raise_sanitized_proxy_error = False
     try:
+        proxy_client = _create_proxy_http_client(llm_def, timeout)
+        call_params = params if proxy_client is None else {**params, "client": proxy_client}
+
         if stream:
-            response_stream = await litellm.acompletion(**params)
+            response_stream = await litellm.acompletion(**call_params)
             accumulated_usage = None
             complete_content = ""
             complete_reasoning_content = ""
@@ -596,6 +654,10 @@ async def _call_lite_llm(
                 f"Streaming completed for {llm_def.name}: {chunk_count} chunks, "
                 f"content_length={len(complete_content)}, usage_captured={accumulated_usage is not None}"
             )
+
+            if proxy_client is not None:
+                await proxy_client.close()
+                proxy_client = None
 
             if accumulated_usage:
                 logger.info(
@@ -709,9 +771,14 @@ async def _call_lite_llm(
                     llm_def.name,
                     llm_def.api_mode,
                 )
-                response = await call_responses_non_stream(llm_def, params, config)
+                response = await call_responses_non_stream(llm_def, call_params, config)
             else:
-                response = await litellm.acompletion(**params)
+                response = await litellm.acompletion(**call_params)
+
+            if proxy_client is not None:
+                await proxy_client.close()
+                proxy_client = None
+
             if config.service.cache_enabled:
                 _cache_response(cache_key, sanitized_messages, response)
 
@@ -833,11 +900,19 @@ async def _call_lite_llm(
 
             yield response
 
+    except _ProxyConfigurationError:
+        raise
     except Exception as e:
         end_time = time.time()
         duration_ms = (end_time - start_time) * 1000
+        error_message = PROXIED_CALL_ERROR if llm_def.proxy_url_env else str(e)
 
-        logger.error(f"LLM call to {llm_def.name} failed after {duration_ms:.2f}ms: {e}")
+        logger.error(
+            "LLM call to %s failed after %.2fms: %s",
+            llm_def.name,
+            duration_ms,
+            error_message,
+        )
 
         # Record metrics for failed call
         metrics_db.insert_metric_record(
@@ -852,7 +927,7 @@ async def _call_lite_llm(
                 cost=0.0,
                 duration_ms=duration_ms,
                 status="FAILED",
-                error_message=str(e)[:500],  # Truncate error message to avoid DB bloat
+                error_message=error_message[:500],
                 cache_hit=False,
             )
         )
@@ -860,8 +935,15 @@ async def _call_lite_llm(
         if generation:
             generation.update(
                 level="ERROR",
-                status_message=str(e),
+                status_message=error_message,
             )
             generation.end()
-        # Re-raise the exception to be handled by the caller
-        raise
+        if not llm_def.proxy_url_env:
+            raise
+        raise_sanitized_proxy_error = True
+    finally:
+        if proxy_client is not None:
+            await proxy_client.close()
+
+    if raise_sanitized_proxy_error:
+        raise RuntimeError(PROXIED_CALL_ERROR)

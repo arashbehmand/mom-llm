@@ -20,12 +20,17 @@ The configuration file is loaded from one of these locations (in order):
 
 from __future__ import annotations
 
-import os
 from copy import deepcopy
+import os
+import re
 from typing import Any, Literal
 
+from pydantic import BaseModel, Field, ValidationError
 import yaml
-from pydantic import BaseModel, ValidationError
+
+
+ENV_VAR_NAME_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]*$"
+INVOCATION_ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class PricingConfig(BaseModel):
@@ -93,6 +98,7 @@ class LLMDefinition(BaseModel):
     model: str
     api_key_env: str
     api_mode: Literal["auto", "completion", "responses"] = "auto"
+    proxy_url_env: str | None = Field(default=None, pattern=ENV_VAR_NAME_PATTERN)
     params: dict[str, Any] | None = None
     pricing: PricingConfig | None = None  # Custom pricing override
 
@@ -227,6 +233,8 @@ def _build_llm_definition(
     }
     if state.get("api_mode") is not None:
         llm_definition["api_mode"] = state["api_mode"]
+    if state.get("proxy_url_env") is not None:
+        llm_definition["proxy_url_env"] = state["proxy_url_env"]
     if state.get("params") is not None:
         llm_definition["params"] = state["params"]
     if state.get("pricing") is not None:
@@ -241,12 +249,21 @@ def _expand_llm_definitions(raw_definitions: Any) -> list[dict[str, Any]]:
     expanded: list[dict[str, Any]] = []
     seen_names: set[str] = set()
 
-    explicit_allowed_keys = {"name", "model", "api_key_env", "api_mode", "params", "pricing"}
+    explicit_allowed_keys = {
+        "name",
+        "model",
+        "api_key_env",
+        "api_mode",
+        "proxy_url_env",
+        "params",
+        "pricing",
+    }
     base_allowed_keys = {
         "base_name",
         "model",
         "api_key_env",
         "api_mode",
+        "proxy_url_env",
         "params",
         "pricing",
         "variants",
@@ -257,6 +274,7 @@ def _expand_llm_definitions(raw_definitions: Any) -> list[dict[str, Any]]:
         "model",
         "api_key_env",
         "api_mode",
+        "proxy_url_env",
         "params",
         "pricing",
         "variants",
@@ -264,6 +282,8 @@ def _expand_llm_definitions(raw_definitions: Any) -> list[dict[str, Any]]:
 
     def append_definition(definition: dict[str, Any], path: str) -> None:
         name = definition["name"]
+        if "+" in name:
+            raise ValueError(f"LLM definition name '{name}' at {path} uses reserved '+' character.")
         if name in seen_names:
             raise ValueError(f"Duplicate llm_definitions name '{name}' found at {path}.")
         seen_names.add(name)
@@ -312,6 +332,7 @@ def _expand_llm_definitions(raw_definitions: Any) -> list[dict[str, Any]]:
                 "model": variant.get("model", inherited_state.get("model")),
                 "api_key_env": variant.get("api_key_env", inherited_state.get("api_key_env")),
                 "api_mode": variant.get("api_mode", inherited_state.get("api_mode")),
+                "proxy_url_env": variant.get("proxy_url_env", inherited_state.get("proxy_url_env")),
                 "params": _deep_merge_dict(inherited_state.get("params"), variant.get("params")),
                 "pricing": _deep_merge_dict(inherited_state.get("pricing"), variant.get("pricing")),
             }
@@ -348,6 +369,7 @@ def _expand_llm_definitions(raw_definitions: Any) -> list[dict[str, Any]]:
                 "model": raw_definition.get("model"),
                 "api_key_env": raw_definition.get("api_key_env"),
                 "api_mode": raw_definition.get("api_mode"),
+                "proxy_url_env": raw_definition.get("proxy_url_env"),
                 "params": raw_definition.get("params"),
                 "pricing": raw_definition.get("pricing"),
             }
@@ -434,6 +456,15 @@ def _validate_model_references(config: MoMConfig) -> None:
     errors: list[str] = []
 
     for model_cfg in config.models:
+        seen_query_references: set[str] = set()
+        for reference in model_cfg.llms_to_query:
+            if reference in seen_query_references:
+                errors.append(
+                    f"models[{model_cfg.name}] contains duplicate llms_to_query reference "
+                    f"'{reference}'."
+                )
+            seen_query_references.add(reference)
+
         if model_cfg.concluding_llm not in known_llm_names:
             errors.append(
                 f"models[{model_cfg.name}].concluding_llm='{model_cfg.concluding_llm}' "
@@ -452,6 +483,32 @@ def _validate_model_references(config: MoMConfig) -> None:
 
     if errors:
         raise ValueError("Invalid model references: " + " | ".join(errors))
+
+
+def _materialize_invocation_aliases(config: MoMConfig) -> None:
+    definition_map = {llm.name: llm for llm in config.llm_definitions}
+    references: list[str] = []
+    for model_cfg in config.models:
+        references.extend(model_cfg.llms_to_query)
+        references.append(model_cfg.concluding_llm)
+
+    for reference in dict.fromkeys(references):
+        if reference in definition_map or "+" not in reference:
+            continue
+        if reference.count("+") != 1:
+            raise ValueError(f"Invalid invocation alias '{reference}'.")
+
+        base_name, alias = reference.split("+", 1)
+        if not base_name or not INVOCATION_ALIAS_PATTERN.fullmatch(alias):
+            raise ValueError(f"Invalid invocation alias '{reference}'.")
+
+        base_definition = definition_map.get(base_name)
+        if base_definition is None:
+            raise ValueError(f"Unknown invocation alias base '{base_name}' in '{reference}'.")
+
+        alias_definition = base_definition.model_copy(deep=True, update={"name": reference})
+        config.llm_definitions.append(alias_definition)
+        definition_map[reference] = alias_definition
 
 
 def load_config(config_path: str = None) -> MoMConfig:
@@ -480,6 +537,7 @@ def load_config(config_path: str = None) -> MoMConfig:
             try:
                 normalized_raw = _normalize_raw_config(raw)
                 config = MoMConfig(**normalized_raw)
+                _materialize_invocation_aliases(config)
                 _validate_model_references(config)
                 # Log the path that was successfully loaded
                 # Use a simple print here as logger might not be configured yet

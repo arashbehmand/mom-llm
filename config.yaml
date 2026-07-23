@@ -49,9 +49,12 @@ llm_definitions:
       - suffix: h
         params:
           reasoning_effort: high
-  - base_name: g3f
-    model: gemini/gemini-3-flash-preview
+  - base_name: g36f
+    model: gemini/gemini-3.6-flash
     variants:
+      - suffix: mi
+        params:
+          reasoning_effort: minimal
       - suffix: l
         params:
           reasoning_effort: low
@@ -80,23 +83,8 @@ llm_definitions:
             params:
               web_search_options:
                 search_context_size: high
-  - base_name: g31fl
-    model: gemini/gemini-3.1-flash-lite
-    variants:
-      - suffix: mi
-        params:
-          reasoning_effort: minimal
-      - suffix: l
-        params:
-          reasoning_effort: low
-      - suffix: m
-        params:
-          reasoning_effort: medium
-      - suffix: h
-        params:
-          reasoning_effort: high
-  - base_name: g35f
-    model: gemini/gemini-3.5-flash
+  - base_name: g35fl
+    model: gemini/gemini-3.5-flash-lite
     variants:
       - suffix: mi
         params:
@@ -235,10 +223,65 @@ llm_definitions:
     model: mistral/codestral-2508
   - base_name: qwn37max
     model: openrouter/qwen/qwen3.7-max
-  - base_name: k26
-    model: openrouter/moonshotai/kimi-k2.6
+  - base_name: k3
+    model: openrouter/moonshotai/kimi-k3
+    variants:
+      - suffix: l
+        params:
+          reasoning_effort: low
+      - suffix: h
+        params:
+          reasoning_effort: high
+      - suffix: am
+        params:
+          reasoning_effort: max
   - base_name: k27code
     model: openrouter/moonshotai/kimi-k2.7-code
+  - base_name: muse11
+    model: openrouter/meta/muse-spark-1.1
+    proxy_url_env: MUSE_SPARK_PROXY_URL
+    variants:
+      - suffix: mi
+        params:
+          reasoning_effort: minimal
+      - suffix: l
+        params:
+          reasoning_effort: low
+      - suffix: m
+        params:
+          reasoning_effort: medium
+      - suffix: h
+        params:
+          reasoning_effort: high
+      - suffix: xh
+        params:
+          reasoning_effort: xhigh
+  - base_name: ink
+    model: openrouter/thinkingmachines/inkling
+    variants:
+      - suffix: n
+        params:
+          reasoning_effort: none
+      - suffix: mi
+        params:
+          reasoning_effort: minimal
+      - suffix: l
+        params:
+          reasoning_effort: low
+      - suffix: m
+        params:
+          reasoning_effort: medium
+      - suffix: h
+        params:
+          reasoning_effort: high
+      - suffix: am
+        params:
+          reasoning_effort: max
+  - base_name: nem3u
+    model: openrouter/nvidia/nemotron-3-ultra-550b-a55b
+    params:
+      reasoning:
+        enabled: true
   - base_name: glm52
     model: openrouter/z-ai/glm-5.2
   - base_name: ernie45t
@@ -259,9 +302,6 @@ llm_definitions:
     model: openrouter/perplexity/sonar-deep-research
   - base_name: mimo25
     model: openrouter/xiaomi/mimo-v2.5-pro:nitro
-  - base_name: kimi26
-    model: openrouter/moonshotai/kimi-k2.6:nitro
-
 prompt_definitions:
   - name: "synth_default"
     content: |
@@ -365,8 +405,8 @@ models:
       - "grok45:l"
       - "qwn37max"
       - "glm52"
-      - "k26"
-    concluding_llm: "g31fl"
+      - "k3:l"
+    concluding_llm: "g35fl:mi"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -376,11 +416,11 @@ models:
       - "oai56:m"
       - "oai56t:h"
       - "g31p:h"
-      - "g35f:h"
+      - "g36f:h"
       - "cl48op:m"
       - "grok45:h"
       - "grok45:l"
-      - "k26"
+      - "k3:h"
       - "glm52"
       - "qwn37max"
       - "ernie45t"
@@ -394,12 +434,15 @@ models:
       - "oai56:h"
       - "oai56t:h"
       - "g31p:h"
-      - "g35f:h"
+      - "g36f:h"
       - "cl48op:h"
       - "cl5st:h"
       - "grok45:h"
+      - "muse11:h"
+      - "ink:h"
+      - "nem3u"
       - "qwn37max"
-      - "k26"
+      - "k3:h"
       - "glm52"
       - "m3"
     concluding_llm: "g31p:h"
@@ -414,10 +457,13 @@ models:
       - "cl5f:am"
       - "cl5st:h"
       - "g31p:h"
-      - "g35f:h"
+      - "g36f:h"
       - "grok45:h"
       - "grok420ma"
-      - "k26"
+      - "muse11:xh"
+      - "ink:am"
+      - "nem3u"
+      - "k3:am"
     concluding_llm: "cl5st:h"
     concluding_prompt: "synth_default"
     include_thinking_context: true
@@ -444,7 +490,7 @@ models:
   - name: "mom-creative"
     llms_to_query:
       - "oai56:m"
-      - "g35f:h"
+      - "g36f:h"
       - "cl48op:m"
       - "cl5st:l"
       - "grok45:h"
@@ -463,7 +509,7 @@ models:
       - "grok45:h:o"
       - "plx-snrrp-o"
       - "plx-dr-o"
-    concluding_llm: "g35f:h:o"
+    concluding_llm: "g36f:h:o"
     concluding_prompt: "synth_search"
     include_thinking_context: true
 
@@ -491,9 +537,9 @@ models:
   - name: "mom-ol"
     llms_to_query:
       - "grok45:h:o"
-      - "g35f:h:o"
+      - "g36f:h:o"
       - "plx-snrp-o"
-    concluding_llm: "g35f:h:o"
+    concluding_llm: "g36f:h:o"
     concluding_prompt: "synth_search"
     include_thinking_context: true
 
@@ -501,8 +547,8 @@ models:
   - name: "mom-cheap"
     llms_to_query:
       - "oai56l"
-      - "g31fl:mi"
-    concluding_llm: "g31fl:mi"
+      - "g35fl:mi"
+    concluding_llm: "g35fl:mi"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
@@ -510,37 +556,36 @@ models:
   - name: "mom-mini"
     llms_to_query:
       - "oai56l"
-      - "g3f:m"
+      - "g36f:m"
       - "cl45hk:m"
       - "dsv4:f"
-    concluding_llm: "g3f:m"
+    concluding_llm: "g36f:m"
     concluding_prompt: "synth_default"
     include_thinking_context: true
 
   - name: "tmom"
     llms_to_query:
-      - "g35f:m"
-      - "g3f:m"
+      - "g36f:m"
+      - "g35fl:m"
       - "oai56t:m"
       - "mimo25"
       # - "cl5st:l"
-    concluding_llm: "g35f:h"
+    concluding_llm: "g36f:h"
     concluding_prompt: "synth_translate"
     include_thinking_context: true
 
   - name: "tmoml"
     llms_to_query:
-      - "g35f:l"
-      - "g3f:l"
-      - "g31fl:l"
+      - "g36f:l"
+      - "g35fl:l"
       - "oai56t:l"
-    concluding_llm: "g35f:m"
+    concluding_llm: "g36f:m"
     concluding_prompt: "synth_translate"
     include_thinking_context: true
 
   - name: "tmomh"
     llms_to_query:
-      - "g35f:h"
+      - "g36f:h"
       - "g31p:h"
       - "oai56:m"
       - "cl5st:m"

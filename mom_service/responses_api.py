@@ -139,6 +139,9 @@ def _build_responses_kwargs(params: dict[str, Any]) -> dict[str, Any]:
     if params.get("api_key"):
         kwargs["api_key"] = params["api_key"]
 
+    if params.get("client") is not None:
+        kwargs["client"] = params["client"]
+
     for key in (
         "tools",
         "tool_choice",

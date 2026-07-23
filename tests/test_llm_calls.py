@@ -5,6 +5,7 @@ Integration tests for mom_service.llm_calls module
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from aiohttp import web
 import pytest
 import respx
 
@@ -16,6 +17,7 @@ from mom_service.llm_calls import (
     _generate_cache_key,
     _get_cached_response,
     _init_cache_db,
+    _ProxyAsyncHTTPHandler,
 )
 
 
@@ -59,6 +61,20 @@ class TestCacheDatabase:
         key2 = _generate_cache_key(sample_llm_definition, messages2, params)
 
         assert key1 != key2
+
+    def test_generate_cache_key_distinguishes_invocation_aliases(
+        self, sample_llm_definition, sample_request_messages
+    ):
+        base = sample_llm_definition.model_copy(update={"name": "g36f:h"})
+        alias_a = sample_llm_definition.model_copy(update={"name": "g36f:h+a"})
+        alias_b = sample_llm_definition.model_copy(update={"name": "g36f:h+b"})
+
+        keys = {
+            _generate_cache_key(llm_def, sample_request_messages, {"reasoning_effort": "high"})
+            for llm_def in (base, alias_a, alias_b)
+        }
+
+        assert len(keys) == 3
 
     def test_generate_cache_key_ignores_runtime_and_sensitive_params(
         self, sample_llm_definition, sample_request_messages
@@ -123,6 +139,37 @@ class TestCacheOperations:
 
 
 @pytest.mark.asyncio
+async def test_proxy_http_handler_routes_requests_through_configured_proxy():
+    proxy_requests = []
+
+    async def proxy_handler(request):
+        proxy_requests.append(request.raw_path)
+        return web.json_response({"proxied": True})
+
+    app = web.Application()
+    app.router.add_route("*", "/{path:.*}", proxy_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+
+    client = _ProxyAsyncHTTPHandler(proxy_url=f"http://127.0.0.1:{port}", timeout=5)
+    try:
+        response = await client.post(
+            "http://upstream.example/v1/chat/completions",
+            json={"model": "test"},
+        )
+    finally:
+        await client.close()
+        await runner.cleanup()
+
+    assert response.json() == {"proxied": True}
+    assert proxy_requests
+    assert "upstream.example" in proxy_requests[0]
+
+
+@pytest.mark.asyncio
 class TestCallLiteLLM:
     """Tests for _call_lite_llm function"""
 
@@ -169,6 +216,312 @@ class TestCallLiteLLM:
             assert result.id == "test-response-id"
             assert result.choices[0].message.content == "Paris is the capital of France."
             mock_acompletion.assert_called_once()
+
+    async def test_call_litellm_uses_and_closes_configured_proxy_session(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+        mock_litellm_response,
+        monkeypatch,
+    ):
+        proxy_url = "http://proxy-user:proxy-password@us-proxy.example:8080"
+        monkeypatch.setenv("MUSE_SPARK_PROXY_URL", proxy_url)
+        llm_definition = LLMDefinition(
+            name="muse11:h",
+            model="openrouter/meta/muse-spark-1.1",
+            api_key_env="OPENROUTER_API_KEY",
+            proxy_url_env="MUSE_SPARK_PROXY_URL",
+            params={"reasoning_effort": "high"},
+        )
+        captured_client = None
+
+        async def fake_acompletion(**kwargs):
+            nonlocal captured_client
+            captured_client = kwargs["client"]
+            return mock_litellm_response
+
+        with patch("mom_service.llm_calls.litellm.acompletion", side_effect=fake_acompletion):
+            result_gen = call_llm(
+                llm_definition,
+                LLMCallParams(
+                    model=llm_definition.model,
+                    messages=sample_request_messages,
+                    stream=False,
+                ),
+                timeout=30,
+                config=sample_mom_config,
+            )
+
+            result = await anext(result_gen)
+            await result_gen.aclose()
+
+        assert result.id == "test-response-id"
+        assert captured_client is not None
+        assert captured_client.client.is_closed is True
+
+    async def test_call_litellm_requires_configured_proxy_environment_variable(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+        monkeypatch,
+    ):
+        monkeypatch.delenv("MUSE_SPARK_PROXY_URL", raising=False)
+        llm_definition = LLMDefinition(
+            name="muse11:h",
+            model="openrouter/meta/muse-spark-1.1",
+            api_key_env="OPENROUTER_API_KEY",
+            proxy_url_env="MUSE_SPARK_PROXY_URL",
+        )
+
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion:
+            result_gen = call_llm(
+                llm_definition,
+                LLMCallParams(
+                    model=llm_definition.model,
+                    messages=sample_request_messages,
+                    stream=False,
+                ),
+                timeout=30,
+                config=sample_mom_config,
+            )
+
+            with pytest.raises(ValueError, match="MUSE_SPARK_PROXY_URL"):
+                await anext(result_gen)
+
+            mock_acompletion.assert_not_called()
+
+    async def test_proxy_url_is_not_added_to_litellm_params(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+        mock_litellm_response,
+        monkeypatch,
+    ):
+        proxy_url = "http://proxy-user:proxy-password@us-proxy.example:8080"
+        monkeypatch.setenv("MUSE_SPARK_PROXY_URL", proxy_url)
+        llm_definition = LLMDefinition(
+            name="muse11:h",
+            model="openrouter/meta/muse-spark-1.1",
+            api_key_env="OPENROUTER_API_KEY",
+            proxy_url_env="MUSE_SPARK_PROXY_URL",
+        )
+
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as mock_acompletion:
+            mock_acompletion.return_value = mock_litellm_response
+            result_gen = call_llm(
+                llm_definition,
+                LLMCallParams(
+                    model=llm_definition.model,
+                    messages=sample_request_messages,
+                    stream=False,
+                ),
+                timeout=30,
+                config=sample_mom_config,
+            )
+
+            await anext(result_gen)
+            await result_gen.aclose()
+
+        call_kwargs = mock_acompletion.call_args.kwargs
+        assert proxy_url not in repr(call_kwargs)
+        assert "proxy_url" not in call_kwargs
+        assert "proxy_url_env" not in call_kwargs
+
+    async def test_proxy_client_closes_when_provider_call_fails(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+        monkeypatch,
+    ):
+        proxy_url = "http://proxy-user:proxy-password@us-proxy.example:8080"
+        monkeypatch.setenv("MUSE_SPARK_PROXY_URL", proxy_url)
+        llm_definition = LLMDefinition(
+            name="muse11:h",
+            model="openrouter/meta/muse-spark-1.1",
+            api_key_env="OPENROUTER_API_KEY",
+            proxy_url_env="MUSE_SPARK_PROXY_URL",
+        )
+        captured_client = None
+
+        async def failing_acompletion(**kwargs):
+            nonlocal captured_client
+            captured_client = kwargs["client"]
+            raise RuntimeError(f"proxy connection failed: {proxy_url}")
+
+        with patch("mom_service.llm_calls.litellm.acompletion", side_effect=failing_acompletion):
+            result_gen = call_llm(
+                llm_definition,
+                LLMCallParams(
+                    model=llm_definition.model,
+                    messages=sample_request_messages,
+                    stream=False,
+                ),
+                timeout=30,
+                config=sample_mom_config,
+            )
+
+            with pytest.raises(RuntimeError):
+                await anext(result_gen)
+
+        assert captured_client is not None
+        assert captured_client.client.is_closed is True
+
+    async def test_proxied_error_does_not_leak_proxy_url_to_observability(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+        mock_langfuse_client,
+        monkeypatch,
+        caplog,
+    ):
+        proxy_url = "http://proxy-user:proxy-password@us-proxy.example:8080"
+        monkeypatch.setenv("MUSE_SPARK_PROXY_URL", proxy_url)
+        llm_definition = LLMDefinition(
+            name="muse11:h",
+            model="openrouter/meta/muse-spark-1.1",
+            api_key_env="OPENROUTER_API_KEY",
+            proxy_url_env="MUSE_SPARK_PROXY_URL",
+        )
+
+        with (
+            patch(
+                "mom_service.llm_calls.litellm.acompletion",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError(f"proxy connection failed: {proxy_url}"),
+            ),
+            patch("mom_service.llm_calls.metrics_db.insert_metric_record") as insert_metric,
+        ):
+            result_gen = call_llm(
+                llm_definition,
+                LLMCallParams(
+                    model=llm_definition.model,
+                    messages=sample_request_messages,
+                    stream=False,
+                ),
+                timeout=30,
+                config=sample_mom_config,
+                options={
+                    "trace": mock_langfuse_client.start_observation.return_value,
+                    "generation_name": "proxied-call",
+                },
+            )
+
+            with pytest.raises(RuntimeError) as exc_info:
+                await anext(result_gen)
+
+        metric_record = insert_metric.call_args.args[0]
+        generation = (
+            mock_langfuse_client.start_observation.return_value.start_observation.return_value
+        )
+        trace_status = generation.update.call_args.kwargs["status_message"]
+
+        assert proxy_url not in caplog.text
+        assert "proxy-password" not in caplog.text
+        assert proxy_url not in metric_record.error_message
+        assert "proxy-password" not in metric_record.error_message
+        assert proxy_url not in trace_status
+        assert "proxy-password" not in trace_status
+        assert str(exc_info.value) == "Provider request failed through configured proxy."
+        assert proxy_url not in str(exc_info.value)
+        assert exc_info.value.__context__ is None
+        assert exc_info.value.__cause__ is None
+
+    async def test_proxied_cache_hit_does_not_require_proxy_environment_variable(
+        self,
+        sample_mom_config,
+        mock_litellm_response,
+        monkeypatch,
+    ):
+        proxy_url = "http://proxy-user:proxy-password@us-proxy.example:8080"
+        monkeypatch.setenv("MUSE_SPARK_PROXY_URL", proxy_url)
+        sample_mom_config.service.cache_enabled = True
+        llm_definition = LLMDefinition(
+            name="muse11:cache-test",
+            model="openrouter/meta/muse-spark-1.1",
+            api_key_env="OPENROUTER_API_KEY",
+            proxy_url_env="MUSE_SPARK_PROXY_URL",
+        )
+        messages = [{"role": "user", "content": "unique proxied cache test"}]
+        call_params = LLMCallParams(
+            model=llm_definition.model,
+            messages=messages,
+            stream=False,
+        )
+
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as first_call:
+            first_call.return_value = mock_litellm_response
+            first_result_gen = call_llm(
+                llm_definition,
+                call_params,
+                timeout=30,
+                config=sample_mom_config,
+            )
+            await anext(first_result_gen)
+            await first_result_gen.aclose()
+
+        monkeypatch.delenv("MUSE_SPARK_PROXY_URL")
+        with patch(
+            "mom_service.llm_calls.litellm.acompletion", new_callable=AsyncMock
+        ) as second_call:
+            second_result_gen = call_llm(
+                llm_definition,
+                call_params,
+                timeout=30,
+                config=sample_mom_config,
+            )
+            cached_result = await anext(second_result_gen)
+
+        second_call.assert_not_called()
+        assert cached_result._is_cached is True
+
+    async def test_streaming_proxy_client_closes_on_early_generator_close(
+        self,
+        sample_request_messages,
+        sample_mom_config,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("MUSE_SPARK_PROXY_URL", "http://us-proxy.example:8080")
+        llm_definition = LLMDefinition(
+            name="muse11:h",
+            model="openrouter/meta/muse-spark-1.1",
+            api_key_env="OPENROUTER_API_KEY",
+            proxy_url_env="MUSE_SPARK_PROXY_URL",
+        )
+        captured_client = None
+
+        async def response_stream():
+            yield {"choices": [{"delta": {"content": "partial"}}]}
+            yield {"choices": [{"delta": {"content": " response"}}]}
+
+        async def fake_acompletion(**kwargs):
+            nonlocal captured_client
+            captured_client = kwargs["client"]
+            return response_stream()
+
+        with patch("mom_service.llm_calls.litellm.acompletion", side_effect=fake_acompletion):
+            result_gen = call_llm(
+                llm_definition,
+                LLMCallParams(
+                    model=llm_definition.model,
+                    messages=sample_request_messages,
+                    stream=True,
+                ),
+                timeout=30,
+                config=sample_mom_config,
+            )
+
+            first_chunk = await anext(result_gen)
+            assert captured_client.client.is_closed is False
+            await result_gen.aclose()
+
+        assert first_chunk["choices"][0]["delta"]["content"] == "partial"
+        assert captured_client.client.is_closed is True
 
     @respx.mock
     async def test_call_litellm_with_cache_hit(
@@ -500,13 +853,16 @@ class TestCallLiteLLM:
         self,
         sample_request_messages,
         sample_mom_config,
+        monkeypatch,
     ):
         """Test api_mode='responses' routes to Responses API without tools."""
+        monkeypatch.setenv("MUSE_SPARK_PROXY_URL", "http://us-proxy.example:8080")
         llm_definition = LLMDefinition(
             name="grok41fr:responses",
             model="xai/grok-4-1-fast-reasoning",
             api_key_env="XAI_API_KEY",
             api_mode="responses",
+            proxy_url_env="MUSE_SPARK_PROXY_URL",
             params={"temperature": 0.3},
         )
 
@@ -557,6 +913,8 @@ class TestCallLiteLLM:
             assert result.choices[0].message.content == "Responses mode output."
             mock_aresponses.assert_called_once()
             mock_acompletion.assert_not_called()
+            responses_client = mock_aresponses.call_args.kwargs["client"]
+            assert responses_client.client.is_closed is True
 
     @respx.mock
     async def test_call_explicit_completion_api_mode_keeps_completion_api(

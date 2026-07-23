@@ -200,6 +200,26 @@ llm_definitions:
             - type: "x_search"
 ```
 
+### Per-Model Outbound Proxy
+
+Set `proxy_url_env` to the name of an environment variable containing an HTTP(S) proxy URL.
+Only calls made through that LLM definition use the proxy. The URL is not included in cache
+keys, metrics, logs, or Langfuse model parameters.
+
+```yaml
+llm_definitions:
+  - base_name: "muse11"
+    model: "openrouter/meta/muse-spark-1.1"
+    proxy_url_env: "MUSE_SPARK_PROXY_URL"
+```
+
+```bash
+MUSE_SPARK_PROXY_URL="http://user:password@us-proxy.example:8080"
+```
+
+The configured environment variable must exist when an uncached request is made. Cache hits
+do not create a proxy client.
+
 ### LLM with Custom Pricing
 
 For models with special pricing (like reasoning tokens), you can define custom pricing:
@@ -317,6 +337,26 @@ models:
     concluding_llm: "gpt4:h"  # LLM that synthesizes responses
     concluding_prompt: "synth_default"  # Prompt for synthesis
 ```
+
+### Independent Invocation Aliases
+
+Append `+<alias>` to a configured LLM name when the same definition should run more than once.
+The base invocation and multiple aliases can coexist in one ensemble:
+
+```yaml
+models:
+  - name: "comparison-mom"
+    llms_to_query:
+      - "g36f:h"
+      - "g36f:h+a"
+      - "g36f:h+b"
+    concluding_llm: "g36f:h"
+```
+
+`g36f:h+a` and `g36f:h+b` inherit the model, parameters, pricing, API mode, API-key environment,
+and proxy setting from `g36f:h`. Each name has a separate cache identity. Alias names may use
+letters, digits, `.`, `_`, and `-`; chained aliases and `+` in declared definition names are
+rejected.
 
 ### MoM Model with Thinking Context
 
