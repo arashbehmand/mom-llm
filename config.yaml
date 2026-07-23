@@ -488,7 +488,7 @@ models:
   - name: "mom-creative"
     llms_to_query:
       - "oai56s:m"
-      - "g35f:h"
+      - "g36f:h"
       - "cl48op:m"
       - "cl5st:l"
       - "grok45:h"
