@@ -11,7 +11,7 @@ llm_definitions:
       - suffix: h
         params:
           reasoning_effort: high
-  - base_name: oai56
+  - base_name: oai56s
     model: openai/gpt-5.6-sol
     variants:
       - suffix: n
@@ -29,9 +29,6 @@ llm_definitions:
       - suffix: xh
         params:
           reasoning_effort: xhigh
-      - suffix: am
-        params:
-          reasoning_effort: max
       - suffix: p
         api_mode: responses
         params:
@@ -398,7 +395,7 @@ models:
   # Standard mom - balanced mix of models, low reasoning
   - name: "mom"
     llms_to_query:
-      - "oai56:l"
+      - "oai56s:l"
       - "oai56t:l"
       - "g31p"
       - "cl48op:l"
@@ -413,7 +410,7 @@ models:
   # Big mom - medium/high reasoning across providers
   - name: "bmom"
     llms_to_query:
-      - "oai56:m"
+      - "oai56s:m"
       - "oai56t:h"
       - "g31p:h"
       - "g36f:h"
@@ -431,7 +428,7 @@ models:
   # Huge mom - maximum coverage with all flagship models
   - name: "hmom"
     llms_to_query:
-      - "oai56:h"
+      - "oai56s:h"
       - "oai56t:h"
       - "g31p:h"
       - "g36f:h"
@@ -452,7 +449,8 @@ models:
   # Elite mom - top-tier models only
   - name: "emom"
     llms_to_query:
-      - "oai56:p"
+      - "oai56s:xh"
+      # - "oai56s:p"  # Pro mode: very slow and expensive; opt in deliberately.
       - "cl48op:am"
       - "cl5f:am"
       - "cl5st:h"
@@ -471,7 +469,7 @@ models:
   # Code mom - coding-optimized models
   - name: "mom-code"
     llms_to_query:
-      - "oai56:m"
+      - "oai56s:m"
       - "oai53cdx:m"
       - "oai56t:m"
       - "g31p:h"
@@ -489,13 +487,13 @@ models:
   # Creative mom - for creative/writing tasks
   - name: "mom-creative"
     llms_to_query:
-      - "oai56:m"
-      - "g36f:h"
+      - "oai56s:m"
+      - "g35f:h"
       - "cl48op:m"
       - "cl5st:l"
       - "grok45:h"
       - "qwn37max"
-    concluding_llm: "oai56:m"
+    concluding_llm: "oai56s:m"
     concluding_prompt: "synth_creative"
     include_thinking_context: true
 
@@ -516,8 +514,8 @@ models:
   # Elite huge mom code - top-tier coding models, expensive but best quality
   - name: "ehmom-code"
     llms_to_query:
-      - "oai56:h"
-      - "oai56:p"
+      - "oai56s:h"
+      # - "oai56s:p"  # Pro mode: very slow and expensive; opt in deliberately.
       - "oai53cdx:h"
       - "oai56t:h"
       - "g31p:h"
@@ -587,7 +585,7 @@ models:
     llms_to_query:
       - "g36f:h"
       - "g31p:h"
-      - "oai56:m"
+      - "oai56s:m"
       - "cl5st:m"
     concluding_llm: "cl5st:h"
     concluding_prompt: "synth_translate"
