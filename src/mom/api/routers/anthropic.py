@@ -25,7 +25,12 @@ async def messages(req: MessagesRequest, container: ContainerDep) -> object:
 
     ir = messages_request_to_ir(req, stream=req.stream)
     plan = resolve_plan(container.catalog, ir)
-    deps = PipelineDeps(client=container.client, clock=container.clock)
+    deps = PipelineDeps(
+        client=container.client,
+        clock=container.clock,
+        recorder=container.metrics,
+        request_id=container.ids.new_id("req"),
+    )
     message_id = container.ids.new_id("msg")
     if req.stream:
         stream = encode_sse(run_ensemble(plan, deps), message_id=message_id, model=ir.model)

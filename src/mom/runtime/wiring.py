@@ -16,6 +16,7 @@ from mom.domain.ports import LLMClient
 from mom.runtime.clock import SystemClock, UuidIds
 from mom.runtime.settings import Settings
 from mom.store.cache import SqliteCacheStore
+from mom.store.metrics import MetricsRecorder, MetricsStore
 
 
 def resolve_data_dir(settings: Settings, catalog: ResolvedCatalog) -> Path:
@@ -45,12 +46,20 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
         client = CachingClient(client, cache, clock)
         closers.append(cache.close)
 
+    metrics_store = await MetricsStore.open(data_dir / "metrics.db")
+    recorder = MetricsRecorder(metrics_store)
+    await recorder.start()
+    closers.append(recorder.stop)
+    closers.append(metrics_store.close)
+
     container = Container(
         settings=settings,
         catalog=catalog,
         client=client,
         clock=clock,
         ids=UuidIds(),
+        metrics=recorder,
+        metrics_reader=metrics_store,
     )
 
     async def cleanup() -> None:
