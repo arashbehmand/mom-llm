@@ -44,16 +44,3 @@ async def chat_completions(req: ChatCompletionRequest, container: ContainerDep) 
     result = await collect(run_ensemble(plan, deps))
     response = build_completion(result, frame, show_work=plan.show_work)
     return JSONResponse(response.model_dump())
-
-
-models_router = APIRouter(dependencies=[Depends(require_api_key)])
-
-
-@models_router.get("/models")
-async def list_models(container: ContainerDep) -> dict[str, object]:
-    created = int(container.clock.now())
-    data = [
-        {"id": name, "object": "model", "created": created, "owned_by": "mom"}
-        for name in container.catalog.ensembles
-    ]
-    return {"object": "list", "data": data}

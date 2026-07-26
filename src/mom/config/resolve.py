@@ -93,6 +93,7 @@ class ResolvedSynthesizer:
 @dataclass(frozen=True, slots=True)
 class ResolvedEnsemble:
     name: str
+    description: str | None
     strategy: str
     effort_tiers: tuple[EffortLevel, ...] | None
     default_tier: EffortLevel | None
@@ -289,6 +290,7 @@ def _resolve_ensemble(
 
     return ResolvedEnsemble(
         name=name,
+        description=ens.description,
         strategy=ens.strategy,
         effort_tiers=tiers,
         default_tier=ens.default_tier,

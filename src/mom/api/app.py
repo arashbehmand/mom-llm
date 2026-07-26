@@ -16,9 +16,9 @@ from mom import __version__
 from mom.api.deps import Container
 from mom.api.errors import install_error_handlers
 from mom.api.routers.anthropic import router as anthropic_router
-from mom.api.routers.chat import models_router
 from mom.api.routers.chat import router as chat_router
 from mom.api.routers.metrics import router as metrics_router
+from mom.api.routers.models import router as models_router
 from mom.api.routers.responses import router as responses_router
 from mom.runtime.settings import Settings
 
