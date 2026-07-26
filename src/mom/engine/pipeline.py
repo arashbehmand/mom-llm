@@ -10,6 +10,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
+import uuid
 
 from mom.domain.cost import compute_cost
 from mom.domain.errors import MomError, UpstreamError, UpstreamTimeout
@@ -27,10 +28,19 @@ from mom.domain.events import (
     ToolCallStarted,
 )
 from mom.domain.metrics import CallMetric, MetricsSink, TurnType
-from mom.domain.ports import CallSpec, Clock, CompletionChunk, LLMClient, Tracer
+from mom.domain.ports import (
+    CallSpec,
+    Clock,
+    CompletionChunk,
+    IdFactory,
+    LLMClient,
+    ToolCallCustody,
+    Tracer,
+)
 from mom.domain.prompt_caching import inject_anthropic_cache
 from mom.domain.results import EnsembleResult, ModelOutcome, OutcomeStatus, Usage
 from mom.domain.synthesis import all_failed_message, build_synthesis_messages
+from mom.domain.tooling import restore_provider_tool_ids, select_member_tool_call
 from mom.engine.plan import ExecutionPlan, PlannedMember
 from mom.runtime.logging import get_logger
 
@@ -45,6 +55,15 @@ class PipelineDeps:
     recorder: MetricsSink | None = None
     tracer: Tracer | None = None
     request_id: str = ""
+    ids: IdFactory | None = None
+    custody: ToolCallCustody | None = None
+
+
+def _mint_call_id(deps: PipelineDeps) -> str:
+    """A stable, client-facing tool-call id that never carries a provider-native signature."""
+    if deps.ids is not None:
+        return deps.ids.new_id("call")
+    return f"call_{uuid.uuid4().hex}"
 
 
 def _record_member(
@@ -127,7 +146,10 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
         logger.warning("member call failed", llm=member.identity, error=str(exc))
         return ModelOutcome(**common, status="error", error="call failed")  # type: ignore[arg-type]
     duration_ms = (deps.clock.now() - start) * 1000.0
-    status: OutcomeStatus = "ok" if completion.content.strip() else "empty"
+    # A member that only proposed tool calls (no prose) is still a real answer, not "empty" — its
+    # proposal feeds the candidate envelope and the vote/first strategies.
+    answered = bool(completion.content.strip() or completion.tool_calls)
+    status: OutcomeStatus = "ok" if answered else "empty"
     # Config pricing wins; otherwise fall back to the adapter's litellm cost. Cache hits cost $0.
     if completion.cached:
         cost = 0.0
@@ -144,6 +166,7 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
         cached=completion.cached,
         duration_ms=duration_ms,
         cost_usd=cost,
+        tool_calls=completion.tool_calls,
     )
 
 
@@ -197,6 +220,48 @@ async def _stream_with_timeout(
         yield chunk
 
 
+def _short_circuit_tool_events(
+    deps: PipelineDeps, calls: tuple[dict[str, Any], ...], outcomes: list[ModelOutcome]
+) -> list[StreamEvent]:
+    """Emit a member-selected (vote/first) tool call directly, minting client ids, no synthesis.
+
+    Provider ids from members are dropped (not stashed): a relay continuation goes to the
+    synthesizer, so there is nothing for a member id to restore. The final ``Completed`` carries
+    the members' usage/cost (no synthesizer call was made).
+    """
+    events: list[StreamEvent] = []
+    for index, call in enumerate(calls):
+        fn = call.get("function", {})
+        name = str(fn.get("name") or "") if isinstance(fn, dict) else ""
+        events.append(ToolCallStarted(index=index, call_id=_mint_call_id(deps), name=name))
+        arguments = fn.get("arguments") if isinstance(fn, dict) else None
+        if arguments:
+            events.append(ToolCallDelta(index=index, arguments_fragment=str(arguments)))
+    total_usage = Usage()
+    for outcome in outcomes:
+        total_usage = total_usage + outcome.usage
+    total_cost = sum(o.cost_usd for o in outcomes)
+    events.append(
+        Completed(finish_reason="tool_calls", usage=total_usage, total_cost_usd=total_cost)
+    )
+    return events
+
+
+def _restore_relay_ids(
+    deps: PipelineDeps, plan: ExecutionPlan, messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """On a relay turn, swap minted client ids back to the synthesizer's provider-native ids."""
+    custody = deps.custody
+    if custody is None:
+        return messages
+    synth_llm = plan.synth.llm_name
+
+    def _lookup(client_id: str) -> str | None:
+        return custody.provider_id(client_id, synth_llm)
+
+    return restore_provider_tool_ids(messages, _lookup)
+
+
 def _synth_spec(plan: ExecutionPlan, messages: list[dict[str, object]]) -> CallSpec:
     return CallSpec(
         llm_name=plan.synth.llm_name,
@@ -220,6 +285,8 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             if plan.skip_reason is not None:
                 yield FanoutSkipped(plan.skip_reason)
             synth_messages = plan.client_messages
+            if plan.skip_reason == "tool_continuation":
+                synth_messages = _restore_relay_ids(deps, plan, synth_messages)
         else:
             async for event in _fan_out(deps, plan):
                 if isinstance(event, MemberCompleted):
@@ -241,6 +308,21 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                             error=outcome.error,
                         )
                 yield event
+            # vote/first: if members agree on a tool call, return it directly and skip synthesis.
+            # Order by config (not fan-out completion) so `first` and vote tie-breaks are stable.
+            if plan.tool_strategy in ("vote", "first"):
+                rank = {member.identity: i for i, member in enumerate(plan.members)}
+                ordered = sorted(outcomes, key=lambda o: rank.get(o.identity, len(rank)))
+                selected = select_member_tool_call(
+                    ordered, strategy=plan.tool_strategy, threshold=plan.vote_threshold
+                )
+                if selected:
+                    # SynthesisStarted marks the work→answer boundary for the encoders (e.g. it
+                    # closes an inline <think> block) even though no synthesizer call is made.
+                    yield SynthesisStarted(plan.synth.llm_name, plan.synth.model)
+                    for tool_event in _short_circuit_tool_events(deps, selected, outcomes):
+                        yield tool_event
+                    return
             if any(o.ok for o in outcomes):
                 synth_messages = build_synthesis_messages(
                     plan.client_messages,
@@ -272,10 +354,14 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 index = int(call.get("index", 0))
                 if index not in started_tools:
                     started_tools.add(index)
+                    # Mint a client-facing id; stash the provider-native one (incl. any
+                    # `__thought__` signature) for a later relay, never leaking it to the client.
+                    minted = _mint_call_id(deps)
+                    provider_id = str(call.get("id") or "")
+                    if provider_id and deps.custody is not None:
+                        deps.custody.remember(minted, provider_id, plan.synth.llm_name)
                     yield ToolCallStarted(
-                        index=index,
-                        call_id=str(call.get("id") or ""),
-                        name=str(call.get("name") or ""),
+                        index=index, call_id=minted, name=str(call.get("name") or "")
                     )
                 fragment = call.get("arguments")
                 if fragment:

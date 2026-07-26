@@ -16,6 +16,7 @@ from mom.config.resolve import ResolvedCatalog
 from mom.domain.ports import LLMClient, Tracer
 from mom.runtime.clock import SystemClock, UuidIds
 from mom.runtime.container import Container
+from mom.runtime.custody import InMemoryToolCallCustody
 from mom.runtime.settings import Settings
 from mom.store.cache import SqliteCacheStore
 from mom.store.metrics import MetricsRecorder, MetricsStore
@@ -80,6 +81,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
         metrics=recorder,
         metrics_reader=metrics_store,
         tracer=tracer,
+        custody=InMemoryToolCallCustody(),
     )
 
     async def cleanup() -> None:

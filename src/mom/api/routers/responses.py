@@ -28,6 +28,8 @@ async def responses(req: ResponsesRequest, container: ContainerDep) -> object:
         recorder=container.metrics,
         tracer=container.tracer,
         request_id=container.ids.new_id("req"),
+        ids=container.ids,
+        custody=container.custody,
     )
     response_id = container.ids.new_id("resp")
     created = int(container.clock.now())

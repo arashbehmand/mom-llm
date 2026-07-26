@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file. The format is b
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Tool-calling depth** (#14), building on the synthesizer-owned tool loop:
+  - **Candidate envelope** — a member's proposed `tool_calls` are captured on its `ModelOutcome`
+    (a tool-only proposal now counts as a real answer) and summarized to the synthesizer as
+    advisory context.
+  - **Tool strategies** `arbitrate` (default) | `vote` | `first` (`ensembles.<name>.tools.strategy`,
+    with `vote_threshold`). `vote`/`first` hand members the real tool schemas and can return a
+    member's call directly, skipping synthesis; both fall back to `arbitrate` when undecided.
+  - **MoM-minted tool-call ids** with process-local custody: the client always sees a minted
+    `call_…` id, never the provider-native one (notably Gemini's `__thought__` thought-signature),
+    which is restored on a relay continuation to the same synthesizer.
+  - **Streaming compat profiles** `compat` (default) | `strict` for tool-call deltas
+    (`tools.stream_profile`; an AI-SDK `User-Agent` forces `compat`). `compat` re-emits
+    `id`/`type`/`function.name` on every delta.
+  - Responses `type: mcp` tool blocks are **forwarded** to a synthesizer whose provider supports
+    remote MCP (else the clean 400 is kept), and streamed Anthropic thinking blocks now carry an
+    opaque `signature_delta`.
+
 ## [2.0.0] - 2026-07-26
 
 A ground-up rebuild of MoM as the `mom` package (src-layout, distribution `mom-llm`, CLI `mom`).

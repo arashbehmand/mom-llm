@@ -345,7 +345,12 @@ ensembles:
       - { llm: flash,  effort: [skip, m, h] }
     synthesizer: { llm: claude, effort: [m, h, h], prompt: synth_default }
     show_work: native
-    tools: { continuation: relay, member_tool_context: summary }
+    tools:
+      continuation: relay          # relay (default) | fanout
+      member_tool_context: summary # summary (default) | none
+      strategy: arbitrate          # arbitrate (default) | vote | first
+      vote_threshold: 2            # min members agreeing, for strategy: vote
+      stream_profile: compat       # compat (default) | strict
     advertise: { context_length: 200000 }
     on_input_overflow: skip
 ```
@@ -385,7 +390,24 @@ ensembles:
     every turn.
   - `member_tool_context: summary` (default) | `none`. On a fresh turn that carries tools,
     `summary` gives advisory members a schema-free description of the available tools (they
-    cannot invoke tools themselves); `none` omits it.
+    cannot invoke tools themselves); `none` omits it. Ignored under `strategy: vote`/`first`,
+    where members instead receive the real tool schemas.
+  - `strategy: arbitrate` (default) | `vote` | `first` — how a tool call is chosen when the
+    request carries tools:
+    - `arbitrate`: the **synthesizer** decides; members stay advisory, and any calls they
+      propose are surfaced to the synthesizer as context (the candidate envelope).
+    - `vote`: members receive the real tools; if at least `vote_threshold` of them propose the
+      **same** call (matched by name + normalized arguments), that call is returned directly and
+      synthesis is skipped. Otherwise it falls back to `arbitrate`.
+    - `first`: members receive the real tools; the first member (in config order) that proposes a
+      tool call has its call(s) returned directly, skipping synthesis. Falls back to `arbitrate`
+      when no member proposes one.
+  - `vote_threshold` (default `2`, ≥ 1) — the minimum number of distinct members that must agree
+    for `strategy: vote` to short-circuit.
+  - `stream_profile: compat` (default) | `strict` — the streamed tool-call delta shape.
+    `compat` re-emits `id`/`type`/`function.name` on **every** delta (safe for AI-SDK-style
+    clients that read the header only once); `strict` sends them on the first delta only. A
+    recognized AI-SDK `User-Agent` upgrades `strict` to `compat` automatically.
 - **`advertise`** — override fields of the computed capability card by name:
   `vision`, `tools`, `reasoning` (booleans) and `context_length`, `max_output_tokens`
   (integers). By default the card is computed from the panel (vision = any member; tools =

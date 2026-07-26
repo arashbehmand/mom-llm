@@ -7,6 +7,8 @@ Folds the same domain event stream into Anthropic's content-block event sequence
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import hashlib
+import hmac
 import json
 from typing import Any
 
@@ -28,6 +30,15 @@ _STOP_REASON = {
     "content_filter": "refusal",
     "error": "end_turn",
 }
+
+# Deterministic opaque signature over a thinking block's text. Anthropic closes a streamed thinking
+# block with a `signature_delta`; MoM's synthesizer thinking is re-emitted, not provider-verifiable,
+# so we mint a stable HMAC (over the thinking text) that round-trips instead of a real provider sig.
+_SIGNATURE_KEY = b"mom-thinking-signature-v1"
+
+
+def _thinking_signature(text: str) -> str:
+    return hmac.new(_SIGNATURE_KEY, text.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _sse(event_type: str, data: dict[str, Any]) -> bytes:
@@ -102,18 +113,36 @@ async def encode_sse(
     open_block: int | None = None
     thinking_index: int | None = None
     thinking_done = False
+    thinking_text: list[str] = []
     text_index: int | None = None
     tool_blocks: dict[int, int] = {}
     finish = "stop"
     output_tokens = 0
 
-    def close_open() -> bytes | None:
+    def close_open() -> list[bytes]:
+        """Close the open content block, signing it first if it is the thinking block."""
         nonlocal open_block
         if open_block is None:
-            return None
+            return []
         index = open_block
         open_block = None
-        return _sse("content_block_stop", {"type": "content_block_stop", "index": index})
+        out: list[bytes] = []
+        if index == thinking_index:
+            out.append(
+                _sse(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "signature_delta",
+                            "signature": _thinking_signature("".join(thinking_text)),
+                        },
+                    },
+                )
+            )
+        out.append(_sse("content_block_stop", {"type": "content_block_stop", "index": index}))
+        return out
 
     async for event in events:
         if isinstance(event, AnswerDelta):
@@ -130,6 +159,7 @@ async def encode_sse(
                             "content_block": {"type": "thinking", "thinking": ""},
                         },
                     )
+                thinking_text.append(event.reasoning)
                 yield _sse(
                     "content_block_delta",
                     {
@@ -140,9 +170,8 @@ async def encode_sse(
                 )
             if event.content:
                 if text_index is None:
-                    closed = close_open()
-                    if closed:
-                        yield closed
+                    for chunk in close_open():
+                        yield chunk
                     thinking_done = True
                     text_index = next_index
                     next_index += 1
@@ -164,9 +193,8 @@ async def encode_sse(
                     },
                 )
         elif isinstance(event, ToolCallStarted):
-            closed = close_open()
-            if closed:
-                yield closed
+            for chunk in close_open():
+                yield chunk
             thinking_done = True
             text_index = None
             index = next_index
@@ -205,18 +233,16 @@ async def encode_sse(
             output_tokens = event.usage.completion_tokens
             break
         elif isinstance(event, PipelineFailed):
-            closed = close_open()
-            if closed:
-                yield closed
+            for chunk in close_open():
+                yield chunk
             yield _sse(
                 "error",
                 {"type": "error", "error": {"type": "api_error", "message": event.message}},
             )
             return
 
-    closed = close_open()
-    if closed:
-        yield closed
+    for chunk in close_open():
+        yield chunk
     yield _sse(
         "message_delta",
         {

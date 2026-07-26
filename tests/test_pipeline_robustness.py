@@ -112,8 +112,11 @@ async def test_tool_call_id_never_literal_none():
     deps = PipelineDeps(client=_ArgsFirstToolClient(), clock=ManualClock())
     result = await collect(run_ensemble(plan, deps))
     assert result.tool_calls
-    assert result.tool_calls[0]["id"] != "None"
-    assert result.tool_calls[0]["id"] == ""
+    # Even when the provider streams no id, a client id is always minted — never "" or the literal
+    # "None" (the args-first race that produced a bare "None" in v1).
+    minted = result.tool_calls[0]["id"]
+    assert minted not in ("", "None")
+    assert minted.startswith("call")
 
 
 class _FlakyStore:

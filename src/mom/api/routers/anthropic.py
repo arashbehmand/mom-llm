@@ -31,6 +31,8 @@ async def messages(req: MessagesRequest, container: ContainerDep) -> object:
         recorder=container.metrics,
         tracer=container.tracer,
         request_id=container.ids.new_id("req"),
+        ids=container.ids,
+        custody=container.custody,
     )
     message_id = container.ids.new_id("msg")
     input_tokens = _estimate_tokens(req)
