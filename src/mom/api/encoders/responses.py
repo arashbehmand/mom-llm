@@ -25,6 +25,10 @@ def _text_part(text: str) -> dict[str, Any]:
     return {"type": "output_text", "text": text, "annotations": []}
 
 
+def _summary_part(text: str) -> dict[str, Any]:
+    return {"type": "summary_text", "text": text}
+
+
 def _response_obj(
     *, response_id: str, model: str, created: int, status: str, output: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -44,6 +48,14 @@ def build_response(
 ) -> dict[str, Any]:
     """Non-streaming Responses object."""
     output: list[dict[str, Any]] = []
+    if result.reasoning:  # a reasoning item precedes the answer message, mirroring the stream
+        output.append(
+            {
+                "type": "reasoning",
+                "id": f"{response_id}-rs",
+                "summary": [{"type": "summary_text", "text": result.reasoning}],
+            }
+        )
     if result.text:
         output.append(
             {
@@ -99,10 +111,35 @@ async def encode_sse(
     yield evt("response.in_progress", {"response": skeleton("in_progress", [])})
 
     next_index = 0
+    reasoning: tuple[int, str] | None = None  # (output_index, item_id)
+    reasoning_buf: list[str] = []
     text: tuple[int, str] | None = None  # (output_index, item_id)
     text_buf: list[str] = []
     tools: dict[int, list[Any]] = {}  # engine index -> [output_index, item_id, name, call_id, buf]
     output: list[dict[str, Any]] = []
+
+    def close_reasoning() -> list[bytes]:
+        nonlocal reasoning
+        if reasoning is None:
+            return []
+        index, item_id = reasoning
+        reasoning = None
+        joined = "".join(reasoning_buf)
+        reasoning_buf.clear()  # a later reasoning item must not re-emit this one's summary
+        part = _summary_part(joined)
+        item = {"type": "reasoning", "id": item_id, "summary": [part]}
+        output.append(item)
+        return [
+            evt(
+                "response.reasoning_summary_text.done",
+                {"item_id": item_id, "output_index": index, "summary_index": 0, "text": joined},
+            ),
+            evt(
+                "response.reasoning_summary_part.done",
+                {"item_id": item_id, "output_index": index, "summary_index": 0, "part": part},
+            ),
+            evt("response.output_item.done", {"output_index": index, "item": item}),
+        ]
 
     def close_text() -> list[bytes]:
         nonlocal text
@@ -164,46 +201,81 @@ async def encode_sse(
     usage: dict[str, int] | None = None
     async for event in events:
         if isinstance(event, AnswerDelta):
-            if not event.content:
-                continue
-            if text is None:
-                index = next_index
-                next_index += 1
-                item_id = f"{response_id}-msg{index}"
-                text = (index, item_id)
-                yield evt(
-                    "response.output_item.added",
-                    {
-                        "output_index": index,
-                        "item": {
-                            "type": "message",
-                            "id": item_id,
-                            "role": "assistant",
-                            "status": "in_progress",
-                            "content": [],
+            if event.reasoning:
+                if reasoning is None:
+                    index = next_index
+                    next_index += 1
+                    item_id = f"{response_id}-rs{index}"
+                    reasoning = (index, item_id)
+                    yield evt(
+                        "response.output_item.added",
+                        {
+                            "output_index": index,
+                            "item": {"type": "reasoning", "id": item_id, "summary": []},
                         },
-                    },
-                )
+                    )
+                    yield evt(
+                        "response.reasoning_summary_part.added",
+                        {
+                            "item_id": item_id,
+                            "output_index": index,
+                            "summary_index": 0,
+                            "part": _summary_part(""),
+                        },
+                    )
+                reasoning_buf.append(event.reasoning)
                 yield evt(
-                    "response.content_part.added",
+                    "response.reasoning_summary_text.delta",
                     {
-                        "item_id": item_id,
-                        "output_index": index,
-                        "content_index": 0,
-                        "part": _text_part(""),
+                        "item_id": reasoning[1],
+                        "output_index": reasoning[0],
+                        "summary_index": 0,
+                        "delta": event.reasoning,
                     },
                 )
-            text_buf.append(event.content)
-            yield evt(
-                "response.output_text.delta",
-                {
-                    "item_id": text[1],
-                    "output_index": text[0],
-                    "content_index": 0,
-                    "delta": event.content,
-                },
-            )
+            if event.content:
+                for chunk in close_reasoning():  # the reasoning summary precedes the answer text
+                    yield chunk
+                if text is None:
+                    index = next_index
+                    next_index += 1
+                    item_id = f"{response_id}-msg{index}"
+                    text = (index, item_id)
+                    yield evt(
+                        "response.output_item.added",
+                        {
+                            "output_index": index,
+                            "item": {
+                                "type": "message",
+                                "id": item_id,
+                                "role": "assistant",
+                                "status": "in_progress",
+                                "content": [],
+                            },
+                        },
+                    )
+                    yield evt(
+                        "response.content_part.added",
+                        {
+                            "item_id": item_id,
+                            "output_index": index,
+                            "content_index": 0,
+                            "part": _text_part(""),
+                        },
+                    )
+                text_buf.append(event.content)
+                yield evt(
+                    "response.output_text.delta",
+                    {
+                        "item_id": text[1],
+                        "output_index": text[0],
+                        "content_index": 0,
+                        "delta": event.content,
+                    },
+                )
         elif isinstance(event, ToolCallStarted):
+            for chunk in close_reasoning():
+                yield chunk
             for chunk in close_text():
                 yield chunk
             index = next_index
@@ -244,6 +316,8 @@ async def encode_sse(
             }
             break
         elif isinstance(event, PipelineFailed):
+            for chunk in close_reasoning():
+                yield chunk
             for chunk in close_text():
                 yield chunk
             for chunk in finalize_tools():  # finalize any opened tool items — no danglers
@@ -255,6 +329,8 @@ async def encode_sse(
             yield evt("response.failed", {"response": failed})
             return
 
+    for chunk in close_reasoning():
+        yield chunk
     for chunk in close_text():
         yield chunk
     for chunk in finalize_tools():

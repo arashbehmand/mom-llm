@@ -16,6 +16,7 @@ from starlette.middleware.cors import CORSMiddleware
 from mom import __version__
 from mom.api.deps import Container
 from mom.api.errors import install_error_handlers
+from mom.api.middleware import BudgetAlarmMiddleware
 from mom.api.routers.anthropic import router as anthropic_router
 from mom.api.routers.chat import router as chat_router
 from mom.api.routers.metrics import router as metrics_router
@@ -68,6 +69,10 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    # Soft daily-budget alarm (adds a header when over budget; never blocks). Self-guards when no
+    # budget is configured, so it is safe to install unconditionally.
+    app.add_middleware(BudgetAlarmMiddleware)
 
     install_error_handlers(app)
 

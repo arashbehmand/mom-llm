@@ -345,6 +345,38 @@ def _proxy_client(proxy_url_env: str | None, timeout: float | None, llm_name: st
     return _ProxyHandler(timeout=int(timeout) if timeout else 600, client_alias="mom-proxied-llm")
 
 
+def _fallback_token_estimate(messages: list[dict[str, Any]]) -> int:
+    """A provider-naive ~chars/4 count, used when litellm's tokenizer is unavailable."""
+    chars = 0
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            chars += len(content)
+        elif isinstance(content, list):
+            chars += sum(
+                len(part["text"])
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
+    return max(1, chars // 4)
+
+
+class LiteLLMTokenEstimator:
+    """Model-aware input-token count via ``litellm.token_counter`` (chars/4 fallback).
+
+    Defensive by contract: a missing tokenizer, an unknown model, or a blocked network download
+    must never break a request, so every failure path falls back to the cheap heuristic.
+    """
+
+    def count(self, *, model: str, messages: list[dict[str, Any]]) -> int:
+        import litellm
+
+        try:
+            return int(litellm.token_counter(model=model, messages=messages))
+        except Exception:
+            return _fallback_token_estimate(messages)
+
+
 class LiteLLMClient:
     """A single-model transport backed by ``litellm.acompletion``."""
 

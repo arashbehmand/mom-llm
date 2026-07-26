@@ -34,7 +34,13 @@ CONFIG = dedent("""
 """)
 
 
-def _client(fake: FakeLLM, *, auth: str = "none", settings: Settings | None = None):
+def _client(
+    fake: FakeLLM,
+    *,
+    auth: str = "none",
+    settings: Settings | None = None,
+    estimator: object | None = None,
+):
     catalog = resolve_catalog(Config.model_validate(yaml.safe_load(CONFIG.format(auth=auth))))
     container = Container(
         settings=settings or Settings(_env_file=None),
@@ -42,9 +48,22 @@ def _client(fake: FakeLLM, *, auth: str = "none", settings: Settings | None = No
         client=fake,
         clock=ManualClock(),
         ids=SequentialIds(),
+        token_estimator=estimator,  # type: ignore[arg-type]
     )
     app = create_app(container=container)
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+class _StubEstimator:
+    """A model-aware token estimator double; records the (model, messages) it was asked to count."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+        self.calls: list[tuple[str, list[dict[str, object]]]] = []
+
+    def count(self, *, model: str, messages: list[dict[str, object]]) -> int:
+        self.calls.append((model, messages))
+        return self.value
 
 
 def _events(body: str) -> list[tuple[str, dict]]:
@@ -132,7 +151,7 @@ async def test_message_tool_use():
 
 
 async def test_count_tokens():
-    async with _client(FakeLLM()) as client:
+    async with _client(FakeLLM()) as client:  # no estimator -> chars/4 fallback
         resp = await client.post(
             "/v1/messages/count_tokens",
             json={
@@ -142,6 +161,32 @@ async def test_count_tokens():
         )
     assert resp.status_code == 200
     assert resp.json()["input_tokens"] > 0
+
+
+async def test_count_tokens_uses_model_aware_estimator():
+    estimator = _StubEstimator(4242)
+    async with _client(FakeLLM(), estimator=estimator) as client:
+        resp = await client.post(
+            "/v1/messages/count_tokens",
+            json={"model": "e", "messages": [{"role": "user", "content": "hello world"}]},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["input_tokens"] == 4242
+    # counted against the ensemble's *synthesizer* model, not the ensemble name.
+    assert len(estimator.calls) == 1
+    assert estimator.calls[0][0] == "openai/a"
+
+
+async def test_count_tokens_falls_back_for_unknown_ensemble():
+    estimator = _StubEstimator(4242)
+    async with _client(FakeLLM(), estimator=estimator) as client:
+        resp = await client.post(
+            "/v1/messages/count_tokens",
+            json={"model": "ghost", "messages": [{"role": "user", "content": "hello world " * 20}]},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["input_tokens"] != 4242  # unresolved model -> chars/4, estimator untouched
+    assert estimator.calls == []
 
 
 async def test_auth_via_x_api_key(monkeypatch: pytest.MonkeyPatch):

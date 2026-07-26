@@ -12,6 +12,8 @@ from mom.api.app import create_app
 from mom.api.deps import Container
 from mom.config.resolve import resolve_catalog
 from mom.config.schema import Config
+from mom.domain.ports import CompletionChunk
+from mom.domain.results import Usage
 from mom.runtime.settings import Settings
 from mom.testing import FakeLLM, ManualClock, SequentialIds
 
@@ -134,3 +136,44 @@ async def test_mcp_tool_is_rejected():
         )
     assert resp.status_code == 400
     assert "MCP" in resp.json()["error"]["message"]
+
+
+class ReasoningFakeLLM(FakeLLM):
+    """A synthesizer that streams a reasoning summary before its answer text."""
+
+    async def stream(self, spec):
+        self.streams.append(spec)
+        yield CompletionChunk(reasoning="let me think")
+        yield CompletionChunk(content="final answer")
+        yield CompletionChunk(
+            finish_reason="stop", usage=Usage(prompt_tokens=50, completion_tokens=20)
+        )
+
+
+async def test_non_streaming_reasoning_item_precedes_message():
+    async with _client(ReasoningFakeLLM()) as client:
+        resp = await client.post("/v1/responses", json={"model": "e", "input": "hi"})
+    body = resp.json()
+    assert [o["type"] for o in body["output"]] == ["reasoning", "message"]
+    assert body["output"][0]["summary"][0]["text"] == "let me think"
+
+
+async def test_streaming_reasoning_summary_events():
+    async with _client(ReasoningFakeLLM()) as client:
+        resp = await client.post(
+            "/v1/responses", json={"model": "e", "input": "hi", "stream": True}
+        )
+    events = _events(resp.text)
+    kinds = [k for k, _ in events]
+    assert "response.reasoning_summary_text.delta" in kinds
+    reasoning_text = "".join(
+        d["delta"] for k, d in events if k == "response.reasoning_summary_text.delta"
+    )
+    assert reasoning_text == "let me think"
+    # The reasoning item is listed before the message item in the completed response.
+    output = next(d for k, d in events if k == "response.completed")["response"]["output"]
+    assert [o["type"] for o in output] == ["reasoning", "message"]
+    # sequence_number remains monotonic and unique across the added reasoning events.
+    seqs = [d["sequence_number"] for _, d in events]
+    assert seqs == sorted(seqs)
+    assert len(set(seqs)) == len(seqs)

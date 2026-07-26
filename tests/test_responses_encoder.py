@@ -54,6 +54,55 @@ async def test_text_tool_text_does_not_concatenate_and_ids_are_unique():
     assert len({d["item_id"] for d in done}) == 2  # distinct item ids per message item
 
 
+async def test_reasoning_summary_precedes_answer_and_ids_stay_ordered():
+    payloads = await _collect(
+        [
+            AnswerDelta(reasoning="think "),
+            AnswerDelta(reasoning="more"),
+            AnswerDelta(content="answer"),
+            Completed(
+                finish_reason="stop",
+                usage=Usage(prompt_tokens=1, completion_tokens=1),
+                total_cost_usd=0.0,
+            ),
+        ]
+    )
+    # A reasoning output item opens before the message item, at a lower output_index.
+    added = _of_type(payloads, "response.output_item.added")
+    assert [a["item"]["type"] for a in added] == ["reasoning", "message"]
+    assert added[0]["output_index"] < added[1]["output_index"]
+    # The summary deltas carry the reasoning text, and a summary part is opened + closed.
+    deltas = _of_type(payloads, "response.reasoning_summary_text.delta")
+    assert "".join(d["delta"] for d in deltas) == "think more"
+    assert _of_type(payloads, "response.reasoning_summary_part.added")
+    summary_done = _of_type(payloads, "response.reasoning_summary_text.done")
+    assert summary_done[0]["text"] == "think more"
+    # The completed response lists the reasoning item first, with its summary populated.
+    output = _of_type(payloads, "response.completed")[0]["response"]["output"]
+    assert [o["type"] for o in output] == ["reasoning", "message"]
+    assert output[0]["summary"] == [{"type": "summary_text", "text": "think more"}]
+    # sequence_number stays monotonic and unique across the added reasoning events.
+    seqs = [p["sequence_number"] for p in payloads]
+    assert seqs == sorted(seqs)
+    assert len(set(seqs)) == len(seqs)
+
+
+async def test_reasoning_only_response_still_emits_a_reasoning_item():
+    payloads = await _collect(
+        [
+            AnswerDelta(reasoning="hmm"),
+            Completed(
+                finish_reason="stop",
+                usage=Usage(prompt_tokens=1, completion_tokens=1),
+                total_cost_usd=0.0,
+            ),
+        ]
+    )
+    output = _of_type(payloads, "response.completed")[0]["response"]["output"]
+    assert [o["type"] for o in output] == ["reasoning"]
+    assert output[0]["summary"][0]["text"] == "hmm"
+
+
 async def test_pipeline_failed_finalizes_open_tool_items_and_carries_no_dangler():
     payloads = await _collect(
         [

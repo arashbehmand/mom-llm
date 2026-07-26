@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from mom.config.resolve import ResolvedCatalog
 from mom.domain.metrics import MetricsReader, MetricsSink
-from mom.domain.ports import Clock, IdFactory, LLMClient, Tracer
+from mom.domain.ports import Clock, IdFactory, LLMClient, TokenEstimator, Tracer
 from mom.runtime.settings import Settings
 
 
@@ -27,3 +27,4 @@ class Container:
     metrics: MetricsSink | None = None
     metrics_reader: MetricsReader | None = None
     tracer: Tracer | None = None
+    token_estimator: TokenEstimator | None = None
