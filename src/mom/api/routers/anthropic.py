@@ -29,6 +29,7 @@ async def messages(req: MessagesRequest, container: ContainerDep) -> object:
         client=container.client,
         clock=container.clock,
         recorder=container.metrics,
+        tracer=container.tracer,
         request_id=container.ids.new_id("req"),
     )
     message_id = container.ids.new_id("msg")

@@ -26,7 +26,7 @@ from mom.domain.events import (
     ToolCallStarted,
 )
 from mom.domain.metrics import CallMetric, MetricsSink, TurnType
-from mom.domain.ports import CallSpec, Clock, LLMClient
+from mom.domain.ports import CallSpec, Clock, LLMClient, Tracer
 from mom.domain.results import EnsembleResult, ModelOutcome, OutcomeStatus, Usage
 from mom.domain.synthesis import all_failed_message, build_synthesis_messages
 from mom.engine.plan import ExecutionPlan, PlannedMember
@@ -37,6 +37,7 @@ class PipelineDeps:
     client: LLMClient
     clock: Clock
     recorder: MetricsSink | None = None
+    tracer: Tracer | None = None
     request_id: str = ""
 
 
@@ -166,8 +167,23 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         else:
             async for event in _fan_out(deps, plan):
                 if isinstance(event, MemberCompleted):
-                    outcomes.append(event.outcome)
-                    _record_member(deps, plan, event.outcome, turn_type)
+                    outcome = event.outcome
+                    outcomes.append(outcome)
+                    _record_member(deps, plan, outcome, turn_type)
+                    if deps.tracer is not None:
+                        deps.tracer.observe(
+                            request_id=deps.request_id,
+                            ensemble=plan.ensemble,
+                            role="fanout",
+                            llm=outcome.llm,
+                            model=outcome.model,
+                            messages=plan.client_messages,
+                            output=outcome.content,
+                            usage=outcome.usage,
+                            duration_ms=outcome.duration_ms,
+                            cached=outcome.cached,
+                            error=outcome.error,
+                        )
                 yield event
             if any(o.ok for o in outcomes):
                 synth_messages = build_synthesis_messages(
@@ -183,9 +199,12 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         usage = Usage()
         finish: FinishReason = "stop"
         started_tools: set[int] = set()
+        synth_text: list[str] = []
         async for chunk in deps.client.stream(_synth_spec(plan, synth_messages)):
             if chunk.content is not None or chunk.reasoning is not None:
                 yield AnswerDelta(content=chunk.content, reasoning=chunk.reasoning)
+                if chunk.content:
+                    synth_text.append(chunk.content)
             if chunk.tool_call is not None:
                 call = chunk.tool_call
                 index = int(call.get("index", 0))
@@ -205,6 +224,18 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 finish = _coerce_finish(chunk.finish_reason)
 
         _record_synth(deps, plan, usage, turn_type)
+        if deps.tracer is not None:
+            deps.tracer.observe(
+                request_id=deps.request_id,
+                ensemble=plan.ensemble,
+                role="synthesis",
+                llm=plan.synth.llm_name,
+                model=plan.synth.model,
+                messages=synth_messages,
+                output="".join(synth_text),
+                usage=usage,
+                duration_ms=0.0,
+            )
         total_usage = usage
         for outcome in outcomes:
             total_usage = total_usage + outcome.usage

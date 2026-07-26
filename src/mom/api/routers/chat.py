@@ -25,6 +25,7 @@ async def chat_completions(req: ChatCompletionRequest, container: ContainerDep) 
         client=container.client,
         clock=container.clock,
         recorder=container.metrics,
+        tracer=container.tracer,
         request_id=container.ids.new_id("req"),
     )
     frame = ChatFrame(

@@ -3,20 +3,37 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import os
 from pathlib import Path
 
 import platformdirs
 
 from mom.adapters.caching import CachingClient
 from mom.adapters.litellm_client import LiteLLMClient
+from mom.adapters.observability import LangfuseTracer, NoopTracer
 from mom.api.deps import Container
 from mom.config.loader import load_config
 from mom.config.resolve import ResolvedCatalog
-from mom.domain.ports import LLMClient
+from mom.domain.ports import LLMClient, Tracer
 from mom.runtime.clock import SystemClock, UuidIds
 from mom.runtime.settings import Settings
 from mom.store.cache import SqliteCacheStore
 from mom.store.metrics import MetricsRecorder, MetricsStore
+
+
+def build_tracer(catalog: ResolvedCatalog) -> Tracer:
+    lf = catalog.config.observability.langfuse
+    if not lf.enabled:
+        return NoopTracer()
+    public_key = os.getenv(lf.public_key_env)
+    secret_key = os.getenv(lf.secret_key_env)
+    host = os.getenv(lf.host_env) or "https://cloud.langfuse.com"
+    if not (public_key and secret_key):
+        return NoopTracer()
+    return (
+        LangfuseTracer.create(public_key=public_key, secret_key=secret_key, host=host)
+        or NoopTracer()
+    )
 
 
 def resolve_data_dir(settings: Settings, catalog: ResolvedCatalog) -> Path:
@@ -52,6 +69,8 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
     closers.append(recorder.stop)
     closers.append(metrics_store.close)
 
+    tracer = build_tracer(catalog)
+
     container = Container(
         settings=settings,
         catalog=catalog,
@@ -60,9 +79,11 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
         ids=UuidIds(),
         metrics=recorder,
         metrics_reader=metrics_store,
+        tracer=tracer,
     )
 
     async def cleanup() -> None:
+        tracer.flush()
         for close in closers:
             await close()
 

@@ -66,6 +66,30 @@ class CacheStore(Protocol):
     async def put(self, key: str, llm: str, body: str, *, now: float) -> None: ...
 
 
+class Tracer(Protocol):
+    def observe(
+        self,
+        *,
+        request_id: str,
+        ensemble: str,
+        role: str,
+        llm: str,
+        model: str | None,
+        messages: list[dict[str, Any]],
+        output: str,
+        usage: Usage,
+        duration_ms: float,
+        cached: bool = False,
+        error: str | None = None,
+    ) -> None:
+        """Record one LLM call as an observation (grouped by request_id). Fire-and-forget."""
+        ...
+
+    def flush(self) -> None:
+        """Flush buffered observations (called on shutdown)."""
+        ...
+
+
 class Clock(Protocol):
     def now(self) -> float:
         """Wall-clock seconds since the epoch (injected for deterministic tests)."""
