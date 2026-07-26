@@ -123,11 +123,106 @@ def _responses_usage(raw: Any) -> Usage:
     )
 
 
+def _chat_tools_to_responses(tools: Any) -> Any:
+    """Reshape Chat-format tools to Responses-format for ``litellm.aresponses``.
+
+    Chat wants ``{"type":"function","function":{"name",...}}``; the Responses API wants the name
+    and schema flattened to the top level (``{"type":"function","name",...}``) — otherwise it
+    400s with ``Missing required parameter: 'tools[0].name'``. Non-function blocks (e.g. relayed
+    ``type: mcp``) are already Responses-shaped and pass through untouched.
+    """
+    if not isinstance(tools, list):
+        return tools
+    out: list[Any] = []
+    for tool in tools:
+        fn = tool.get("function") if isinstance(tool, dict) else None
+        if isinstance(tool, dict) and tool.get("type") == "function" and isinstance(fn, dict):
+            out.append({"type": "function", **fn})
+        else:
+            out.append(tool)
+    return out
+
+
+def _chat_tool_choice_to_responses(choice: Any) -> Any:
+    """Flatten a specific-function ``tool_choice`` to Responses shape (name at the top level)."""
+    fn = choice.get("function") if isinstance(choice, dict) else None
+    if isinstance(choice, dict) and choice.get("type") == "function" and isinstance(fn, dict):
+        return {"type": "function", "name": fn.get("name")}
+    return choice
+
+
+def _responses_content_part(part: dict[str, Any], *, text_type: str) -> dict[str, Any] | None:
+    """Reshape one Chat content part to a Responses ``input`` part (or drop it)."""
+    kind = part.get("type")
+    if kind in ("text", "input_text", "output_text"):
+        return {"type": text_type, "text": part.get("text", "")}
+    if kind in ("image_url", "input_image"):
+        url = part.get("image_url") or part.get("url") or ""
+        if isinstance(url, dict):
+            url = url.get("url", "")
+        return {"type": "input_image", "image_url": url}
+    return None
+
+
+def _chat_messages_to_responses_input(messages: Any) -> Any:
+    """Reshape Chat-format messages into Responses ``input`` items.
+
+    The Responses API rejects Chat's content-part types: an input role needs ``input_text`` /
+    ``input_image`` and an assistant reply needs ``output_text`` (Chat uses ``text`` for both).
+    Assistant ``tool_calls`` become ``function_call`` items and ``role: tool`` messages become
+    ``function_call_output`` items. String content is passed straight through (already valid).
+    """
+    if not isinstance(messages, list):
+        return messages
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role == "tool":
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": message.get("tool_call_id"),
+                    "output": message.get("content") or "",
+                }
+            )
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            items.append({"role": role, "content": content})
+        elif isinstance(content, list):
+            text_type = "output_text" if role == "assistant" else "input_text"
+            parts = [
+                p
+                for raw in content
+                if isinstance(raw, dict)
+                and (p := _responses_content_part(raw, text_type=text_type)) is not None
+            ]
+            if parts:
+                items.append({"role": role, "content": parts})
+        for call in message.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            items.append(
+                {
+                    "type": "function_call",
+                    "call_id": call.get("id"),
+                    "name": fn.get("name", ""),
+                    "arguments": fn.get("arguments") or "",
+                }
+            )
+    return items
+
+
 def _responses_params(spec: CallSpec) -> dict[str, Any]:
     """Params for ``litellm.aresponses`` — the Responses API takes ``input``, not ``messages``."""
     params = dict(spec.params)
     params["model"] = spec.model
-    params["input"] = spec.messages
+    params["input"] = _chat_messages_to_responses_input(spec.messages)
+    if "tools" in params:
+        params["tools"] = _chat_tools_to_responses(params["tools"])
+    if "tool_choice" in params:
+        params["tool_choice"] = _chat_tool_choice_to_responses(params["tool_choice"])
     if spec.timeout_seconds is not None:
         params["timeout"] = spec.timeout_seconds
     if spec.retries:

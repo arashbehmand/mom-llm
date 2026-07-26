@@ -6,6 +6,7 @@ import json
 from textwrap import dedent
 
 import httpx
+import pytest
 import yaml
 
 from mom.api.app import create_app
@@ -137,6 +138,39 @@ async def test_mcp_tool_is_rejected():
     # ensemble "e" synthesizes on the chat API, which cannot forward remote MCP -> clean 400
     assert resp.status_code == 400
     assert "MCP" in resp.json()["error"]["message"]
+
+
+def test_namespace_tools_are_flattened():
+    # Codex groups function tools under a `namespace` container. The nested function tools must be
+    # flattened (not 400-ed like an unknown type); non-function entries inside are ignored.
+    from mom.api.translate_responses import _tools
+
+    specs, web_search, mcp = _tools(
+        [
+            {
+                "type": "namespace",
+                "name": "multi_agent_v1",
+                "description": "grouped tools",
+                "tools": [
+                    {"type": "function", "name": "close_agent", "parameters": {"type": "object"}},
+                    {"type": "function", "name": "spawn_agent"},
+                    {"type": "something_else"},  # ignored
+                ],
+            },
+            {"type": "function", "name": "exec_command"},
+        ]
+    )
+    assert [s.name for s in specs] == ["close_agent", "spawn_agent", "exec_command"]
+    assert web_search is False
+    assert mcp == ()
+
+
+def test_genuinely_unknown_tool_type_still_400s():
+    from mom.api.translate_responses import _tools
+    from mom.domain.errors import InvalidRequestError
+
+    with pytest.raises(InvalidRequestError):
+        _tools([{"type": "computer_use_preview"}])
 
 
 class ReasoningFakeLLM(FakeLLM):

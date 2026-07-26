@@ -20,6 +20,10 @@ import pytest
 from mom.adapters.litellm_client import (
     LiteLLMClient,
     _call_params,
+    _chat_messages_to_responses_input,
+    _chat_tool_choice_to_responses,
+    _chat_tools_to_responses,
+    _responses_params,
     _tool_call_dict,
     _tool_call_fragment,
     _usage,
@@ -231,6 +235,77 @@ def test_call_params_merges_and_omits_timeout() -> None:
 def test_call_params_includes_timeout() -> None:
     params = _call_params(_spec(timeout_seconds=12.5))
     assert params["timeout"] == 12.5
+
+
+# --------------------------------------------------------------------------------------------
+# Responses path: Chat-shaped tools/tool_choice must be flattened for litellm.aresponses.
+# --------------------------------------------------------------------------------------------
+
+
+def test_chat_tools_to_responses_flattens_function_and_passes_others_through() -> None:
+    chat = [
+        {"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}},
+        {"type": "mcp", "server_label": "x"},  # already Responses-shaped -> untouched
+    ]
+    out = _chat_tools_to_responses(chat)
+    assert out[0] == {"type": "function", "name": "get_weather", "parameters": {"type": "object"}}
+    assert "function" not in out[0]  # the nested wrapper is gone (the API 400s on it)
+    assert out[1] == {"type": "mcp", "server_label": "x"}
+
+
+def test_chat_tool_choice_to_responses_flattens_specific_function() -> None:
+    assert _chat_tool_choice_to_responses({"type": "function", "function": {"name": "f"}}) == {
+        "type": "function",
+        "name": "f",
+    }
+    # string choices and already-flat shapes pass through
+    assert _chat_tool_choice_to_responses("auto") == "auto"
+
+
+def test_chat_messages_to_responses_input_retypes_content_by_role() -> None:
+    items = _chat_messages_to_responses_input(
+        [
+            {"role": "system", "content": "be brief"},  # string stays a string
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]},  # -> input_text
+            {"role": "assistant", "content": [{"type": "text", "text": "yo"}]},  # -> output_text
+        ]
+    )
+    assert items[0] == {"role": "system", "content": "be brief"}
+    assert items[1] == {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+    assert items[2] == {"role": "assistant", "content": [{"type": "output_text", "text": "yo"}]}
+
+
+def test_chat_messages_to_responses_input_maps_tool_calls_and_outputs() -> None:
+    items = _chat_messages_to_responses_input(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "c1", "function": {"name": "f", "arguments": '{"x":1}'}}],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "42"},
+        ]
+    )
+    assert items[0] == {
+        "type": "function_call",
+        "call_id": "c1",
+        "name": "f",
+        "arguments": '{"x":1}',
+    }
+    assert items[1] == {"type": "function_call_output", "call_id": "c1", "output": "42"}
+
+
+def test_responses_params_flattens_tools_at_the_boundary() -> None:
+    spec = _spec(
+        params={
+            "tools": [{"type": "function", "function": {"name": "f", "parameters": {}}}],
+            "tool_choice": {"type": "function", "function": {"name": "f"}},
+        }
+    )
+    params = _responses_params(spec)
+    assert params["input"] == [{"role": "user", "content": "hi"}]  # messages -> input
+    assert params["tools"][0] == {"type": "function", "name": "f", "parameters": {}}
+    assert params["tool_choice"] == {"type": "function", "name": "f"}
 
 
 # --------------------------------------------------------------------------------------------
