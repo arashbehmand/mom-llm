@@ -5,6 +5,7 @@ Thin Typer app. Subcommands delegate to the library; nothing heavy runs at impor
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -149,6 +150,92 @@ def config_show(
         typer.echo(f"{len(catalog.llms)} llms, {len(catalog.ensembles)} ensembles")
         for name, ens in catalog.ensembles.items():
             render(name, ens)
+
+
+cache_app = typer.Typer(help="Inspect and manage the response cache.", no_args_is_help=True)
+app.add_typer(cache_app, name="cache")
+
+_CacheConfigOpt = typer.Option(
+    None, "--config", "-c", exists=True, dir_okay=False, help="Config YAML (to resolve data_dir)."
+)
+_CacheDataDirOpt = typer.Option(
+    None, "--data-dir", help="Data directory holding cache.db (overrides config/env)."
+)
+
+
+def _resolve_data_dir(config: Path | None, data_dir: Path | None) -> Path:
+    """Resolve the data directory the same way the server does (explicit flag wins)."""
+    if data_dir is not None:
+        return data_dir
+    from mom.runtime.settings import Settings
+
+    settings = Settings()
+    if settings.data_dir is not None:
+        return Path(settings.data_dir)
+    config_path = config or settings.config_file
+    if config_path is not None:
+        from mom.config.loader import load_config
+        from mom.runtime.wiring import resolve_data_dir
+
+        return resolve_data_dir(settings, load_config(config_path))
+    import platformdirs
+
+    return Path(platformdirs.user_data_dir("mom-llm"))
+
+
+async def _cache_stats(db: Path) -> dict[str, int]:
+    from mom.store.cache import SqliteCacheStore
+
+    store = await SqliteCacheStore.open(db, ttl_seconds=0.0, max_bytes=1 << 62)
+    try:
+        return await store.stats()
+    finally:
+        await store.close()
+
+
+async def _cache_clear(db: Path) -> int:
+    from mom.store.cache import SqliteCacheStore
+
+    store = await SqliteCacheStore.open(db, ttl_seconds=0.0, max_bytes=1 << 62)
+    try:
+        return await store.clear()
+    finally:
+        await store.close()
+
+
+@cache_app.command("stats")
+def cache_stats(
+    config: Path | None = _CacheConfigOpt, data_dir: Path | None = _CacheDataDirOpt
+) -> None:
+    """Print response-cache statistics (entries / bytes / hits)."""
+    db = _resolve_data_dir(config, data_dir) / "cache.db"
+    if not db.exists():
+        typer.echo(f"cache: empty (no database at {db})")
+        return
+    stats = asyncio.run(_cache_stats(db))
+    typer.echo(f"path:    {db}")
+    typer.echo(f"entries: {stats.get('entries', 0)}")
+    typer.echo(f"bytes:   {stats.get('bytes', 0)}")
+    typer.echo(f"hits:    {stats.get('hits', 0)}")
+
+
+@cache_app.command("purge")
+def cache_purge(
+    config: Path | None = _CacheConfigOpt,
+    data_dir: Path | None = _CacheDataDirOpt,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    """Delete every entry in the response cache."""
+    db = _resolve_data_dir(config, data_dir) / "cache.db"
+    if not db.exists():
+        typer.echo(f"cache: empty (no database at {db})")
+        return
+    if not yes:
+        typer.confirm(f"Purge all cached entries at {db}?", abort=True)
+    removed = asyncio.run(_cache_clear(db))
+    typer.secho(
+        f"purged {removed} cache entr{'y' if removed == 1 else 'ies'}", fg=typer.colors.GREEN
+    )
 
 
 if __name__ == "__main__":

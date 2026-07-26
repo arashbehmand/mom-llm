@@ -64,8 +64,8 @@ _INSERT_SQL = (
     ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
-_AGGREGATE_SELECT = (
-    "SELECT "
+# The aggregate column list, reused by the single-window aggregate and the grouped variant.
+_AGGREGATE_COLUMNS = (
     "COUNT(*) AS calls, "
     "COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, "
     "COALESCE(SUM(completion_tokens), 0) AS completion_tokens, "
@@ -75,9 +75,36 @@ _AGGREGATE_SELECT = (
     "COALESCE(SUM(cost_usd), 0.0) AS cost_usd, "
     "SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors, "
     "SUM(CASE WHEN cache_hit = 1 THEN 1 ELSE 0 END) AS cache_hits, "
-    "SUM(CASE WHEN turn_type = 'relay' THEN 1 ELSE 0 END) AS relay_calls "
-    "FROM llm_calls"
+    "SUM(CASE WHEN turn_type = 'relay' THEN 1 ELSE 0 END) AS relay_calls"
 )
+_AGGREGATE_SELECT = f"SELECT {_AGGREGATE_COLUMNS} FROM llm_calls"  # noqa: S608 (constant columns)
+
+# Grouping dimension -> the SQL group expression. Values are fixed identifiers/expressions (never
+# interpolated from request input), so the group clause is not a SQL-injection surface. ``member``
+# groups by the member identity (the ``llm`` column); ``day`` buckets the epoch ``ts`` by UTC date.
+GROUP_DIMENSIONS: dict[str, str] = {
+    "member": "llm",
+    "turn_type": "turn_type",
+    "day": "date(ts, 'unixepoch')",
+}
+
+
+def _window(
+    start: float | None, end: float | None, ensemble: str | None
+) -> tuple[list[str], list[Any]]:
+    """Build the shared ``WHERE`` fragments + bound params for a time/ensemble window."""
+    where: list[str] = []
+    params: list[Any] = []
+    if start is not None:
+        where.append("ts >= ?")
+        params.append(start)
+    if end is not None:
+        where.append("ts < ?")
+        params.append(end)
+    if ensemble is not None:
+        where.append("ensemble = ?")
+        params.append(ensemble)
+    return where, params
 
 
 class MetricsStore:
@@ -110,17 +137,7 @@ class MetricsStore:
         self, *, start: float | None = None, end: float | None = None, ensemble: str | None = None
     ) -> dict[str, Any]:
         """Single-pass usage/cost aggregation over an optional time/ensemble window."""
-        where: list[str] = []
-        params: list[Any] = []
-        if start is not None:
-            where.append("ts >= ?")
-            params.append(start)
-        if end is not None:
-            where.append("ts < ?")
-            params.append(end)
-        if ensemble is not None:
-            where.append("ensemble = ?")
-            params.append(ensemble)
+        where, params = _window(start, end, ensemble)
         sql = _AGGREGATE_SELECT
         if where:
             sql = f"{_AGGREGATE_SELECT} WHERE {' AND '.join(where)}"
@@ -128,6 +145,37 @@ class MetricsStore:
         row = await cursor.fetchone()
         await cursor.close()
         return dict(row) if row is not None else {}
+
+    async def aggregate_by(
+        self,
+        dimension: str,
+        *,
+        start: float | None = None,
+        end: float | None = None,
+        ensemble: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Grouped usage/cost aggregation (``SQL GROUP BY``) over an optional window.
+
+        ``dimension`` is one of ``member`` / ``turn_type`` / ``day``. Each returned row carries the
+        group key (under the dimension's name) plus the same aggregate columns as :meth:`aggregate`,
+        ordered by the group key.
+        """
+        expr = GROUP_DIMENSIONS.get(dimension)
+        if expr is None:
+            raise ValueError(
+                f"unknown grouping dimension {dimension!r} (expected one of "
+                f"{sorted(GROUP_DIMENSIONS)})"
+            )
+        where, params = _window(start, end, ensemble)
+        # expr/dimension are fixed constants from GROUP_DIMENSIONS; only window values are bound.
+        sql = f"SELECT {expr} AS {dimension}, {_AGGREGATE_COLUMNS} FROM llm_calls"  # noqa: S608
+        if where:
+            sql += f" WHERE {' AND '.join(where)}"
+        sql += f" GROUP BY {expr} ORDER BY {expr}"
+        cursor = await self._conn.execute(sql, params)
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [dict(row) for row in rows]
 
 
 class MetricsRecorder:

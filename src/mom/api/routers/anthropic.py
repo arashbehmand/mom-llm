@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from mom.api.auth import require_api_key
 from mom.api.deps import ContainerDep
 from mom.api.encoders.anthropic import build_message, encode_sse
+from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id
 from mom.api.schemas.anthropic import AnthropicMessage, CountTokensRequest, MessagesRequest
 from mom.engine.pipeline import PipelineDeps, collect, run_ensemble
 from mom.engine.plan import resolve_plan
@@ -20,17 +21,20 @@ router = APIRouter(dependencies=[Depends(require_api_key)])
 
 
 @router.post("/messages")
-async def messages(req: MessagesRequest, container: ContainerDep) -> object:
+async def messages(req: MessagesRequest, container: ContainerDep, http_request: Request) -> object:
     from mom.api.translate_anthropic import messages_request_to_ir
 
     ir = messages_request_to_ir(req, stream=req.stream)
     plan = resolve_plan(container.catalog, ir)
+    request_id = resolve_request_id(http_request.headers.get(REQUEST_ID_HEADER), container.ids)
+    headers = {"X-Request-Id": request_id}
     deps = PipelineDeps(
         client=container.client,
         clock=container.clock,
         recorder=container.metrics,
         tracer=container.tracer,
-        request_id=container.ids.new_id("req"),
+        bus=container.bus,
+        request_id=request_id,
     )
     message_id = container.ids.new_id("msg")
     input_tokens = _estimate_tokens(req)
@@ -41,10 +45,11 @@ async def messages(req: MessagesRequest, container: ContainerDep) -> object:
             model=ir.model,
             input_tokens=input_tokens,
         )
-        return StreamingResponse(stream, media_type="text/event-stream")
+        return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
     result = await collect(run_ensemble(plan, deps))
     return JSONResponse(
-        build_message(result, message_id=message_id, model=ir.model, input_tokens=input_tokens)
+        build_message(result, message_id=message_id, model=ir.model, input_tokens=input_tokens),
+        headers=headers,
     )
 
 

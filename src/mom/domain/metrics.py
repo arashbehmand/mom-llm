@@ -48,3 +48,14 @@ class MetricsReader(Protocol):
     ) -> dict[str, object]:
         """Aggregate usage/cost over an optional time/ensemble window."""
         ...
+
+    async def aggregate_by(
+        self,
+        dimension: str,
+        *,
+        start: float | None = None,
+        end: float | None = None,
+        ensemble: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Aggregate usage/cost grouped by a dimension (member / turn_type / day)."""
+        ...

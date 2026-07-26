@@ -38,6 +38,11 @@ storage:
 observability:
   langfuse:
     enabled: false        # keys from LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST
+  otel:                   # OpenTelemetry/OTLP tracing (GenAI conventions); pip install 'mom-llm[otel]'
+    enabled: false
+    endpoint: http://localhost:4318   # OTLP collector
+    protocol: http        # http | grpc  (grpc also needs opentelemetry-exporter-otlp-proto-grpc)
+    service_name: mom-llm
 
 # --------------------------------------------------------------------------------------------
 # LLMs: one entry per callable model. `extends` inherits everything; `params` deep-merge.

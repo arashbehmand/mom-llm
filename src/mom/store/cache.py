@@ -115,6 +115,16 @@ class SqliteCacheStore:
         await cursor.close()
         return dict(row) if row is not None else {}
 
+    async def clear(self) -> int:
+        """Delete every cached entry; return how many rows were removed."""
+        cursor = await self._conn.execute("SELECT COUNT(*) FROM entries")
+        row = await cursor.fetchone()
+        await cursor.close()
+        removed = int(row[0]) if row else 0
+        await self._conn.execute("DELETE FROM entries")
+        await self._conn.commit()
+        return removed
+
 
 class NullCacheStore:
     """A cache that never hits (used when caching is disabled)."""

@@ -19,6 +19,8 @@ export MOM_CONFIG=/etc/mom/config.yaml
 mom config validate $MOM_CONFIG        # loads, validates, resolves; non-zero on any problem
 mom config show     $MOM_CONFIG        # prints the fully-resolved catalog (flattened efforts)
 mom serve --host 0.0.0.0 --port 8000   # run the gateway
+mom cache stats                        # response-cache entries / bytes / hits (under data_dir)
+mom cache purge --yes                  # clear the response cache
 ```
 
 A minimal but complete file — `version`, `llms`, and `ensembles` are the only required keys;
@@ -160,12 +162,23 @@ observability:
     public_key_env: LANGFUSE_PUBLIC_KEY   # env var NAMES, not the keys themselves
     secret_key_env: LANGFUSE_SECRET_KEY
     host_env: LANGFUSE_HOST
+  otel:
+    enabled: false
+    endpoint: http://localhost:4318       # OTLP collector endpoint
+    protocol: http                        # http | grpc
+    service_name: mom-llm
 ```
 
-When `enabled: true`, each member and synthesizer call is recorded as a Langfuse generation,
-grouped per request. Credentials are read from the environment variables **named** here (the
-defaults match Langfuse's conventional names). Tracing is fire-and-forget: it never raises into
-the request path, and it silently no-ops if the credentials are missing.
+When Langfuse is `enabled: true`, each member and synthesizer call is recorded as a Langfuse
+generation, grouped per request. Credentials are read from the environment variables **named** here
+(the defaults match Langfuse's conventional names).
+
+When `otel.enabled: true`, each call is emitted as an OpenTelemetry span following the GenAI
+semantic conventions (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.*`) and exported over
+OTLP to `endpoint`. Both backends may be enabled at once (calls fan out to each). OTel deps are
+optional — install `mom-llm[otel]` (add `opentelemetry-exporter-otlp-proto-grpc` for `protocol:
+grpc`). Tracing is fire-and-forget throughout: it never raises into the request path and silently
+no-ops when a backend is disabled or its credentials/deps are missing.
 
 ---
 

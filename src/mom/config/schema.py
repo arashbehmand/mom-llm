@@ -102,8 +102,18 @@ class LangfuseObs(_Model):
     host_env: EnvVarName = "LANGFUSE_HOST"
 
 
+class OtelObs(_Model):
+    """OpenTelemetry tracing via OTLP (GenAI semantic conventions). Deps are optional."""
+
+    enabled: bool = False
+    endpoint: str = "http://localhost:4318"  # OTLP collector (http/protobuf default port)
+    protocol: Literal["http", "grpc"] = "http"
+    service_name: str = "mom-llm"
+
+
 class ObservabilityConfig(_Model):
     langfuse: LangfuseObs = Field(default_factory=LangfuseObs)
+    otel: OtelObs = Field(default_factory=OtelObs)
 
 
 class BudgetsConfig(_Model):

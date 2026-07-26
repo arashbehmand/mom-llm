@@ -1,13 +1,17 @@
-"""Tracing adapters: NoopTracer and a best-effort LangfuseTracer.
+"""Tracing adapters: NoopTracer, a best-effort LangfuseTracer, and an OTel-based OtelTracer.
 
-Tracing is fire-and-forget: it never raises into the request path, and it is a no-op when
-Langfuse is disabled or its credentials are missing. Observations are grouped per request via a
-deterministic trace id derived from the request id.
+Tracing is fire-and-forget: it never raises into the request path, and it is a no-op when the
+backend is disabled or misconfigured. Langfuse groups observations per request via a deterministic
+trace id derived from the request id; OTel emits one span per LLM call following the GenAI
+semantic conventions. ``langfuse`` and ``opentelemetry`` are optional dependencies imported lazily,
+so this module imports (and ``NoopTracer`` runs) without either installed.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import hashlib
+import time
 from typing import Any
 
 from mom.domain.results import Usage
@@ -23,6 +27,21 @@ class NoopTracer:
 
     def flush(self) -> None:
         return None
+
+
+class CompositeTracer:
+    """Fan an observation out to several tracers (e.g. Langfuse *and* OTel)."""
+
+    def __init__(self, tracers: Iterable[Any]) -> None:
+        self._tracers = tuple(tracers)
+
+    def observe(self, **kwargs: Any) -> None:
+        for tracer in self._tracers:
+            tracer.observe(**kwargs)
+
+    def flush(self) -> None:
+        for tracer in self._tracers:
+            tracer.flush()
 
 
 class LangfuseTracer:
@@ -96,3 +115,95 @@ class LangfuseTracer:
             self._client.flush()
         except Exception:
             logger.debug("langfuse flush failed", exc_info=True)
+
+
+def _gen_ai_system(model: str | None) -> str:
+    """The provider portion of a ``provider/model`` string (GenAI ``gen_ai.system``)."""
+    if not model:
+        return "unknown"
+    return model.split("/", 1)[0] if "/" in model else model
+
+
+class OtelTracer:
+    """Emits one OTLP span per LLM call using the GenAI semantic conventions.
+
+    The span is timed to the call (``duration_ms`` back-dates its start) and carries GenAI
+    attributes (``gen_ai.system`` / ``gen_ai.request.model`` / ``gen_ai.usage.*``) plus a few
+    mom-specific ones (request id, ensemble, role) so a whole request's calls group in a trace UI.
+    """
+
+    def __init__(self, tracer: Any, provider: Any = None) -> None:
+        self._tracer = tracer
+        self._provider = provider  # retained for force_flush on shutdown
+
+    @classmethod
+    def create(
+        cls, *, endpoint: str, protocol: str = "http", service_name: str = "mom-llm"
+    ) -> OtelTracer | None:
+        """Build an OTLP-exporting tracer, or ``None`` if OTel isn't installed/initializable."""
+        try:
+            from opentelemetry.sdk.resources import Resource
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+            if protocol == "grpc":
+                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+            else:
+                from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+            provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
+            provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+            tracer = provider.get_tracer("mom")
+        except Exception:
+            logger.warning("otel init failed; tracing disabled", exc_info=True)
+            return None
+        return cls(tracer, provider)
+
+    def observe(
+        self,
+        *,
+        request_id: str,
+        ensemble: str,
+        role: str,
+        llm: str,
+        model: str | None,
+        messages: list[dict[str, Any]],  # noqa: ARG002 (part of the Tracer contract)
+        output: str,  # noqa: ARG002
+        usage: Usage,
+        duration_ms: float,
+        cached: bool = False,
+        error: str | None = None,
+    ) -> None:
+        try:
+            from opentelemetry.trace import SpanKind, Status, StatusCode
+
+            end_ns = time.time_ns()
+            start_ns = end_ns - int(max(duration_ms, 0.0) * 1_000_000)
+            span = self._tracer.start_span(
+                name=f"{role} {llm}", kind=SpanKind.CLIENT, start_time=start_ns
+            )
+            try:
+                span.set_attribute("gen_ai.operation.name", "chat")
+                span.set_attribute("gen_ai.system", _gen_ai_system(model))
+                if model:
+                    span.set_attribute("gen_ai.request.model", model)
+                span.set_attribute("gen_ai.usage.input_tokens", usage.prompt_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", usage.completion_tokens)
+                span.set_attribute("mom.request.id", request_id)
+                span.set_attribute("mom.ensemble", ensemble)
+                span.set_attribute("mom.role", role)
+                span.set_attribute("mom.llm", llm)
+                span.set_attribute("mom.cached", cached)
+                if error:
+                    span.set_status(Status(StatusCode.ERROR, error))
+            finally:
+                span.end(end_time=end_ns)
+        except Exception:
+            logger.debug("otel observe failed", exc_info=True)
+
+    def flush(self) -> None:
+        try:
+            if self._provider is not None:
+                self._provider.force_flush()
+        except Exception:
+            logger.debug("otel flush failed", exc_info=True)

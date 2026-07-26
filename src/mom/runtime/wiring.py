@@ -9,31 +9,70 @@ from pathlib import Path
 import platformdirs
 
 from mom.adapters.caching import CachingClient
+from mom.adapters.eventbus import InMemoryEventBus, RedisEventBus
 from mom.adapters.litellm_client import LiteLLMClient
-from mom.adapters.observability import LangfuseTracer, NoopTracer
+from mom.adapters.observability import (
+    CompositeTracer,
+    LangfuseTracer,
+    NoopTracer,
+    OtelTracer,
+)
 from mom.config.loader import load_config
 from mom.config.resolve import ResolvedCatalog
-from mom.domain.ports import LLMClient, Tracer
+from mom.domain.ports import EventBus, LLMClient, Tracer
 from mom.runtime.clock import SystemClock, UuidIds
 from mom.runtime.container import Container
+from mom.runtime.logging import get_logger
 from mom.runtime.settings import Settings
 from mom.store.cache import SqliteCacheStore
 from mom.store.metrics import MetricsRecorder, MetricsStore
 
 
-def build_tracer(catalog: ResolvedCatalog) -> Tracer:
+logger = get_logger("mom.wiring")
+
+
+def _langfuse_tracer(catalog: ResolvedCatalog) -> Tracer | None:
     lf = catalog.config.observability.langfuse
     if not lf.enabled:
-        return NoopTracer()
+        return None
     public_key = os.getenv(lf.public_key_env)
     secret_key = os.getenv(lf.secret_key_env)
     host = os.getenv(lf.host_env) or "https://cloud.langfuse.com"
     if not (public_key and secret_key):
-        return NoopTracer()
-    return (
-        LangfuseTracer.create(public_key=public_key, secret_key=secret_key, host=host)
-        or NoopTracer()
+        return None
+    return LangfuseTracer.create(public_key=public_key, secret_key=secret_key, host=host)
+
+
+def _otel_tracer(catalog: ResolvedCatalog) -> Tracer | None:
+    otel = catalog.config.observability.otel
+    if not otel.enabled:
+        return None
+    return OtelTracer.create(
+        endpoint=otel.endpoint, protocol=otel.protocol, service_name=otel.service_name
     )
+
+
+def build_tracer(catalog: ResolvedCatalog) -> Tracer:
+    """Compose the enabled tracers (Langfuse and/or OTel); ``NoopTracer`` when none are on."""
+    tracers = [t for t in (_langfuse_tracer(catalog), _otel_tracer(catalog)) if t is not None]
+    if not tracers:
+        return NoopTracer()
+    if len(tracers) == 1:
+        return tracers[0]
+    return CompositeTracer(tracers)
+
+
+def build_bus(settings: Settings) -> tuple[EventBus, Callable[[], Awaitable[None]]]:
+    """Build the progress event bus (Redis when ``redis_url`` is set, else in-memory)."""
+    if settings.redis_url:
+        try:
+            redis_bus = RedisEventBus.from_url(settings.redis_url)
+        except Exception:
+            logger.warning("redis event bus init failed; using in-memory", exc_info=True)
+        else:
+            return redis_bus, redis_bus.aclose
+    memory_bus = InMemoryEventBus()
+    return memory_bus, memory_bus.aclose
 
 
 def resolve_data_dir(settings: Settings, catalog: ResolvedCatalog) -> Path:
@@ -70,6 +109,8 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
     closers.append(metrics_store.close)
 
     tracer = build_tracer(catalog)
+    bus, bus_close = build_bus(settings)
+    closers.append(bus_close)
 
     container = Container(
         settings=settings,
@@ -80,6 +121,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
         metrics=recorder,
         metrics_reader=metrics_store,
         tracer=tracer,
+        bus=bus,
     )
 
     async def cleanup() -> None:
