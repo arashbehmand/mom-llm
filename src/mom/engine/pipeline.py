@@ -32,11 +32,13 @@ from mom.domain.ports import (
     CallSpec,
     Clock,
     CompletionChunk,
+    EventBus,
     IdFactory,
     LLMClient,
     ToolCallCustody,
     Tracer,
 )
+from mom.domain.progress import ProgressEvent
 from mom.domain.prompt_caching import inject_anthropic_cache
 from mom.domain.results import EnsembleResult, ModelOutcome, OutcomeStatus, Usage
 from mom.domain.synthesis import all_failed_message, build_synthesis_messages
@@ -54,6 +56,7 @@ class PipelineDeps:
     clock: Clock
     recorder: MetricsSink | None = None
     tracer: Tracer | None = None
+    bus: EventBus | None = None
     request_id: str = ""
     ids: IdFactory | None = None
     custody: ToolCallCustody | None = None
@@ -64,6 +67,16 @@ def _mint_call_id(deps: PipelineDeps) -> str:
     if deps.ids is not None:
         return deps.ids.new_id("call")
     return f"call_{uuid.uuid4().hex}"
+
+
+def _publish(deps: PipelineDeps, event: ProgressEvent) -> None:
+    """Publish a progress event, swallowing any failure (progress must never break a request)."""
+    if deps.bus is None:
+        return
+    try:
+        deps.bus.publish(deps.request_id, event)
+    except Exception:
+        logger.debug("progress publish failed", exc_info=True)
 
 
 def _record_member(
@@ -288,11 +301,31 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             if plan.skip_reason == "tool_continuation":
                 synth_messages = _restore_relay_ids(deps, plan, synth_messages)
         else:
+            members_total = len(plan.members)
+            _publish(
+                deps,
+                ProgressEvent(
+                    kind="fanout_started", ensemble=plan.ensemble, members_total=members_total
+                ),
+            )
             async for event in _fan_out(deps, plan):
                 if isinstance(event, MemberCompleted):
                     outcome = event.outcome
                     outcomes.append(outcome)
                     _record_member(deps, plan, outcome, turn_type)
+                    _publish(
+                        deps,
+                        ProgressEvent(
+                            kind="member_completed",
+                            ensemble=plan.ensemble,
+                            member=outcome.identity,
+                            model=outcome.model,
+                            status=outcome.status,
+                            duration_ms=outcome.duration_ms,
+                            members_total=members_total,
+                            completed=len(outcomes),
+                        ),
+                    )
                     if deps.tracer is not None:
                         deps.tracer.observe(
                             request_id=deps.request_id,
@@ -346,6 +379,15 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 synth_messages, ttl=plan.synth.anthropic_cache_ttl
             )
         yield SynthesisStarted(plan.synth.llm_name, plan.synth.model)
+        _publish(
+            deps,
+            ProgressEvent(
+                kind="synthesis_started",
+                ensemble=plan.ensemble,
+                member=plan.synth.llm_name,
+                model=plan.synth.model,
+            ),
+        )
         usage = Usage()
         synth_llm_cost: float | None = None
         finish: FinishReason = "stop"
@@ -402,10 +444,17 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         for outcome in outcomes:
             total_usage = total_usage + outcome.usage
         total_cost = sum(o.cost_usd for o in outcomes) + synth_cost
+        _publish(deps, ProgressEvent(kind="completed", ensemble=plan.ensemble, status=finish))
         yield Completed(finish_reason=finish, usage=total_usage, total_cost_usd=total_cost)
     except MomError as exc:
+        _publish(
+            deps, ProgressEvent(kind="failed", ensemble=plan.ensemble, detail=exc.safe_message)
+        )
         yield PipelineFailed(code=exc.code, message=exc.safe_message, http_status=exc.http_status)
     except Exception:
+        _publish(
+            deps, ProgressEvent(kind="failed", ensemble=plan.ensemble, detail="internal error")
+        )
         yield PipelineFailed(code="internal_error", message="Internal server error")
 
 

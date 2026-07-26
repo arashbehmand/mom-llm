@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from mom.domain.progress import ProgressEvent
 from mom.domain.results import Usage
 
 
@@ -97,6 +98,23 @@ class Tracer(Protocol):
 class TokenEstimator(Protocol):
     def count(self, *, model: str, messages: list[dict[str, Any]]) -> int:
         """Best-effort input-token count for ``messages`` against ``model``. Never raises."""
+        ...
+
+
+class EventBus(Protocol):
+    """Publish/subscribe for per-request progress events, keyed by ``request_id``.
+
+    ``publish`` is fire-and-forget: it must never block the request path nor raise. ``subscribe``
+    returns an async iterator that yields a request's progress events — any buffered history first,
+    then live events — and completes once a terminal event (``completed``/``failed``) is seen.
+    """
+
+    def publish(self, request_id: str, event: ProgressEvent) -> None:
+        """Publish one progress event for a request (fire-and-forget)."""
+        ...
+
+    def subscribe(self, request_id: str) -> AsyncIterator[ProgressEvent]:
+        """Stream a request's progress events (history first, then live, until terminal)."""
         ...
 
 

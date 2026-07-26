@@ -9,8 +9,7 @@ authors = [{ name = "Arash Behmand" }]
 keywords = ["llm", "openai", "anthropic", "gateway", "litellm", "mixture-of-models"]
 
 # Runtime dependencies. litellm is the provider transport (quarantined to
-# adapters/litellm_client); langfuse backs the optional tracer. (redis — the optional event
-# bus — is still deferred.)
+# adapters/litellm_client); langfuse backs the optional tracer.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -23,6 +22,17 @@ dependencies = [
     "platformdirs>=4.2",
     "litellm>=1.55",
     "langfuse>=3.0",
+]
+
+# Optional feature deps, imported lazily so a base install never requires them:
+#   redis -> the cross-process progress event bus (settings.redis_url)
+#   otel  -> the OpenTelemetry/OTLP tracer (observability.otel.enabled); grpc users also install
+#            opentelemetry-exporter-otlp-proto-grpc and set protocol: grpc
+[project.optional-dependencies]
+redis = ["redis>=5.0"]
+otel = [
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
 ]
 
 [project.scripts]
@@ -52,6 +62,10 @@ test = [
     # Official SDKs, for in-the-loop wire-format contract tests (parse our real ASGI streams).
     "openai>=1.40",
     "anthropic>=0.40",
+    # Optional-feature backends, exercised hermetically (no network / real broker) in the suite.
+    "redis>=5.0",
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
 ]
 dev = [
     { include-group = "test" },
@@ -116,6 +130,11 @@ warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 module = ["litellm", "litellm.*"]
+ignore_missing_imports = true
+
+# Optional feature deps, imported lazily; treat as untyped so a base checkout type-checks too.
+[[tool.mypy.overrides]]
+module = ["redis.*", "opentelemetry.*"]
 ignore_missing_imports = true
 
 # ----------------------------------------------------------------------------------------------

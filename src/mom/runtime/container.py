@@ -13,6 +13,7 @@ from mom.config.resolve import ResolvedCatalog
 from mom.domain.metrics import MetricsReader, MetricsSink
 from mom.domain.ports import (
     Clock,
+    EventBus,
     IdFactory,
     LLMClient,
     TokenEstimator,
@@ -37,3 +38,4 @@ class Container:
     token_estimator: TokenEstimator | None = None
     # Process-local custody of provider-native tool-call ids behind minted client ids.
     custody: ToolCallCustody | None = None
+    bus: EventBus | None = None

@@ -15,6 +15,7 @@ gateway's base URL and set the model to an ensemble name.
 - [`POST /v1/messages` and `/v1/messages/count_tokens`](#post-v1messages)
 - [Model discovery](#model-discovery)
 - [`GET /v1/metrics/usage`](#get-v1metricsusage)
+- [`GET /v1/progress/{id}`](#get-v1progressid)
 - [`GET /health`](#get-health)
 - [Effort tiers](#effort-tiers)
 - [Usage and cost](#usage-and-cost)
@@ -252,6 +253,24 @@ Returns counts and sums: `calls`, token totals (`prompt_tokens`, `completion_tok
 `reasoning_tokens`, `cached_prompt_tokens`, `cache_write_tokens`), `cost_usd`, `errors`,
 `cache_hits`, and `relay_calls` (tool-continuation turns that skipped fan-out). Returns
 `{"calls": 0}` when metrics are unavailable.
+
+Add `by=member`, `by=turn_type`, or `by=day` to group the aggregate (SQL `GROUP BY`). Grouped
+responses are shaped `{"by": "<dimension>", "groups": [ {<dimension>: <key>, ...aggregate}, ... ]}`
+— for example `by=member` returns one row per member/synthesizer, `by=day` one row per UTC day. The
+`start` / `end` / `model` window filters apply to grouped queries too.
+
+## `GET /v1/progress/{id}`
+
+Server-sent stream of a request's coarse lifecycle milestones — `fanout_started`, one
+`member_completed` per member, `synthesis_started`, and a terminal `completed` (or `failed`). Each
+SSE frame is `event: <kind>` with a JSON `data:` payload; a `: ping` comment heartbeats an idle
+connection. To watch a request, generate an id, open this stream, then issue the chat/messages/
+responses call with the **`X-Request-Id`** header set to the same id (the gateway also echoes the
+resolved id back in the `X-Request-Id` response header). Progress is buffered briefly per request,
+so opening the stream a moment after the call still replays the events already emitted.
+
+Backed by an in-memory bus by default; set `MOM_REDIS_URL` to fan progress across worker processes
+via Redis (`pip install 'mom-llm[redis]'`).
 
 ## `GET /health`
 
