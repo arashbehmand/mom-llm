@@ -18,6 +18,8 @@ dependencies = [
     "pyyaml>=6.0",
     "typer>=0.12",
     "structlog>=24.1",
+    "aiosqlite>=0.20",
+    "platformdirs>=4.2",
 ]
 
 [project.scripts]
