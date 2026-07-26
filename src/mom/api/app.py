@@ -19,6 +19,7 @@ from mom.api.routers.anthropic import router as anthropic_router
 from mom.api.routers.chat import models_router
 from mom.api.routers.chat import router as chat_router
 from mom.api.routers.metrics import router as metrics_router
+from mom.api.routers.responses import router as responses_router
 from mom.runtime.settings import Settings
 
 
@@ -54,5 +55,6 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     app.include_router(chat_router, prefix="/v1")
     app.include_router(models_router, prefix="/v1")
     app.include_router(anthropic_router, prefix="/v1")
+    app.include_router(responses_router, prefix="/v1")
     app.include_router(metrics_router, prefix="/v1")
     return app
