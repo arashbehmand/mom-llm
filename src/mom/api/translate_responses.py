@@ -76,6 +76,15 @@ def _input_messages(value: str | list[dict[str, Any]]) -> list[MessageIR]:
     return messages
 
 
+def _function_spec(tool: dict[str, Any]) -> ToolSpec:
+    return ToolSpec(
+        name=tool.get("name", ""),
+        description=tool.get("description"),
+        parameters=tool.get("parameters"),
+        strict=tool.get("strict"),
+    )
+
+
 def _tools(
     raw: list[dict[str, Any]] | None,
 ) -> tuple[tuple[ToolSpec, ...], bool, tuple[dict[str, Any], ...]]:
@@ -88,19 +97,22 @@ def _tools(
             # Carried opaquely; plan.py forwards it to an MCP-capable synthesizer, else 400s.
             mcp_tools.append(tool)
             continue
+        if kind == "namespace":
+            # Codex groups related function tools under a `namespace` container carrying a nested
+            # `tools` array. Flatten those function tools (by their bare names) so the ensemble
+            # sees them instead of 400-ing the whole request; non-function entries are ignored.
+            specs.extend(
+                _function_spec(sub)
+                for sub in tool.get("tools", [])
+                if sub.get("type") in (None, "function")
+            )
+            continue
         if kind and kind not in _SUPPORTED_TOOL_TYPES:
             raise InvalidRequestError(f"unsupported tool type {kind!r}")
         if kind in ("web_search", "web_search_preview"):
             web_search = True
             continue
-        specs.append(
-            ToolSpec(
-                name=tool.get("name", ""),
-                description=tool.get("description"),
-                parameters=tool.get("parameters"),
-                strict=tool.get("strict"),
-            )
-        )
+        specs.append(_function_spec(tool))
     return tuple(specs), web_search, tuple(mcp_tools)
 
 
