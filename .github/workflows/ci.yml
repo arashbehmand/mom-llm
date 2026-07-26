@@ -55,5 +55,66 @@ jobs:
           enable-cache: true
       - run: uv python install ${{ matrix.python-version }}
       - run: uv sync --locked --group test --python ${{ matrix.python-version }}
-      - name: pytest (v2)
-        run: uv run --python ${{ matrix.python-version }} pytest -c pyproject.toml --cov=mom --cov-report=term-missing
+      # `--cov` (no argument) uses the coverage source in pyproject (domain/engine/adapters/config);
+      # the run fails when that coverage drops below `fail_under` in [tool.coverage.report].
+      - name: pytest (v2) + coverage gate
+        run: uv run --python ${{ matrix.python-version }} pytest -c pyproject.toml --cov --cov-report=term-missing
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -f docker/Dockerfile -t mom-llm:ci .
+      - name: Smoke — mom --version
+        run: |
+          set -euo pipefail
+          version="$(docker run --rm mom-llm:ci --version)"
+          echo "image reports version: ${version}"
+          test -n "${version}"
+      - name: Smoke — boot + /health
+        run: |
+          set -euo pipefail
+          docker run -d --name mom-smoke \
+            -e MOM_CONFIG=/config.yaml \
+            -e MOM_API_TOKEN=ci-smoke-token \
+            -v "${{ github.workspace }}/config.example.yaml:/config.yaml:ro" \
+            mom-llm:ci
+          # The server boots `mom serve` (default CMD). Poll its own stdlib healthcheck (which
+          # probes 127.0.0.1:8000/health inside the container) until it serves, then assert ok.
+          healthy=0
+          for attempt in $(seq 1 30); do
+            if docker exec mom-smoke mom healthcheck >/dev/null 2>&1; then
+              echo "healthy after ${attempt} attempt(s)"
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
+          docker logs mom-smoke
+          test "${healthy}" = "1"
+      - name: Teardown
+        if: always()
+        run: docker rm -f mom-smoke >/dev/null 2>&1 || true
+
+  # ------------------------------------------------------------------------------------------------
+  # DEFERRED (issue #12): two gates are intentionally NOT wired because the tooling each requires
+  # does not yet exist in this repo / is not installable in CI. A job that "passes" without really
+  # checking anything would be worse than an honest TODO — so these stay documented, not faked.
+  #
+  # TODO(docs-drift): regenerate the generated artifacts and fail on drift, e.g.
+  #     mom schema  > schema/mom-config.schema.json   # generator command does NOT exist yet
+  #     mom openapi > docs/openapi.json               # generator command does NOT exist yet
+  #     <render docs/CONFIGURATION.md + .env.example from the pydantic config models>
+  #     git diff --exit-code
+  #   BLOCKED: there is no generator today — docs/CONFIGURATION.md, .env.example, and the
+  #   schema/mom-config.schema.json referenced by config.example.yaml are all hand-maintained
+  #   (the schema file does not even exist yet). Add a `mom schema` / `mom openapi` / config-docs
+  #   generator first, then this job becomes a real drift gate.
+  #
+  # TODO(open-responses-conformance): run an Open Responses conformance CLI against a booted
+  #   `mom serve` to validate the /v1/responses surface.
+  #   BLOCKED: no installable Open Responses conformance CLI exists to pin and run here. The
+  #   stateless /v1/responses subset is covered hermetically today by tests_v2/test_responses_api.py
+  #   in the `test` job. Wire this once a real, runnable conformance tool is available.
+  # ------------------------------------------------------------------------------------------------

@@ -23,4 +23,6 @@ def test_create_app_is_pure_construction():
     # Building the app must be pure construction (the container is built in the lifespan).
     app = create_app()
     assert app.title == "MoM — Mixture of Models"
-    assert any(route.path == "/v1/chat/completions" for route in app.routes)  # type: ignore[attr-defined]
+    # Assert route registration via the OpenAPI schema (stable public API): newer Starlette
+    # exposes prefixed includes as opaque ``_IncludedRouter`` mounts, so ``route.path`` is gone.
+    assert "/v1/chat/completions" in app.openapi()["paths"]

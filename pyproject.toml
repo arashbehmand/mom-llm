@@ -84,7 +84,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests_v2/*" = ["S101", "ARG"]  # asserts + unused fixture args are fine in tests
+"tests_v2/*" = ["S101", "S105", "S106", "S107", "ARG"]  # asserts, fake secrets, unused fixture args
 "src/mom/domain/errors.py" = ["N818"]  # domain error vocabulary; base is MomError
 
 [tool.ruff.lint.mccabe]
@@ -111,8 +111,10 @@ warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 
+# The provider SDKs are lazy, optional imports inside the adapters (they arrive as runtime deps
+# later in the rebuild) and ship no type stubs; let the adapter boundary be untyped.
 [[tool.mypy.overrides]]
-module = ["litellm", "litellm.*"]
+module = ["litellm", "langfuse"]
 ignore_missing_imports = true
 
 # ----------------------------------------------------------------------------------------------
@@ -126,12 +128,21 @@ testpaths = ["tests_v2"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 
+# Coverage gate scope: the core business logic (domain/engine/adapters) plus config. The API,
+# runtime composition-root (wiring), store, and CLI layers are exercised by integration/boot tests
+# but deliberately kept out of the *enforced* floor — they are I/O- and startup-bound, and the
+# hermetic suite intentionally does not fake a whole live boot. `pytest --cov` (no argument) uses
+# this source, so the measured set, the CI job, and `fail_under` all agree.
 [tool.coverage.run]
-source = ["mom"]
+source = ["mom.domain", "mom.engine", "mom.adapters", "mom.config"]
 branch = true
 omit = ["*/tests_v2/*"]
 
 [tool.coverage.report]
+precision = 2
+# The test job fails when covered lines+branches on the gated packages drop below this floor.
+# Currently ~92.6%; held at 90 to leave headroom while stopping silent coverage rot.
+fail_under = 90
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
