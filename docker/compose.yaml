@@ -1,0 +1,41 @@
+# MoM v2 deployment. One app service; Redis is opt-in via the `redis` profile.
+# Run from the repo root: `docker compose -f docker/compose.yaml up --build`.
+services:
+  mom:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: mom-llm:latest
+    ports:
+      - "8000:8000"
+    environment:
+      MOM_CONFIG: /app/config.yaml
+      MOM_DATA_DIR: /data
+      # Fail fast if the token is not set (no insecure default).
+      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env}
+    env_file:
+      - ../.env
+    volumes:
+      - ../config.yaml:/app/config.yaml:ro
+      - mom-data:/data
+    healthcheck:
+      test: ["CMD", "mom", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    # Internal only — not published to the host.
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  mom-data:
+  redis-data:
