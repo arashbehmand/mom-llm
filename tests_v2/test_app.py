@@ -19,8 +19,8 @@ async def test_health_endpoint():
     assert body["version"] == __version__
 
 
-def test_create_app_has_no_import_time_side_effects():
-    # Building the app must be pure construction; nothing observable beyond returning the app.
+def test_create_app_is_pure_construction():
+    # Building the app must be pure construction (the container is built in the lifespan).
     app = create_app()
     assert app.title == "MoM — Mixture of Models"
-    assert app.state.settings is not None
+    assert any(route.path == "/v1/chat/completions" for route in app.routes)  # type: ignore[attr-defined]

@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 from mom.config.types import (
     ByteSize,
@@ -201,6 +201,16 @@ class EnsembleConfig(_Model):
     tools: EnsembleToolsConfig = Field(default_factory=EnsembleToolsConfig)
     advertise: dict[str, Any] = Field(default_factory=dict)
     on_input_overflow: Literal["skip", "reject"] = "skip"
+
+    @field_validator("show_work", mode="before")
+    @classmethod
+    def _coerce_show_work(cls, value: object) -> object:
+        # YAML parses `off`/`on` as booleans; map them back to the intended tokens.
+        if value is False:
+            return "off"
+        if value is True:
+            return "inline"
+        return value
 
     @model_validator(mode="after")
     def _validate_tiers_and_members(self) -> EnsembleConfig:

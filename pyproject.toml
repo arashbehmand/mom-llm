@@ -111,6 +111,10 @@ warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 
+[[tool.mypy.overrides]]
+module = ["litellm", "litellm.*"]
+ignore_missing_imports = true
+
 # ----------------------------------------------------------------------------------------------
 # pytest — v2 config. Bare `pytest` still uses pytest.ini (the v1 suite) during transition;
 # run the v2 suite explicitly with `pytest -c pyproject.toml`.
