@@ -66,6 +66,7 @@ class ResolvedLlm:
     key_env_candidates: tuple[str, ...]
     proxy_url_env: str | None
     params: Mapping[str, Any]
+    search: Mapping[str, Any] | None
     pricing: Any | None
     capabilities: Any | None
     max_input_tokens: int | None
@@ -150,6 +151,7 @@ def _resolve_llm(
         api_key_env = cfg.api_key_env
         proxy_url_env = cfg.proxy_url_env
         params: dict[str, Any] = dict(cfg.params)
+        search: Mapping[str, Any] | None = cfg.search
         pricing = cfg.pricing
         capabilities = cfg.capabilities
         max_input_tokens = cfg.max_input_tokens
@@ -163,6 +165,7 @@ def _resolve_llm(
         api_key_env = cfg.api_key_env if "api_key_env" in provided else parent.api_key_env
         proxy_url_env = cfg.proxy_url_env if "proxy_url_env" in provided else parent.proxy_url_env
         params = _deep_merge(parent.params, cfg.params)
+        search = cfg.search if "search" in provided else parent.search
         pricing = cfg.pricing if "pricing" in provided else parent.pricing
         capabilities = cfg.capabilities if "capabilities" in provided else parent.capabilities
         max_input_tokens = (
@@ -191,6 +194,7 @@ def _resolve_llm(
         key_env_candidates=key_candidates,
         proxy_url_env=proxy_url_env,
         params=MappingProxyType(params),
+        search=MappingProxyType(search) if search is not None else None,
         pricing=pricing,
         capabilities=capabilities,
         max_input_tokens=max_input_tokens,

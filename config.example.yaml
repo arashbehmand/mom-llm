@@ -45,7 +45,12 @@ observability:
 llms:
   gpt:        { model: openai/gpt-5.6-sol }
   claude:     { model: anthropic/claude-opus-4-8 }
-  gemini:     { model: gemini/gemini-3.1-pro }        # api_key_env inferred (GEMINI/GOOGLE)
+  gemini:                                             # api_key_env inferred (GEMINI/GOOGLE)
+    model: gemini/gemini-3.1-pro
+    # `search:` marks this LLM web-search-capable. When a request sets web_search, these params
+    # are merged in for THIS member (others in the ensemble answer without search). Presence of
+    # the block (even `{}`) is the capability signal — like reasoning effort, but for search.
+    search: { web_search_options: { search_context_size: high } }
   qwen:       { model: openrouter/qwen/qwen-3.6-max }
   flash:      { model: gemini/gemini-3.6-flash }
   # A per-LLM outbound proxy, unchanged concept from v1:

@@ -39,6 +39,8 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: Any = None
     parallel_tool_calls: bool | None = None
     reasoning_effort: str | None = None
+    web_search: bool | None = None
+    web_search_options: dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
     user: str | None = None
     metadata: dict[str, str] | None = None
