@@ -101,7 +101,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/*" = ["S101", "ARG"]  # asserts + unused fixture args are fine in tests
+"tests/*" = ["S101", "S105", "S106", "S107", "ARG"]  # asserts + dummy secrets + unused fixture args are fine in tests
 "src/mom/domain/errors.py" = ["N818"]  # domain error vocabulary; base is MomError
 
 [tool.ruff.lint.mccabe]
@@ -148,11 +148,13 @@ pythonpath = ["src"]
 asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["mom"]
+# Gate the core logic; api/runtime/store/cli are exercised but not chased to a number.
+source = ["mom.domain", "mom.engine", "mom.adapters", "mom.config"]
 branch = true
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
+fail_under = 88
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
