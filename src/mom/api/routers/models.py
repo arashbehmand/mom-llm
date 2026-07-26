@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Request
 
 from mom.api.auth import require_api_key
 from mom.api.deps import ContainerDep
-from mom.domain.capabilities import ModelCard, ensemble_card
+from mom.config.capabilities import ModelCard, ensemble_card
 from mom.domain.errors import UnknownModelError
 
 

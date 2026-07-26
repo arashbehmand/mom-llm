@@ -66,8 +66,9 @@ class CachingClient:
         if hit is not None:
             return _deserialize(hit)
         result = await self._inner.complete(spec)
-        # Do not cache tool-call or empty results (non-deterministic / low value).
-        if not result.tool_calls and result.content.strip():
+        # Do not cache tool-call, empty, or truncated results — a `length`-truncated answer would
+        # otherwise be served for every future identical request.
+        if not result.tool_calls and result.content.strip() and result.finish_reason != "length":
             await self._cache.put(key, spec.llm_name, _serialize(result), now=now)
         return result
 

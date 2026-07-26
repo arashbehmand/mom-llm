@@ -122,6 +122,8 @@ async def encode_sse(
             first = open_role()
             if first:
                 yield first
+            if event.reasoning:
+                yield _chunk(frame, {"reasoning_content": event.reasoning}, None)
             if event.content:
                 yield _chunk(frame, {"content": event.content}, None)
         elif isinstance(event, ToolCallStarted):
@@ -178,6 +180,7 @@ def build_completion(
     usage = result.usage
     message = ChatMessageOut(
         content=content or None,
+        reasoning_content=result.reasoning or None,
         tool_calls=list(result.tool_calls) or None,
     )
     return ChatCompletionResponse(

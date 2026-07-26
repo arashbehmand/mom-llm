@@ -1,30 +1,17 @@
-"""The composition container and the FastAPI dependencies that read it from app.state."""
+"""FastAPI access to the composition ``Container`` stored on ``app.state``.
+
+The ``Container`` itself lives in ``mom.runtime.container`` (the runtime layer owns composition,
+so nothing in ``runtime`` has to import ``api``); this module adds the FastAPI dependency and
+re-exports ``Container`` for the routers.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, Request
 
-from mom.config.resolve import ResolvedCatalog
-from mom.domain.metrics import MetricsReader, MetricsSink
-from mom.domain.ports import Clock, IdFactory, LLMClient, Tracer
-from mom.runtime.settings import Settings
-
-
-@dataclass(frozen=True, slots=True)
-class Container:
-    """Everything the app needs, constructed once at startup (or injected in tests)."""
-
-    settings: Settings
-    catalog: ResolvedCatalog
-    client: LLMClient
-    clock: Clock
-    ids: IdFactory
-    metrics: MetricsSink | None = None
-    metrics_reader: MetricsReader | None = None
-    tracer: Tracer | None = None
+from mom.runtime.container import Container
 
 
 def get_container(request: Request) -> Container:
@@ -33,3 +20,6 @@ def get_container(request: Request) -> Container:
 
 
 ContainerDep = Annotated[Container, Depends(get_container)]
+
+
+__all__ = ["Container", "ContainerDep", "get_container"]

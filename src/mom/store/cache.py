@@ -86,15 +86,22 @@ class SqliteCacheStore:
         if total <= self._max_bytes:
             return
         target = int(self._max_bytes * 0.9)
-        # Delete oldest-used rows until under 90% of the cap.
+        # Keep the most-recently-used rows whose running size stays within `target`; delete the
+        # rest (the least-recently-used). A window sum newest->oldest marks the overflow tail:
+        # any row whose cumulative size (from the newest down to and including it) exceeds the
+        # target is beyond the cap, i.e. one of the oldest rows.
         await self._conn.execute(
             """
             DELETE FROM entries WHERE key IN (
-                SELECT key FROM entries ORDER BY last_used_at ASC
-            ) AND (
-                SELECT COALESCE(SUM(size_bytes), 0) FROM entries e2
-                WHERE e2.last_used_at <= entries.last_used_at
-            ) > ?
+                SELECT key FROM (
+                    SELECT key, SUM(size_bytes) OVER (
+                        ORDER BY last_used_at DESC, key DESC
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ) AS cumulative
+                    FROM entries
+                )
+                WHERE cumulative > ?
+            )
             """,
             (target,),
         )

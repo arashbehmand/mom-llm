@@ -68,6 +68,7 @@ class EnsembleResult:
     total_cost_usd: float
     finish_reason: str
     tool_calls: tuple[dict[str, Any], ...] = ()
+    reasoning: str = ""
 
     @property
     def successful(self) -> tuple[ModelOutcome, ...]:

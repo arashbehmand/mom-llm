@@ -111,6 +111,7 @@ async def encode_sse(
         index, item_id = text
         text = None
         joined = "".join(text_buf)
+        text_buf.clear()  # a later text item must not re-emit this one's text
         item = {
             "type": "message",
             "id": item_id,
@@ -136,6 +137,30 @@ async def encode_sse(
             evt("response.output_item.done", {"output_index": index, "item": item}),
         ]
 
+    def finalize_tools() -> list[bytes]:
+        chunks: list[bytes] = []
+        for entry in tools.values():
+            index, item_id, name, call_id, buf = entry
+            args = "".join(buf)
+            chunks.append(
+                evt(
+                    "response.function_call_arguments.done",
+                    {"item_id": item_id, "output_index": index, "arguments": args},
+                )
+            )
+            item = {
+                "type": "function_call",
+                "id": item_id,
+                "call_id": call_id,
+                "name": name,
+                "arguments": args,
+                "status": "completed",
+            }
+            output.append(item)
+            chunks.append(evt("response.output_item.done", {"output_index": index, "item": item}))
+        tools.clear()
+        return chunks
+
     usage: dict[str, int] | None = None
     async for event in events:
         if isinstance(event, AnswerDelta):
@@ -144,7 +169,7 @@ async def encode_sse(
             if text is None:
                 index = next_index
                 next_index += 1
-                item_id = f"{response_id}-msg"
+                item_id = f"{response_id}-msg{index}"
                 text = (index, item_id)
                 yield evt(
                     "response.output_item.added",
@@ -221,30 +246,19 @@ async def encode_sse(
         elif isinstance(event, PipelineFailed):
             for chunk in close_text():
                 yield chunk
+            for chunk in finalize_tools():  # finalize any opened tool items — no danglers
+                yield chunk
             failed = skeleton("failed", output)
             failed["error"] = {"code": event.code, "message": event.message}
+            if usage is not None:
+                failed["usage"] = usage
             yield evt("response.failed", {"response": failed})
             return
 
     for chunk in close_text():
         yield chunk
-    for entry in tools.values():
-        index, item_id, name, call_id, buf = entry
-        args = "".join(buf)
-        yield evt(
-            "response.function_call_arguments.done",
-            {"item_id": item_id, "output_index": index, "arguments": args},
-        )
-        item = {
-            "type": "function_call",
-            "id": item_id,
-            "call_id": call_id,
-            "name": name,
-            "arguments": args,
-            "status": "completed",
-        }
-        output.append(item)
-        yield evt("response.output_item.done", {"output_index": index, "item": item})
+    for chunk in finalize_tools():
+        yield chunk
 
     completed = skeleton("completed", output)
     if usage is not None:

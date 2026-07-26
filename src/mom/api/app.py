@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 
 from mom import __version__
 from mom.api.deps import Container
@@ -45,6 +46,28 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     app = FastAPI(title="MoM — Mixture of Models", version=__version__, lifespan=lifespan)
     if container is not None:  # tests: make the container available without the lifespan
         app.state.container = container
+
+    # Install CORS from the catalog config. A prebuilt container (tests) exposes it directly;
+    # otherwise the container is built later in the lifespan, so best-effort load the config file
+    # here. Any failure leaves CORS off — a bad config must never break the (pure) app build.
+    cors = None
+    if container is not None:
+        cors = container.catalog.config.server.cors
+    elif settings.config_file is not None:
+        try:
+            from mom.config.loader import load_config
+
+            cors = load_config(settings.config_file).config.server.cors
+        except Exception:
+            cors = None
+    if cors is not None and cors.origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(cors.origins),
+            allow_credentials=cors.allow_credentials,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     install_error_handlers(app)
 

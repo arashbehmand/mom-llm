@@ -1,689 +1,491 @@
-# Configuration Guide
+# Configuration Reference (v2)
 
-This guide provides detailed information on configuring the MoM Service through the `config.yaml` file and environment variables.
+MoM is configured from two independent sources:
 
-## Table of Contents
+1. **A YAML config file** — the *model catalog*: the individual models (`llms`), the
+   synthesis prompts (`prompts`), and the ensembles clients actually call (`ensembles`),
+   plus server/cache/observability settings. This file never contains secrets — only the
+   **names** of the environment variables that hold them.
+2. **The process environment** — machine-local facts and secrets: the listen host/port, the
+   API token, provider API keys, proxy URLs. Read from `MOM_`-prefixed variables (with a few
+   legacy aliases) and from a `.env` file if present.
 
-- [Overview](#overview)
-- [Environment Variables](#environment-variables)
-- [Configuration File Structure](#configuration-file-structure)
-- [LLM Definitions](#llm-definitions)
-- [Synthesis Prompts](#synthesis-prompts)
-- [MoM Models](#mom-models)
-- [Service Settings](#service-settings)
-- [Langfuse Integration](#langfuse-integration)
-- [Complete Configuration Example](#complete-configuration-example)
-- [Best Practices](#best-practices)
-
-## Overview
-
-The MoM Service is configured through two main sources:
-
-1. **Environment Variables** (`.env` file): API keys, tokens, and sensitive configuration
-2. **Configuration File** (`config.yaml`): LLM definitions, model orchestration, and service settings
-
-## Environment Variables
-
-Create a `.env` file in the project root with the following variables:
-
-### Required Variables
+The YAML schema is Pydantic v2 with `extra = "forbid"` **everywhere**, so a misspelled key is
+a hard error rather than a silently-ignored line. Point the server at your config with the
+`MOM_CONFIG` environment variable, and validate it before starting:
 
 ```bash
-# Service Configuration
-API_TOKEN="your-secret-bearer-token"  # Required for API authentication
+export MOM_CONFIG=/etc/mom/config.yaml
+mom config validate $MOM_CONFIG        # loads, validates, resolves; non-zero on any problem
+mom config show     $MOM_CONFIG        # prints the fully-resolved catalog (flattened efforts)
+mom serve --host 0.0.0.0 --port 8000   # run the gateway
 ```
 
-### Optional Service Variables
+A minimal but complete file — `version`, `llms`, and `ensembles` are the only required keys;
+everything else has a sensible default:
+
+```yaml
+version: 2
+llms:
+  claude: { model: anthropic/claude-opus-4-8 }
+  gpt:    { model: openai/gpt-5.6-sol }
+ensembles:
+  panel:
+    members:
+      - { llm: claude }
+      - { llm: gpt }
+    synthesizer: { llm: claude }
+```
+
+---
+
+## Top level
+
+```yaml
+version: 2              # required — must be the integer 2
+server:   { ... }       # HTTP surface: auth, CORS, public URL
+defaults: { ... }       # per-call timeouts/retries, fan-out limits, provider caching
+cache:    { ... }       # the gateway's own response cache
+storage:  { ... }       # where the metrics DB / cache live on disk
+observability: { ... }  # Langfuse tracing
+budgets:  { ... }       # spend ceilings
+llms:     { ... }       # required — one entry per callable upstream model
+prompts:  { ... }       # named synthesis prompts referenced by ensembles
+ensembles: { ... }      # required — the "models" clients call
+```
+
+`llms` and `ensembles` names may not contain `:` or `+` (reserved characters).
+
+---
+
+## `server`
+
+```yaml
+server:
+  auth: bearer          # bearer (default) | none
+  public_url: null      # external base URL, used to build progress/callback links
+  cors:
+    origins: []         # allowed origins; [] disables CORS
+    allow_credentials: false
+```
+
+- **`auth`** — `bearer` requires every request to carry the token (see
+  [Environment & settings](#environment--settings)) as `Authorization: Bearer <token>` or an
+  `x-api-key` header; comparison is timing-safe. `none` is an explicit opt-out for local dev —
+  no token is checked. When `auth: bearer` but no token is configured, requests fail with a
+  configuration error.
+- **`public_url`** — the externally-reachable base URL of the gateway, used when it needs to
+  emit an absolute link back to itself. Optional.
+- **`cors`** — an empty `origins` list means CORS middleware is not installed at all. Listing
+  `"*"` together with `allow_credentials: true` is rejected (a browser would refuse it anyway).
+
+---
+
+## `defaults`
+
+Baseline behavior for every call. Individual `llms` can override `timeout`; ensembles inherit
+the rest.
+
+```yaml
+defaults:
+  call:
+    timeout: 20m        # per upstream call (duration string)
+    retries: 3          # retry attempts on a failed call (>= 0)
+    retry_backoff: 2s   # base backoff between retries
+  fanout:
+    max_concurrency: null   # cap on simultaneous member calls
+    min_results: 1          # successful members required before synthesis (quorum)
+    deadline: null          # optional overall fan-out wall-clock budget
+  provider_cache:
+    anthropic: { enabled: true, ttl: 5m }   # Anthropic prompt-cache breakpoints
+    openai:    { prompt_cache_key: auto }    # OpenAI/xAI prefix-cache affinity
+```
+
+**`defaults.call`** — `timeout`, `retries`, and `retry_backoff` are the per-call transport
+settings applied to both members and the synthesizer.
+
+**`defaults.fanout`** —
+- `max_concurrency` bounds how many members hit upstream at once. `null` does **not** mean
+  unbounded: the gateway falls back to a built-in cap of **16** concurrent calls so a large
+  panel can never open an unbounded number of connections. Set an integer to lower it.
+- `min_results` is the quorum of successful members required before synthesis proceeds.
+- `deadline` is an optional overall wall-clock budget for the fan-out; stragglers still running
+  when it elapses are abandoned. `null` = no deadline (each call is still bounded by `timeout`).
+
+**`defaults.provider_cache`** — controls *provider-side* prompt caching (distinct from MoM's own
+[`cache`](#cache)):
+- `anthropic.enabled` injects `cache_control` breakpoints on Anthropic-family synthesizers;
+  `ttl` over 5 minutes selects Anthropic's `1h` cache tier, otherwise `5m`.
+- `openai.prompt_cache_key: auto` sends a stable `prompt_cache_key` to OpenAI/Azure/xAI models
+  for prefix-cache affinity; `off` disables it.
+
+---
+
+## `cache`
+
+MoM's own response cache — identical member calls are served from disk instead of re-billed.
+
+```yaml
+cache:
+  enabled: true
+  ttl: 14d              # how long an entry is reused
+  max_size: 1GB         # on-disk ceiling (base-1024 size string)
+  coalesce: true        # collapse identical concurrent fan-out calls into one upstream call
+```
+
+`coalesce` deduplicates *in-flight* identical calls (common when two ensembles share a member),
+so a burst of identical requests results in a single upstream call. A cache hit is billed at
+**$0**.
+
+---
+
+## `storage`
+
+```yaml
+storage:
+  data_dir: null        # null = platform default (or the MOM_DATA_DIR env var)
+```
+
+`data_dir` is where the metrics database and cache live. `null` uses the OS-appropriate app
+data directory, unless `MOM_DATA_DIR` is set in the environment (which takes precedence).
+
+---
+
+## `observability`
+
+```yaml
+observability:
+  langfuse:
+    enabled: false
+    public_key_env: LANGFUSE_PUBLIC_KEY   # env var NAMES, not the keys themselves
+    secret_key_env: LANGFUSE_SECRET_KEY
+    host_env: LANGFUSE_HOST
+```
+
+When `enabled: true`, each member and synthesizer call is recorded as a Langfuse generation,
+grouped per request. Credentials are read from the environment variables **named** here (the
+defaults match Langfuse's conventional names). Tracing is fire-and-forget: it never raises into
+the request path, and it silently no-ops if the credentials are missing.
+
+---
+
+## `budgets`
+
+```yaml
+budgets:
+  daily_usd: null                 # optional overall daily ceiling
+  per_ensemble:                   # optional per-ensemble daily ceilings
+    bmom: 50.0
+    mom-code: 10.0
+```
+
+Spend ceilings, in USD. Both are optional. Costs are measured automatically (see below).
+
+---
+
+## `llms`
+
+One entry per callable upstream model. The **key** is the short name you reference from
+ensembles; the model string is a LiteLLM `provider/model` identifier.
+
+```yaml
+llms:
+  gpt:     { model: openai/gpt-5.6-sol }
+  claude:  { model: anthropic/claude-opus-4-8 }
+  qwen:    { model: openrouter/qwen/qwen-3.6-max }
+  gpt-o:                                  # a full example with every field
+    model: openai/gpt-5.6-sol
+    api: responses                        # chat (default) | responses
+    api_key_env: OPENAI_API_KEY           # inferred from the provider when omitted
+    proxy_url_env: US_PROXY_URL           # route this model's calls through a proxy
+    params:                               # arbitrary provider params, passed through
+      temperature: 0.3
+      reasoning: { effort: high }
+    search: { web_search_options: { search_context_size: high } }
+    pricing: { input_per_1m: 1.25, output_per_1m: 10.0 }   # OPTIONAL override, see below
+    capabilities: { context_length: 400000, vision: true }
+    max_input_tokens: 380000
+    timeout: 10m
+    cache_ttl: 1h
+```
+
+Field by field:
+
+- **`model`** *(required, directly or via `extends`)* — the LiteLLM model id, e.g.
+  `anthropic/claude-opus-4-8`, `openai/gpt-5.6-sol`, `gemini/gemini-3.1-pro`,
+  `openrouter/qwen/qwen-3.6-max`.
+- **`api`** — `chat` (default, `/chat/completions` upstream) or `responses` (the provider's
+  Responses API). Choose `responses` for models exposed only through it.
+- **`api_key_env`** — the **name** of the env var holding the API key. When omitted it is
+  **inferred from the provider prefix** of `model`:
+
+  | provider prefix | inferred env var(s) |
+  | --- | --- |
+  | `openai/` | `OPENAI_API_KEY` |
+  | `anthropic/` | `ANTHROPIC_API_KEY` |
+  | `gemini/` | `GEMINI_API_KEY`, then `GOOGLE_API_KEY` |
+  | `vertex_ai/` | `GOOGLE_API_KEY` |
+  | `xai/` | `XAI_API_KEY` |
+  | `mistral/` | `MISTRAL_API_KEY` |
+  | `openrouter/` | `OPENROUTER_API_KEY` |
+  | `deepseek/` | `DEEPSEEK_API_KEY` |
+  | `groq/` | `GROQ_API_KEY` |
+  | `cohere/` | `COHERE_API_KEY` |
+
+  Providers with more than one candidate are tried in order (first one set wins). Set
+  `api_key_env` explicitly to point an unusual model at a specific key.
+- **`proxy_url_env`** — the name of an env var holding an `http(s)` proxy URL. When set, this
+  model's calls go **only** through that proxy — if the env var is unset or malformed the call
+  fails rather than silently connecting directly (a hard guarantee, useful for region-locked
+  models). See `MUSE_SPARK_PROXY_URL` in the example config.
+- **`params`** — an open dict merged into the upstream request (temperature, `top_p`,
+  provider-native `reasoning` objects, etc.). Reserved keys the gateway sets itself —
+  `model`, `messages`, `stream`, `api_key`, `num_retries`, `timeout` — are **rejected**.
+- **`search`** — provider params merged in **only when the client requests web search**. The
+  mere presence of this block (even an empty `{}` for an inherently-online model) marks the LLM
+  as search-capable; without it, the model answers without search even on a web-search request.
+- **`pricing`** — an **optional** per-1M-token price override (see the next section). Omit it
+  unless MoM can't price the model automatically.
+- **`capabilities`** — override the model's advertised capability card:
+  `context_length`, `max_output_tokens`, `vision`, `tools`, `reasoning`. For example
+  `vision: false` excludes this model from image requests.
+- **`max_input_tokens`** — a guard on the input size routed to this model.
+- **`timeout`** — per-model call timeout, overriding `defaults.call.timeout`.
+- **`cache_ttl`** — per-model override of the response-cache TTL.
+
+### `extends` — inheritance
+
+`extends` is the single inheritance primitive. A child inherits every field it does not set
+itself; `params` are **deep-merged** (a `null` value **deletes** an inherited key):
+
+```yaml
+llms:
+  base-claude:
+    model: anthropic/claude-opus-4-8
+    params: { temperature: 0.2, top_p: 0.9 }
+    pricing: { input_per_1m: 15.0, output_per_1m: 75.0 }
+  claude-creative:
+    extends: base-claude
+    params: { temperature: 0.9, top_p: null }   # override temperature, drop top_p
+    # model + pricing inherited unchanged
+```
+
+Chains are resolved with cycle and missing-target detection. Use `extends` to define a family
+of variants (different sampling, different reasoning) from one base without repetition.
+
+---
+
+## Cost is tracked automatically
+
+**You do not need to configure pricing.** MoM measures the real dollar cost of every call
+automatically:
+
+- For **direct providers** (OpenAI, Anthropic, Gemini, …) it uses LiteLLM's bundled
+  cost-per-token map, keyed on the model id and the returned token usage (including cached and
+  reasoning tokens).
+- For **OpenRouter** models it asks OpenRouter to return the actual usage-based cost of the
+  call and uses that number verbatim — so even models LiteLLM's map doesn't know are priced
+  correctly.
+- A **cache hit costs $0**.
+
+The optional `pricing:` block on an LLM is **only an override**, for the rare model that
+*neither* source can price. When present it takes precedence over the automatic figure; when
+absent the automatic cost is used. Rates are per **1M tokens**:
+
+```yaml
+llms:
+  house-model:
+    model: openrouter/acme/house-model-1
+    pricing:
+      input_per_1m: 0.50
+      output_per_1m: 1.50
+      reasoning_per_1m: 1.50      # optional, defaults to unpriced
+      cache_read_per_1m: 0.05     # optional
+      cache_write_per_1m: 0.60    # optional
+```
+
+Cached prompt tokens are billed at `cache_read_per_1m` and the rest of the prompt at
+`input_per_1m`; Anthropic-style cache-creation tokens are billed additively at
+`cache_write_per_1m`.
+
+---
+
+## `prompts`
+
+Named synthesis instructions, referenced by ensembles' synthesizers. Keeping them here avoids
+inlining long strings in every ensemble.
+
+```yaml
+prompts:
+  synth_default: |
+    You are the concluding model of a multi-model ensemble. Synthesize the candidate responses
+    into a single, superior answer. Resolve disagreements, drop hallucinations, and keep the
+    strongest reasoning from each.
+```
+
+---
+
+## `ensembles`
+
+An ensemble is what a client calls (the client sends its **name** as the `model`). Members fan
+out in parallel; the synthesizer merges their answers into the client-visible response.
+
+```yaml
+ensembles:
+  bmom:
+    description: Balanced panel across four providers.
+    strategy: synthesize            # synthesize (default) | passthrough
+    effort_tiers: [low, medium, high]
+    default_tier: medium
+    members:
+      - { llm: gpt,    effort: [l, m, h] }
+      - { llm: claude, effort: [m, h, h] }
+      - { llm: qwen,   effort: [m, h, h] }
+      - { llm: gemini, effort: pass }
+      - { llm: flash,  effort: [skip, m, h] }
+    synthesizer: { llm: claude, effort: [m, h, h], prompt: synth_default }
+    show_work: native
+    tools: { continuation: relay, member_tool_context: summary }
+    advertise: { context_length: 200000 }
+    on_input_overflow: skip
+```
+
+- **`description`** — free text, surfaced in the `/v1/models` capability card.
+- **`strategy`** —
+  - `synthesize` (default): fan out to all members, then the synthesizer merges them. Requires
+    at least one member.
+  - `passthrough`: **no fan-out** — the synthesizer model answers the client's messages
+    directly (the synthesis prompt is not applied). Ideal for a single-model, low-latency
+    endpoint (e.g. a coding agent). Takes at most one member.
+- **`effort_tiers`** / **`default_tier`** — the discrete reasoning tiers this ensemble exposes.
+  A client's `reasoning_effort` is snapped to the **nearest** defined tier (ties round *up*);
+  when the client sends none, `default_tier` is used. `default_tier` is required whenever
+  `effort_tiers` is set and must be one of them. Omit both for an ensemble with no tiers (each
+  member just runs its own configured params). See [The effort matrix](#the-effort-matrix).
+- **`members`** — the panel. Each entry names an `llm`, may set `as` to give a distinct
+  identity (so the same `llm` can appear twice with different effort), and may set `effort`
+  (the per-tier matrix cell). Identities must be unique within the ensemble.
+- **`synthesizer`** *(required)* — the concluding model: `llm`, an optional `prompt` (a key
+  from `prompts`), and an optional `effort`. The synthesizer owns the client-visible output,
+  its tool calls, and structured-output/`response_format`. Client sampling controls
+  (`temperature`, `max_tokens`, `stop`, `seed`, …) are applied to the synthesizer.
+- **`show_work`** — how member reasoning is exposed to the client:
+  - `off` (default): hidden.
+  - `inline`: member perspectives are rendered as a `<think>…</think>` block prepended to the
+    answer content.
+  - `native`: reasoning is emitted through the provider-native reasoning channel
+    (`reasoning_content` / thinking blocks), separate from the answer.
+
+  > Note: YAML parses a bare `off`/`on` as a boolean; the schema maps `off` → `off` and a bare
+  > `on`/`true` → `inline`. Quote the value if you want to be explicit.
+- **`tools`** —
+  - `continuation: relay` (default) | `fanout`. On a **tool-continuation** turn (the client is
+    feeding back a tool result), `relay` skips the fan-out and lets the synthesizer drive the
+    tool loop directly — fast and coherent for agent loops. `fanout` re-runs the full panel on
+    every turn.
+  - `member_tool_context: summary` (default) | `none`. On a fresh turn that carries tools,
+    `summary` gives advisory members a schema-free description of the available tools (they
+    cannot invoke tools themselves); `none` omits it.
+- **`advertise`** — override fields of the computed capability card by name:
+  `vision`, `tools`, `reasoning` (booleans) and `context_length`, `max_output_tokens`
+  (integers). By default the card is computed from the panel (vision = any member; tools =
+  synthesizer; reasoning = has tiers or shows work; web_search = any member/synthesizer has a
+  `search` block; `context_length` = the smallest member's window; `max_output_tokens` = the
+  synthesizer's). Use `advertise` to correct any of these for a client that reads them.
+- **`on_input_overflow`** — `skip` (default) drops a member whose `max_input_tokens` would be
+  exceeded; `reject` fails the request instead.
+
+---
+
+## The effort matrix
+
+The effort matrix is how a single ensemble serves several reasoning depths without a separate
+`mom-high`-style alias model per depth. Each member (and the synthesizer) declares **its own**
+effort per tier, so "give me a high-effort answer" can mean *high* for the flagship models and
+*medium* for a cheaper one.
+
+**Each cell** is one of:
+
+| value | meaning |
+| --- | --- |
+| a **level** | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` — with short aliases `min`, `l`, `med`/`m`, `h`, `xh`. Sends that reasoning effort. |
+| `pass` | relay **the client's** requested effort to this member unchanged. |
+| `off` | send **no** reasoning param (model default / a non-reasoning model). |
+| `skip` | **exclude** this member entirely at that tier. |
+
+**Three ways to write a member's `effort`**, given `effort_tiers: [low, medium, high]`:
+
+```yaml
+members:
+  - { llm: gpt,    effort: [l, m, h] }          # positional list, aligned to the tiers in order
+  - { llm: claude, effort: { low: m, high: h } } # explicit {tier: value} map (unlisted tiers -> off)
+  - { llm: gemini, effort: pass }                # a scalar -> the same value at every tier
+  - { llm: flash,  effort: [skip, m, h] }        # excluded at the 'low' tier, medium/high otherwise
+```
+
+- A **positional list** must have exactly one entry per tier, in the same order as
+  `effort_tiers`.
+- A **map** may name any subset of tiers; tiers you don't mention default to `off`.
+- A **scalar** applies to every tier.
+- **Omitting `effort`** entirely means `off` at every tier.
+
+At request time, the client's `reasoning_effort` selects a tier (nearest, ties up), then each
+member's cell for that tier is resolved and — because providers accept different vocabularies —
+**clamped** to what the target provider allows (e.g. `xhigh`/`max` collapse to the provider's
+`high`; `minimal` becomes `low` for non-OpenAI providers). An effort a model can't accept is
+dropped rather than causing a 400. Non-tiered ensembles ignore effort cells entirely.
+
+`mom config show <file>` prints the flattened matrix per ensemble, which is the quickest way to
+sanity-check it.
+
+---
+
+## Value formats (durations, sizes, effort)
+
+- **Durations** — `500ms`, `2s`, `20m`, `1h`, `14d` (units `ms`, `s`, `m`, `h`, `d`). A bare
+  number is treated as seconds.
+- **Byte sizes** — `512KB`, `64MB`, `1GB` (base-1024; units `B`, `KB`, `MB`, `GB`, `TB`).
+- **Effort levels** — see the table above.
+- **Env var names** — must match `^[A-Z][A-Z0-9_]*$` (upper snake case).
+
+---
+
+## Environment & settings
+
+Secrets and machine-local facts come from the environment, never the YAML. Settings are read
+from `MOM_`-prefixed variables; several **legacy v1 names** are still accepted as aliases (the
+`MOM_` name wins when both are set).
+
+| Purpose | Primary variable | Legacy alias | Notes |
+| --- | --- | --- | --- |
+| Config file path | `MOM_CONFIG` | `MOM_CONFIG_PATH` | Path to the YAML catalog. |
+| Data directory | `MOM_DATA_DIR` | — | Overrides `storage.data_dir`; metrics DB + cache. |
+| API token | `MOM_API_TOKEN` | `API_TOKEN` | The bearer token clients must present (when `auth: bearer`). |
+| Listen host / port | `MOM_HOST` / `MOM_PORT` | — | Also settable via `mom serve --host/--port`. |
+| Redis URL | `MOM_REDIS_URL` | `REDIS_URL` | Optional. |
+| Log level | `MOM_LOG_LEVEL` | — | e.g. `INFO`, `DEBUG`. |
+| Log format | `MOM_LOG_FORMAT` | — | `text` (default) or `json`. |
+| LiteLLM debug | `MOM_LITELLM_DEBUG` | `LITELLM_VERBOSE` | Verbose upstream logging. |
+
+**Provider API keys** are read directly from the environment, by the names inferred (or set
+via `api_key_env`) in `llms`:
 
 ```bash
-# CORS Configuration
-ALLOWED_CORS_ORIGINS=""  # Comma-separated origins, or empty for no CORS
-                         # Example: "https://example.com,https://app.example.com"
-
-# LiteLLM Logging
-LITELLM_VERBOSE="false"  # Set to "true" for detailed LLM call logging
-
-# Optional progress reporting integration
-REDIS_URL="redis://localhost:6379"        # Enables event publishing/subscription
-REPORTING_SERVICE_URL="http://localhost:8001"  # Used for X-MoM-Progress-Url header
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=...
+GEMINI_API_KEY=...          # or GOOGLE_API_KEY
+OPENROUTER_API_KEY=...
+XAI_API_KEY=...             # MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, COHERE_API_KEY, ...
 ```
 
-### LLM Provider API Keys
-
-Add the API keys for the LLM providers you plan to use:
-
-```bash
-# OpenAI
-OPENAI_API_KEY="sk-..."
-
-# Google Gemini
-GOOGLE_API_KEY="..."
-
-# Anthropic Claude
-ANTHROPIC_API_KEY="..."
-
-# Mistral
-MISTRAL_API_KEY="..."
-
-# Cohere
-COHERE_API_KEY="..."
-
-# Groq
-GROQ_API_KEY="..."
-
-# Together AI
-TOGETHER_API_KEY="..."
-
-# Replicate
-REPLICATE_API_KEY="..."
-```
-
-### Observability (Optional)
-
-```bash
-# Langfuse for tracing and monitoring
-LANGFUSE_PUBLIC_KEY=""
-LANGFUSE_SECRET_KEY=""
-LANGFUSE_HOST="https://cloud.langfuse.com"
-```
-
-## Configuration File Structure
-
-The `config.yaml` file has four main sections:
-
-```yaml
-llm_definitions:   # Define individual LLMs
-  - base_name: "..."
-    model: "..."
-    variants:
-      - suffix: "..."
-        # ... configuration
-
-prompt_definitions:  # Define synthesis prompts
-  - name: "..."
-    content: "..."
-
-models:  # Define MoM models (meta-models)
-  - name: "..."
-    llms_to_query: [...]
-    # ... configuration
-
-service:  # Service-level settings
-  timeout_seconds: 30
-  # ... other settings
-
-langfuse:  # Optional observability
-  # ... configuration
-```
-
-## LLM Definitions
-
-Define individual LLMs that can be used in your MoM models.
-
-### Variant-Based Definitions (Recommended)
-
-```yaml
-llm_definitions:
-  - base_name: "oai5m"
-    model: "openai/gpt-5-mini"  # LiteLLM model identifier
-    variants:
-      - suffix: "m"
-        params:
-          reasoning_effort: "medium"
-      - suffix: "h"
-        params:
-          reasoning_effort: "high"
-```
-
-Resolved names are `<base_name>:<suffix>`, so this creates `oai5m:m` and `oai5m:h`.
-
-### API Key Resolution
-
-`api_key_env` is optional in config. If omitted, MoM infers the default from the model provider:
-
-- `openai/*` -> `OPENAI_API_KEY`
-- `gemini/*` -> `GOOGLE_API_KEY`
-- `anthropic/*` -> `ANTHROPIC_API_KEY`
-- `xai/*` -> `XAI_API_KEY`
-- `mistral/*` -> `MISTRAL_API_KEY`
-- `openrouter/*` -> `OPENROUTER_API_KEY`
-
-Use `api_key_env` only when you need an override.
-
-```yaml
-llm_definitions:
-  - base_name: "g3p"
-    model: "gemini/gemini-3-pro-preview"
-    api_key_env: "MY_CUSTOM_GEMINI_KEY"  # Optional override
-```
-
-### Legacy Explicit-Name Syntax (Still Supported)
-
-```yaml
-llm_definitions:
-  - name: "gpt4"
-    model: "openai/gpt-4.1"
-```
-
-### LLM with Custom Parameters (Variant)
-
-```yaml
-llm_definitions:
-  - base_name: "g3p"
-    model: "gemini/gemini-3-pro-preview"
-    variants:
-      - suffix: "h"
-        params:
-          thinking_level: "high"  # Model-specific parameters
-          temperature: 0.7
-          max_tokens: 2000
-```
-
-### API Route Selection (`api_mode`)
-
-Each LLM definition can control which LiteLLM endpoint path is used:
-
-- `auto` (default): use Chat Completions API
-- `completion`: force Chat Completions API
-- `responses`: force Responses API (non-streaming only; streaming falls back to completion)
-
-```yaml
-llm_definitions:
-  - base_name: "grok41fr"
-    model: "xai/grok-4-1-fast-reasoning"
-    variants:
-      - suffix: "o"
-        api_mode: "responses"
-        params:
-          tools:
-            - type: "web_search"
-            - type: "x_search"
-```
-
-### Per-Model Outbound Proxy
-
-Set `proxy_url_env` to the name of an environment variable containing an HTTP(S) proxy URL.
-Only calls made through that LLM definition use the proxy. The URL is not included in cache
-keys, metrics, logs, or Langfuse model parameters.
-
-```yaml
-llm_definitions:
-  - base_name: "muse11"
-    model: "openrouter/meta/muse-spark-1.1"
-    proxy_url_env: "MUSE_SPARK_PROXY_URL"
-```
+**Per-model proxy URLs** are read from whatever env var a model's `proxy_url_env` names, e.g.:
 
 ```bash
 MUSE_SPARK_PROXY_URL="http://user:password@us-proxy.example:8080"
 ```
 
-The configured environment variable must exist when an uncached request is made. Cache hits
-do not create a proxy client.
-
-### LLM with Custom Pricing
-
-For models with special pricing (like reasoning tokens), you can define custom pricing:
-
-```yaml
-llm_definitions:
-  - base_name: "gemini-2.5-pro"
-    model: "gemini/gemini-2.5-pro"
-    pricing:
-      prompt_cost_per_token: 0.00000015      # $0.15 per 1M tokens
-      completion_cost_per_token: 0.00000060  # $0.60 per 1M text tokens
-      reasoning_cost_per_token: 0.00000350   # $3.50 per 1M reasoning tokens
-
-  - base_name: "claude4.5"
-    model: "anthropic/claude-4.5"
-    pricing:
-      prompt_cost_per_token: 0.00000300      # $3.00 per 1M tokens
-      completion_cost_per_token: 0.00001500  # $15.00 per 1M text tokens
-      reasoning_cost_per_token: 0.00008000   # $80.00 per 1M reasoning tokens
-```
-
-**Note**: Custom pricing is optional. If not specified, LiteLLM's default pricing is used. For models with reasoning tokens (Gemini 2.5 Pro, Claude 4.5), custom pricing enables accurate cost tracking.
-
-### Multimodal LLMs
-
-LLMs automatically support multimodal requests if the underlying model supports vision:
-
-```yaml
-llm_definitions:
-  - base_name: "gpt4-vision"
-    model: "openai/gpt-4-vision-preview"
-
-  - base_name: "claude-sonnet"
-    model: "anthropic/claude-3-5-sonnet-20241022"
-
-  - base_name: "gemini-pro-vision"
-    model: "gemini/gemini-2.5-pro"
-```
-
-The service automatically filters LLMs based on multimodal capability when images are included in requests.
-
-### LiteLLM Model Identifiers
-
-The `model` field uses LiteLLM's model identifier format: `provider/model-name`
-
-Common examples:
-
-| Provider | Format | Example |
-|----------|--------|---------|
-| OpenAI | `openai/model-name` | `openai/gpt-4o` |
-| Anthropic | `anthropic/model-name` | `anthropic/claude-3-5-sonnet-20241022` |
-| Google | `gemini/model-name` | `gemini/gemini-2.5-pro` |
-| Mistral | `mistral/model-name` | `mistral/mistral-large-latest` |
-| Cohere | `cohere/model-name` | `cohere/command-r-plus` |
-| Groq | `groq/model-name` | `groq/llama-3.1-70b-versatile` |
-
-See [LiteLLM documentation](https://docs.litellm.ai/docs/providers) for complete list of supported providers.
-
-## Synthesis Prompts
-
-Define prompts that instruct the concluding LLM on how to synthesize multiple responses.
-
-### Basic Synthesis Prompt
-
-```yaml
-prompt_definitions:
-  - name: "synth_default"
-    content: |
-      Review all expert responses and synthesize a single, cohesive answer that:
-      - Integrates the strongest insights from each response
-      - Resolves any disagreements between models
-      - Provides a balanced, comprehensive answer
-```
-
-### Task-Specific Prompts
-
-```yaml
-prompt_definitions:
-  - name: "synth_creative"
-    content: |
-      Synthesize the responses with emphasis on creativity and engagement:
-      - Combine the most innovative ideas from each response
-      - Create a narrative that flows naturally
-      - Balance creativity with factual accuracy
-
-  - name: "synth_technical"
-    content: |
-      Synthesize the responses focusing on technical accuracy:
-      - Verify technical claims across all responses
-      - Highlight consensus on technical details
-      - Note any technical disagreements and resolve them
-      - Provide the most technically sound answer
-
-  - name: "synth_concise"
-    content: |
-      Create a brief synthesis that:
-      - Captures only the most essential points
-      - Removes redundancy across responses
-      - Provides a clear, concise answer
-```
-
-## MoM Models
-
-Define "meta-models" that orchestrate multiple LLMs and synthesize their responses.
-
-### Basic MoM Model
-
-```yaml
-models:
-  - name: "mom"  # Model name used in API requests
-    llms_to_query:  # LLMs to query in parallel
-      - "gpt4:h"
-      - "claude"
-      - "gemini"
-    concluding_llm: "gpt4:h"  # LLM that synthesizes responses
-    concluding_prompt: "synth_default"  # Prompt for synthesis
-```
-
-### Independent Invocation Aliases
-
-Append `+<alias>` to a configured LLM name when the same definition should run more than once.
-The base invocation and multiple aliases can coexist in one ensemble:
-
-```yaml
-models:
-  - name: "comparison-mom"
-    llms_to_query:
-      - "g36f:h"
-      - "g36f:h+a"
-      - "g36f:h+b"
-    concluding_llm: "g36f:h"
-```
-
-`g36f:h+a` and `g36f:h+b` inherit the model, parameters, pricing, API mode, API-key environment,
-and proxy setting from `g36f:h`. Each name has a separate cache identity. Alias names may use
-letters, digits, `.`, `_`, and `-`; chained aliases and `+` in declared definition names are
-rejected.
-
-### MoM Model with Thinking Context
-
-Show intermediate responses to users:
-
-```yaml
-models:
-  - name: "mom-transparent"
-    llms_to_query:
-      - "gpt4:h"
-      - "claude"
-      - "gemini"
-    concluding_llm: "gpt4:h"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true  # Include intermediate responses
-```
-
-When enabled, the output includes intermediate responses wrapped in `<think>` tags:
-
-```
-<think>
-Model: gpt-4
-Content: [GPT-4's response]
----
-Model: claude
-Content: [Claude's response]
----
-Model: gemini
-Content: [Gemini's response]
----
-</think>
-
-[Final synthesized answer]
-```
-
-### Specialized MoM Models
-
-Create different models for different use cases:
-
-```yaml
-models:
-  # Creative content generation
-  - name: "mom-creative"
-    llms_to_query:
-      - "gpt5"
-      - "claude4.5"
-      - "gemini-2.5-pro"
-    concluding_llm: "gpt5"
-    concluding_prompt: "synth_creative"
-    include_thinking_context: false
-
-  # Fast responses with cost-effective models
-  - name: "mom-fast"
-    llms_to_query:
-      - "gemini-2.5-pro"
-      - "groq-llama"
-    concluding_llm: "gemini-2.5-pro"
-    concluding_prompt: "synth_concise"
-    include_thinking_context: false
-
-  # Technical accuracy focus
-  - name: "mom-technical"
-    llms_to_query:
-      - "gpt5"
-      - "claude4.5"
-      - "mistral-large"
-    concluding_llm: "claude4.5"
-    concluding_prompt: "synth_technical"
-    include_thinking_context: true
-
-  # Code generation
-  - name: "mom-code"
-    llms_to_query:
-      - "gpt4"
-      - "claude-sonnet"
-      - "codellama"
-    concluding_llm: "claude-sonnet"
-    concluding_prompt: "synth_technical"
-    include_thinking_context: false
-```
-
-## Service Settings
-
-Configure service-level behavior:
-
-```yaml
-service:
-  # Request timeout
-  timeout_seconds: 30  # Maximum time for LLM requests
-
-  # API exposure
-  exposed_apis: ["openai"]  # Currently only "openai" is supported
-
-  # Response caching
-  cache_enabled: true  # Enable automatic response caching
-
-  # Retry configuration
-  max_llm_retries: 3  # Number of retries for failed LLM calls
-  llm_retry_delay_seconds: 2  # Delay between retries
-
-  # Debug model generation
-  enable_mom_debug_model: false  # Auto-create "mom-debug" with all known LLMs
-```
-
-### Configuration Options Explained
-
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `timeout_seconds` | integer | 30 | Maximum time (in seconds) to wait for LLM responses |
-| `exposed_apis` | array | `["openai"]` | API formats to expose (currently only OpenAI-compatible) |
-| `cache_enabled` | boolean | false | Enable automatic caching of LLM responses to reduce costs |
-| `max_llm_retries` | integer | 3 | Number of retry attempts for failed LLM calls |
-| `llm_retry_delay_seconds` | integer | 2 | Delay (in seconds) between retry attempts |
-| `enable_mom_debug_model` | boolean | false | Auto-generate `mom-debug` that queries all configured LLM definitions |
-
-## Langfuse Integration
-
-Enable distributed tracing and observability with Langfuse:
-
-```yaml
-langfuse:
-  public_key_env: "LANGFUSE_PUBLIC_KEY"
-  secret_key_env: "LANGFUSE_SECRET_KEY"
-  host_env: "LANGFUSE_HOST"
-```
-
-**Setup Steps:**
-
-1. Sign up at [Langfuse](https://langfuse.com/)
-2. Create a new project
-3. Copy your API keys
-4. Add them to your `.env` file:
-   ```bash
-   LANGFUSE_PUBLIC_KEY="pk-lf-..."
-   LANGFUSE_SECRET_KEY="sk-lf-..."
-   LANGFUSE_HOST="https://cloud.langfuse.com"
-   ```
-
-Once configured, all requests will be traced in your Langfuse dashboard, providing:
-- Request/response traces
-- Token usage tracking
-- Cost analysis
-- Performance metrics
-- Error monitoring
-
-## Complete Configuration Example
-
-Here's a comprehensive example combining all features:
-
-> Note: This example uses explicit `name` entries for readability. Variant-based `base_name`/`suffix` syntax is the recommended style for larger configs.
-
-```yaml
-# LLM Definitions
-llm_definitions:
-  # OpenAI Models
-  - name: "gpt5"
-    model: "openai/gpt-5"
-    api_key_env: "OPENAI_API_KEY"
-    params:
-      reasoning_effort: "high"
-
-  - name: "gpt4o"
-    model: "openai/gpt-4o"
-    api_key_env: "OPENAI_API_KEY"
-
-  # Anthropic Models
-  - name: "claude4.5"
-    model: "anthropic/claude-4.5"
-    api_key_env: "ANTHROPIC_API_KEY"
-    pricing:
-      prompt_cost_per_token: 0.00000300
-      completion_cost_per_token: 0.00001500
-      reasoning_cost_per_token: 0.00008000
-
-  - name: "claude-sonnet"
-    model: "anthropic/claude-3-5-sonnet-20241022"
-    api_key_env: "ANTHROPIC_API_KEY"
-
-  # Google Models
-  - name: "gemini-2.5-pro"
-    model: "gemini/gemini-2.5-pro"
-    api_key_env: "GOOGLE_API_KEY"
-    pricing:
-      prompt_cost_per_token: 0.00000015
-      completion_cost_per_token: 0.00000060
-      reasoning_cost_per_token: 0.00000350
-
-  - name: "gemini-flash"
-    model: "gemini/gemini-2.5-flash"
-    api_key_env: "GOOGLE_API_KEY"
-
-  # Other Providers
-  - name: "mistral-large"
-    model: "mistral/mistral-large-latest"
-    api_key_env: "MISTRAL_API_KEY"
-
-  - name: "groq-llama"
-    model: "groq/llama-3.1-70b-versatile"
-    api_key_env: "GROQ_API_KEY"
-
-# Synthesis Prompts
-prompt_definitions:
-  - name: "synth_default"
-    content: |
-      Review all expert responses and synthesize a single, cohesive answer that:
-      - Integrates the strongest insights from each response
-      - Resolves any disagreements between models
-      - Provides a balanced, comprehensive answer
-
-  - name: "synth_creative"
-    content: |
-      Synthesize the responses with emphasis on creativity and engagement:
-      - Combine the most innovative ideas from each response
-      - Create a narrative that flows naturally
-      - Balance creativity with factual accuracy
-
-  - name: "synth_technical"
-    content: |
-      Synthesize the responses focusing on technical accuracy:
-      - Verify technical claims across all responses
-      - Highlight consensus on technical details
-      - Provide the most technically sound answer
-
-# MoM Models
-models:
-  # Default balanced model
-  - name: "mom"
-    llms_to_query:
-      - "gpt4o"
-      - "claude-sonnet"
-      - "gemini-2.5-pro"
-    concluding_llm: "gpt4o"
-    concluding_prompt: "synth_default"
-    include_thinking_context: false
-
-  # Premium model with reasoning
-  - name: "mom-premium"
-    llms_to_query:
-      - "gpt5"
-      - "claude4.5"
-      - "gemini-2.5-pro"
-    concluding_llm: "gpt5"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true
-
-  # Fast and cost-effective
-  - name: "mom-fast"
-    llms_to_query:
-      - "gemini-flash"
-      - "groq-llama"
-    concluding_llm: "gemini-flash"
-    concluding_prompt: "synth_default"
-    include_thinking_context: false
-
-  # Creative content
-  - name: "mom-creative"
-    llms_to_query:
-      - "gpt4o"
-      - "claude-sonnet"
-      - "gemini-2.5-pro"
-    concluding_llm: "claude-sonnet"
-    concluding_prompt: "synth_creative"
-    include_thinking_context: false
-
-  # Technical tasks
-  - name: "mom-technical"
-    llms_to_query:
-      - "gpt5"
-      - "claude4.5"
-      - "mistral-large"
-    concluding_llm: "claude4.5"
-    concluding_prompt: "synth_technical"
-    include_thinking_context: true
-
-# Service Settings
-service:
-  timeout_seconds: 30
-  exposed_apis: ["openai"]
-  cache_enabled: true
-  max_llm_retries: 3
-  llm_retry_delay_seconds: 2
-
-# Langfuse Integration (Optional)
-langfuse:
-  public_key_env: "LANGFUSE_PUBLIC_KEY"
-  secret_key_env: "LANGFUSE_SECRET_KEY"
-  host_env: "LANGFUSE_HOST"
-```
-
-## Best Practices
-
-### Model Selection
-
-1. **Diversity**: Choose LLMs with different strengths (creativity, accuracy, speed)
-2. **Cost Balance**: Mix premium and cost-effective models
-3. **Multimodal**: Ensure all LLMs in a MoM model support vision if you need image processing
-4. **Redundancy**: Use at least 3 LLMs for robust synthesis
-
-### Synthesis Configuration
-
-1. **Concluding LLM**: Choose your most capable model for synthesis
-2. **Thinking Context**: Enable for debugging and transparency, disable for production speed
-3. **Custom Prompts**: Tailor synthesis prompts to your specific use case
-
-### Performance Optimization
-
-1. **Timeouts**: Adjust `timeout_seconds` based on your model selection (slower models need more time)
-2. **Caching**: Keep `cache_enabled: true` to reduce costs for repeated queries
-3. **Retries**: Configure retries based on your providers' reliability
-
-### Cost Management
-
-1. **Custom Pricing**: Define accurate pricing for models with reasoning tokens
-2. **Model Tiers**: Create different MoM models for different priority levels
-3. **Monitoring**: Use Langfuse or metrics API to track costs
-4. **Fast Models**: Use `mom-fast` style configurations for less critical tasks
-
-### Security
-
-1. **Environment Variables**: Never commit `.env` file to version control
-2. **API Token**: Use a strong, unique `API_TOKEN`
-3. **CORS**: Restrict `ALLOWED_CORS_ORIGINS` in production
-4. **API Keys**: Rotate API keys regularly
-
-### Configuration Management
-
-1. **Version Control**: Keep `config.yaml_template` in git as a reference
-2. **Environment-Specific**: Maintain separate configs for dev/staging/prod
-3. **Documentation**: Comment your config with explanations for future reference
-4. **Validation**: Test configuration changes with health checks before deploying
+**Langfuse** credentials are read from the env vars named in `observability.langfuse`
+(`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` by default).
+
+All of these may be placed in a `.env` file in the working directory; the process environment
+takes precedence over `.env`.

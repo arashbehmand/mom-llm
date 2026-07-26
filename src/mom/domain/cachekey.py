@@ -2,7 +2,7 @@
 
 This is a crown-jewel function: its SHA256 output is the primary key of the on-disk response
 cache, so any change silently invalidates every entry and re-spends the cache against paid
-providers. It is ported verbatim from v1 (``mom_service.llm_calls``) and pinned by the
+providers. It is ported verbatim from v1 and pinned by the
 ``cache_keys`` golden. Behaviour: canonical JSON over ``{llm_name, model, messages, params}``
 with sensitive keys dropped and volatile S3 presigned-URL query params stripped.
 

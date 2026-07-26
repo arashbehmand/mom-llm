@@ -11,7 +11,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from mom.domain.errors import MomError, UpstreamError
+from mom.domain.cost import compute_cost
+from mom.domain.errors import MomError, UpstreamError, UpstreamTimeout
 from mom.domain.events import (
     AnswerDelta,
     Completed,
@@ -26,10 +27,15 @@ from mom.domain.events import (
     ToolCallStarted,
 )
 from mom.domain.metrics import CallMetric, MetricsSink, TurnType
-from mom.domain.ports import CallSpec, Clock, LLMClient, Tracer
+from mom.domain.ports import CallSpec, Clock, CompletionChunk, LLMClient, Tracer
+from mom.domain.prompt_caching import inject_anthropic_cache
 from mom.domain.results import EnsembleResult, ModelOutcome, OutcomeStatus, Usage
 from mom.domain.synthesis import all_failed_message, build_synthesis_messages
 from mom.engine.plan import ExecutionPlan, PlannedMember
+from mom.runtime.logging import get_logger
+
+
+logger = get_logger("mom.engine")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +78,7 @@ def _record_member(
 
 
 def _record_synth(
-    deps: PipelineDeps, plan: ExecutionPlan, usage: Usage, turn_type: TurnType
+    deps: PipelineDeps, plan: ExecutionPlan, usage: Usage, cost: float, turn_type: TurnType
 ) -> None:
     if deps.recorder is None:
         return
@@ -92,6 +98,7 @@ def _record_synth(
             cached_prompt_tokens=usage.cached_prompt_tokens,
             cache_write_tokens=usage.cache_write_tokens,
             total_tokens=usage.total_tokens,
+            cost_usd=cost,
         )
     )
 
@@ -115,32 +122,79 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
     except MomError as exc:
         return ModelOutcome(**common, status="error", error=exc.safe_message)  # type: ignore[arg-type]
     except Exception as exc:
-        return ModelOutcome(**common, status="error", error=str(exc))  # type: ignore[arg-type]
+        # Never surface raw provider/third-party text (it can carry keys, URLs, internal paths);
+        # log it for the operator and return a safe, generic message.
+        logger.warning("member call failed", llm=member.identity, error=str(exc))
+        return ModelOutcome(**common, status="error", error="call failed")  # type: ignore[arg-type]
     duration_ms = (deps.clock.now() - start) * 1000.0
     status: OutcomeStatus = "ok" if completion.content.strip() else "empty"
+    # Config pricing wins; otherwise fall back to the adapter's litellm cost. Cache hits cost $0.
+    if completion.cached:
+        cost = 0.0
+    elif member.pricing is not None:
+        cost = compute_cost(completion.usage, member.pricing)
+    else:
+        cost = completion.cost_usd or 0.0
     return ModelOutcome(
-        **common,  # type: ignore[arg-type]
+        **common,
         status=status,
         content=completion.content,
         reasoning=completion.reasoning,
         usage=completion.usage,
         cached=completion.cached,
         duration_ms=duration_ms,
+        cost_usd=cost,
     )
 
 
 async def _fan_out(deps: PipelineDeps, plan: ExecutionPlan) -> AsyncIterator[StreamEvent]:
     for member in plan.members:
         yield FanoutStarted(member.identity, member.spec.model)
-    tasks = [asyncio.create_task(_run_member(deps, m)) for m in plan.members]
+    sem = asyncio.Semaphore(plan.max_concurrency)
+
+    async def run(member: PlannedMember) -> ModelOutcome:
+        async with sem:  # cap concurrent upstream calls
+            return await _run_member(deps, member)
+
+    tasks = [asyncio.create_task(run(m)) for m in plan.members]
+    loop = asyncio.get_running_loop()
+    deadline = None if plan.fanout_deadline is None else loop.time() + plan.fanout_deadline
+    pending = set(tasks)
     try:
-        for future in asyncio.as_completed(tasks):
-            outcome = await future
-            yield MemberCompleted(outcome)
+        while pending:
+            timeout = None if deadline is None else max(0.0, deadline - loop.time())
+            done, pending = await asyncio.wait(
+                pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+            )
+            if not done:  # deadline elapsed with nothing new — abandon the stragglers
+                logger.warning("fan-out deadline exceeded", ensemble=plan.ensemble)
+                break
+            for task in done:
+                yield MemberCompleted(await task)
     finally:
         for task in tasks:
             if not task.done():
                 task.cancel()
+
+
+async def _stream_with_timeout(
+    stream: AsyncIterator[CompletionChunk], seconds: float
+) -> AsyncIterator[CompletionChunk]:
+    """Yield chunks, failing with ``UpstreamTimeout`` if none arrives within ``seconds``.
+
+    The timeout guards only fetching the next chunk (an idle/stalled provider); the ``yield`` is
+    outside it, so a healthy stream is never interrupted mid-flight.
+    """
+    iterator = stream.__aiter__()
+    while True:
+        try:
+            async with asyncio.timeout(seconds):
+                chunk = await iterator.__anext__()
+        except StopAsyncIteration:
+            return
+        except TimeoutError as exc:
+            raise UpstreamTimeout("synthesis timed out") from exc
+        yield chunk
 
 
 def _synth_spec(plan: ExecutionPlan, messages: list[dict[str, object]]) -> CallSpec:
@@ -151,6 +205,8 @@ def _synth_spec(plan: ExecutionPlan, messages: list[dict[str, object]]) -> CallS
         params=dict(plan.synth.params),
         api=plan.synth.api,
         proxy_url_env=plan.synth.proxy_url_env,
+        key_env_candidates=plan.synth.key_env_candidates,
+        retries=plan.synth.retries,
         timeout_seconds=plan.synth.timeout_seconds,
     )
 
@@ -195,12 +251,18 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             else:
                 synth_messages = all_failed_message(outcomes)
 
+        if plan.synth.anthropic_cache_ttl is not None:
+            synth_messages = inject_anthropic_cache(
+                synth_messages, ttl=plan.synth.anthropic_cache_ttl
+            )
         yield SynthesisStarted(plan.synth.llm_name, plan.synth.model)
         usage = Usage()
+        synth_llm_cost: float | None = None
         finish: FinishReason = "stop"
         started_tools: set[int] = set()
         synth_text: list[str] = []
-        async for chunk in deps.client.stream(_synth_spec(plan, synth_messages)):
+        synth_stream = deps.client.stream(_synth_spec(plan, synth_messages))
+        async for chunk in _stream_with_timeout(synth_stream, plan.synth.timeout_seconds):
             if chunk.content is not None or chunk.reasoning is not None:
                 yield AnswerDelta(content=chunk.content, reasoning=chunk.reasoning)
                 if chunk.content:
@@ -212,18 +274,24 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                     started_tools.add(index)
                     yield ToolCallStarted(
                         index=index,
-                        call_id=str(call.get("id", "")),
-                        name=str(call.get("name", "")),
+                        call_id=str(call.get("id") or ""),
+                        name=str(call.get("name") or ""),
                     )
                 fragment = call.get("arguments")
                 if fragment:
                     yield ToolCallDelta(index=index, arguments_fragment=str(fragment))
             if chunk.usage is not None:
                 usage = chunk.usage
+            if chunk.cost_usd is not None:
+                synth_llm_cost = chunk.cost_usd
             if chunk.finish_reason:
                 finish = _coerce_finish(chunk.finish_reason)
 
-        _record_synth(deps, plan, usage, turn_type)
+        if plan.synth.pricing is not None:
+            synth_cost = compute_cost(usage, plan.synth.pricing)
+        else:
+            synth_cost = synth_llm_cost or 0.0
+        _record_synth(deps, plan, usage, synth_cost, turn_type)
         if deps.tracer is not None:
             deps.tracer.observe(
                 request_id=deps.request_id,
@@ -239,7 +307,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         total_usage = usage
         for outcome in outcomes:
             total_usage = total_usage + outcome.usage
-        total_cost = sum(o.cost_usd for o in outcomes)
+        total_cost = sum(o.cost_usd for o in outcomes) + synth_cost
         yield Completed(finish_reason=finish, usage=total_usage, total_cost_usd=total_cost)
     except MomError as exc:
         yield PipelineFailed(code=exc.code, message=exc.safe_message, http_status=exc.http_status)
@@ -250,6 +318,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
 async def collect(events: AsyncIterator[StreamEvent]) -> EnsembleResult:
     """Drain an event stream into a single result (raises on a terminal failure)."""
     text: list[str] = []
+    reasoning: list[str] = []
     outcomes: list[ModelOutcome] = []
     tool_calls: dict[int, dict[str, Any]] = {}
     usage = Usage()
@@ -261,6 +330,8 @@ async def collect(events: AsyncIterator[StreamEvent]) -> EnsembleResult:
         elif isinstance(event, AnswerDelta):
             if event.content:
                 text.append(event.content)
+            if event.reasoning:
+                reasoning.append(event.reasoning)
         elif isinstance(event, ToolCallStarted):
             tool_calls[event.index] = {
                 "id": event.call_id,
@@ -273,7 +344,11 @@ async def collect(events: AsyncIterator[StreamEvent]) -> EnsembleResult:
         elif isinstance(event, Completed):
             finish, usage, cost = event.finish_reason, event.usage, event.total_cost_usd
         elif isinstance(event, PipelineFailed):
-            raise UpstreamError(event.message)
+            # Preserve the failure's HTTP status/code so streaming and non-streaming agree.
+            err = UpstreamError(event.message)
+            err.http_status = event.http_status
+            err.code = event.code
+            raise err
     return EnsembleResult(
         text="".join(text),
         outcomes=tuple(outcomes),
@@ -281,4 +356,5 @@ async def collect(events: AsyncIterator[StreamEvent]) -> EnsembleResult:
         total_cost_usd=cost,
         finish_reason=finish,
         tool_calls=tuple(tool_calls[i] for i in sorted(tool_calls)),
+        reasoning="".join(reasoning),
     )

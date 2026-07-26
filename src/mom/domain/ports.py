@@ -23,6 +23,8 @@ class CallSpec:
     params: dict[str, Any] = field(default_factory=dict)
     api: str = "chat"
     proxy_url_env: str | None = None
+    key_env_candidates: tuple[str, ...] = ()
+    retries: int = 0
     timeout_seconds: float | None = None
 
 
@@ -36,6 +38,7 @@ class Completion:
     usage: Usage
     tool_calls: tuple[dict[str, Any], ...] = ()
     cached: bool = False
+    cost_usd: float | None = None  # provider cost from the adapter's cost map (None if unknown)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +50,7 @@ class CompletionChunk:
     finish_reason: str | None = None
     usage: Usage | None = None
     tool_call: dict[str, Any] | None = None
+    cost_usd: float | None = None
 
 
 class LLMClient(Protocol):

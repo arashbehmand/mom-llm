@@ -18,7 +18,11 @@ from typing import Any
 import aiosqlite
 
 from mom.domain.metrics import CallMetric
+from mom.runtime.logging import get_logger
 from mom.store.connection import open_database
+
+
+logger = get_logger("mom.metrics")
 
 
 MIGRATIONS: tuple[str, ...] = (
@@ -146,6 +150,8 @@ class MetricsRecorder:
             self._queue.put_nowait(metric)
         except asyncio.QueueFull:
             self._dropped += 1
+            if self._dropped % 100 == 1:
+                logger.warning("metrics queue full; dropping metrics", dropped=self._dropped)
 
     async def _drain_batch(self) -> None:
         first = await self._queue.get()
@@ -159,7 +165,15 @@ class MetricsRecorder:
 
     async def _run(self) -> None:
         while True:
-            await self._drain_batch()
+            try:
+                await self._drain_batch()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A failed insert must not kill the writer for the process lifetime: drop the
+                # batch, log, and back off briefly so a persistent DB error can't tight-spin.
+                logger.warning("metrics batch write failed; batch dropped", exc_info=True)
+                await asyncio.sleep(0.5)
 
     async def start(self) -> None:
         self._task = asyncio.create_task(self._run())

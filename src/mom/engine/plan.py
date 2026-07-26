@@ -19,9 +19,11 @@ from mom.config.types import (
     normalize_effort_cell,
     parse_effort_level,
 )
+from mom.domain.cost import Pricing
 from mom.domain.errors import InvalidRequestError, UnknownModelError
 from mom.domain.ports import CallSpec
-from mom.domain.request import ChatRequestIR
+from mom.domain.prompt_caching import is_anthropic_family, openai_prompt_cache_key
+from mom.domain.request import ChatRequestIR, Sampling
 from mom.domain.synthesis import extract_concluding_instruction, messages_to_dicts
 from mom.domain.tooling import (
     classify_turn,
@@ -38,6 +40,7 @@ SkipReason = Literal["passthrough", "tool_continuation"]
 class PlannedMember:
     identity: str
     spec: CallSpec
+    pricing: Pricing | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,9 +49,13 @@ class SynthPlan:
     model: str
     api: str
     proxy_url_env: str | None
+    key_env_candidates: tuple[str, ...]
+    retries: int
     params: dict[str, object]
     prompt: str | None
     timeout_seconds: float
+    pricing: Pricing | None
+    anthropic_cache_ttl: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +70,11 @@ class ExecutionPlan:
     members: tuple[PlannedMember, ...]
     synth: SynthPlan
     instruction: str | None
+    # Bounded fan-out: at most `max_concurrency` members call upstream at once (default cap 16,
+    # so an unset config can't open an unbounded number of connections). `fanout_deadline` is an
+    # optional overall wall-clock budget after which stragglers are abandoned.
+    max_concurrency: int = 16
+    fanout_deadline: float | None = None
 
 
 def _effort_param(token: str, client_effort: str | None) -> dict[str, object]:
@@ -92,6 +104,20 @@ def _timeout_seconds(catalog: ResolvedCatalog, llm: ResolvedLlm) -> float:
     if llm.timeout is not None:
         return float(llm.timeout.total_seconds())
     return float(catalog.config.defaults.call.timeout.total_seconds())
+
+
+def _pricing_of(llm: ResolvedLlm) -> Pricing | None:
+    """Convert an LLM's config pricing block into the pure domain ``Pricing`` (or None)."""
+    p = llm.pricing
+    if p is None:
+        return None
+    return Pricing(
+        input_per_1m=p.input_per_1m or 0.0,
+        output_per_1m=p.output_per_1m or 0.0,
+        reasoning_per_1m=p.reasoning_per_1m or 0.0,
+        cache_read_per_1m=p.cache_read_per_1m or 0.0,
+        cache_write_per_1m=p.cache_write_per_1m or 0.0,
+    )
 
 
 def _member_params(
@@ -130,6 +156,25 @@ def _apply_search(
     return out
 
 
+def _apply_sampling(params: dict[str, object], sampling: Sampling) -> None:
+    """Apply the client's generation controls to the synthesizer (its client-visible output).
+
+    Client-sent values win over the synthesizer's configured defaults — honoring them is the
+    whole point (v1 dropped them silently). Advisory members keep their own tuned params, so a
+    client ``max_tokens`` never truncates a member's internal reasoning.
+    """
+    if sampling.temperature is not None:
+        params["temperature"] = sampling.temperature
+    if sampling.top_p is not None:
+        params["top_p"] = sampling.top_p
+    if sampling.max_output_tokens is not None:
+        params["max_tokens"] = sampling.max_output_tokens
+    if sampling.stop:
+        params["stop"] = list(sampling.stop)
+    if sampling.seed is not None:
+        params["seed"] = sampling.seed
+
+
 def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     """Resolve a chat request against the catalog into a ready-to-run plan."""
     ensemble = catalog.ensembles.get(ir.model)
@@ -139,6 +184,8 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     messages, instruction = extract_concluding_instruction(ir.messages)
     client_messages = messages_to_dicts(messages)
     tier = _resolve_tier(ensemble, ir.effort)
+    retries = catalog.config.defaults.call.retries
+    fanout = catalog.config.defaults.fanout
 
     is_relay = ensemble.tools_continuation == "relay" and classify_turn(messages) == "relay"
     skip_fanout = ensemble.strategy == "passthrough" or is_relay
@@ -175,8 +222,11 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
                         params=params,
                         api=llm.api,
                         proxy_url_env=llm.proxy_url_env,
+                        key_env_candidates=llm.key_env_candidates,
+                        retries=retries,
                         timeout_seconds=_timeout_seconds(catalog, llm),
                     ),
+                    pricing=_pricing_of(llm),
                 )
             )
 
@@ -184,19 +234,35 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     syn_llm = catalog.llms[syn.llm]
     synth_params = _member_params(syn_llm, dict(syn.effort_by_tier), tier, ir.effort)
     synth_params = _apply_search(synth_params, syn_llm, ir.web_search)
+    _apply_sampling(synth_params, ir.sampling)
+    if ir.response_format is not None:
+        synth_params["response_format"] = ir.response_format
     if ir.tools:
         synth_params["tools"] = tools_to_wire(ir.tools)
         synth_params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)
         if ir.parallel_tool_calls is not None:
             synth_params["parallel_tool_calls"] = ir.parallel_tool_calls
+    # Provider prompt caching: Anthropic reads cache_control breakpoints (injected at stream time
+    # in the pipeline); OpenAI/xAI just need a stable prompt_cache_key for prefix-cache affinity.
+    pcache = catalog.config.defaults.provider_cache
+    provider = syn_llm.model.split("/", 1)[0].lower() if "/" in syn_llm.model else ""
+    anthropic_cache_ttl: str | None = None
+    if is_anthropic_family(syn_llm.model) and pcache.anthropic.enabled:
+        anthropic_cache_ttl = "1h" if pcache.anthropic.ttl.total_seconds() > 300 else "5m"
+    elif provider in {"openai", "azure", "xai"} and pcache.openai.prompt_cache_key == "auto":
+        synth_params["prompt_cache_key"] = openai_prompt_cache_key(client_messages)
     synth = SynthPlan(
         llm_name=syn.llm,
         model=syn_llm.model,
         api=syn_llm.api,
         proxy_url_env=syn_llm.proxy_url_env,
+        key_env_candidates=syn_llm.key_env_candidates,
+        retries=retries,
         params=synth_params,
         prompt=catalog.config.prompts.get(syn.prompt) if syn.prompt else None,
         timeout_seconds=_timeout_seconds(catalog, syn_llm),
+        pricing=_pricing_of(syn_llm),
+        anthropic_cache_ttl=anthropic_cache_ttl,
     )
 
     return ExecutionPlan(
@@ -210,4 +276,6 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         members=tuple(members),
         synth=synth,
         instruction=instruction,
+        max_concurrency=fanout.max_concurrency or 16,
+        fanout_deadline=fanout.deadline.total_seconds() if fanout.deadline else None,
     )

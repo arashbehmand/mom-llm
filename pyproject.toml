@@ -1,6 +1,6 @@
 [project]
 name = "mom-llm"
-version = "2.0.0.dev0"
+version = "2.0.0"
 description = "A Mixture-of-Models OpenAI/Anthropic-compatible LLM gateway that fans out to a panel of models and synthesizes one answer."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -8,8 +8,9 @@ license = "MIT"
 authors = [{ name = "Arash Behmand" }]
 keywords = ["llm", "openai", "anthropic", "gateway", "litellm", "mixture-of-models"]
 
-# Runtime dependencies grow phase by phase as modules land. Phase 1 needs only the app
-# factory, settings, logging, and the CLI. (litellm/aiosqlite/redis/langfuse arrive later.)
+# Runtime dependencies. litellm is the provider transport (quarantined to
+# adapters/litellm_client); langfuse backs the optional tracer. (redis — the optional event
+# bus — is still deferred.)
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -20,6 +21,8 @@ dependencies = [
     "structlog>=24.1",
     "aiosqlite>=0.20",
     "platformdirs>=4.2",
+    "litellm>=1.55",
+    "langfuse>=3.0",
 ]
 
 [project.scripts]
@@ -46,6 +49,9 @@ test = [
     "pytest-socket>=0.7",
     "httpx>=0.27",
     "hypothesis>=6.100",
+    # Official SDKs, for in-the-loop wire-format contract tests (parse our real ASGI streams).
+    "openai>=1.40",
+    "anthropic>=0.40",
 ]
 dev = [
     { include-group = "test" },
@@ -57,15 +63,12 @@ dev = [
 ]
 
 # ----------------------------------------------------------------------------------------------
-# Ruff — the single linter + formatter (Black is retired).
-# During the transition the legacy `mom_service/` and old `tests/` are excluded so `ruff check .`
-# stays green; they are deleted at the Phase 11 cutover.
+# Ruff — the single linter + formatter.
 # ----------------------------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 src = ["src"]
-extend-exclude = ["mom_service", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -84,7 +87,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests_v2/*" = ["S101", "ARG"]  # asserts + unused fixture args are fine in tests
+"tests/*" = ["S101", "ARG"]  # asserts + unused fixture args are fine in tests
 "src/mom/domain/errors.py" = ["N818"]  # domain error vocabulary; base is MomError
 
 [tool.ruff.lint.mccabe]
@@ -100,7 +103,7 @@ quote-style = "double"
 docstring-code-format = true
 
 # ----------------------------------------------------------------------------------------------
-# mypy — strict, scoped to the new package during transition.
+# mypy — strict, scoped to the mom package.
 # ----------------------------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"
@@ -116,20 +119,19 @@ module = ["litellm", "litellm.*"]
 ignore_missing_imports = true
 
 # ----------------------------------------------------------------------------------------------
-# pytest — v2 config. Bare `pytest` still uses pytest.ini (the v1 suite) during transition;
-# run the v2 suite explicitly with `pytest -c pyproject.toml`.
+# pytest
 # ----------------------------------------------------------------------------------------------
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --strict-markers --strict-config --disable-socket --allow-hosts=127.0.0.1,::1"
-testpaths = ["tests_v2"]
+testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["mom"]
 branch = true
-omit = ["*/tests_v2/*"]
+omit = ["*/tests/*"]
 
 [tool.coverage.report]
 exclude_lines = [

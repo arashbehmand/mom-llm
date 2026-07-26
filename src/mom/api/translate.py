@@ -12,8 +12,10 @@ from mom.domain.request import (
     ImagePart,
     MessageIR,
     Sampling,
+    SpecificTool,
     TextPart,
     ToolCallIR,
+    ToolChoice,
     ToolSpec,
 )
 
@@ -77,6 +79,22 @@ def _tools(raw: list[dict[str, Any]] | None) -> tuple[ToolSpec, ...]:
     return tuple(specs)
 
 
+def _tool_choice(raw: Any) -> ToolChoice:
+    """Map OpenAI's ``tool_choice`` (a string or ``{type:function, function:{name}}``) to the IR."""
+    if isinstance(raw, dict):
+        if raw.get("type") == "function":
+            fn = raw.get("function") or {}
+            name = fn.get("name") or raw.get("name")
+            if name:
+                return SpecificTool(name=str(name))
+        return "auto"
+    if raw == "none":
+        return "none"
+    if raw == "required":
+        return "required"
+    return "auto"
+
+
 def chat_request_to_ir(req: ChatCompletionRequest) -> ChatRequestIR:
     """Map an OpenAI Chat Completions request to the internal IR."""
     stop: tuple[str, ...] = ()
@@ -95,6 +113,8 @@ def chat_request_to_ir(req: ChatCompletionRequest) -> ChatRequestIR:
         model=req.model,
         messages=tuple(_message(m) for m in req.messages),
         tools=_tools(req.tools),
+        tool_choice=_tool_choice(req.tool_choice),
+        parallel_tool_calls=req.parallel_tool_calls,
         effort=req.reasoning_effort,
         web_search=bool(req.web_search or req.web_search_options),
         response_format=req.response_format,

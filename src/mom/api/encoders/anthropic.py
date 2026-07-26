@@ -38,7 +38,9 @@ def stop_reason(finish: str) -> str:
     return _STOP_REASON.get(finish, "end_turn")
 
 
-def build_message(result: EnsembleResult, *, message_id: str, model: str) -> dict[str, Any]:
+def build_message(
+    result: EnsembleResult, *, message_id: str, model: str, input_tokens: int
+) -> dict[str, Any]:
     """Non-streaming Anthropic message object."""
     content: list[dict[str, Any]] = []
     if result.text:
@@ -67,7 +69,7 @@ def build_message(result: EnsembleResult, *, message_id: str, model: str) -> dic
         "stop_reason": stop_reason(result.finish_reason),
         "stop_sequence": None,
         "usage": {
-            "input_tokens": usage.prompt_tokens,
+            "input_tokens": input_tokens,
             "output_tokens": usage.completion_tokens,
             "cache_creation_input_tokens": 0,
             "cache_read_input_tokens": 0,
@@ -76,7 +78,7 @@ def build_message(result: EnsembleResult, *, message_id: str, model: str) -> dic
 
 
 async def encode_sse(
-    events: AsyncIterator[StreamEvent], *, message_id: str, model: str
+    events: AsyncIterator[StreamEvent], *, message_id: str, model: str, input_tokens: int
 ) -> AsyncIterator[bytes]:
     """Fold the event stream into an Anthropic Messages SSE byte stream."""
     yield _sse(
@@ -91,13 +93,15 @@ async def encode_sse(
                 "content": [],
                 "stop_reason": None,
                 "stop_sequence": None,
-                "usage": {"input_tokens": 0, "output_tokens": 0},
+                "usage": {"input_tokens": input_tokens, "output_tokens": 0},
             },
         },
     )
 
     next_index = 0
     open_block: int | None = None
+    thinking_index: int | None = None
+    thinking_done = False
     text_index: int | None = None
     tool_blocks: dict[int, int] = {}
     finish = "stop"
@@ -113,35 +117,57 @@ async def encode_sse(
 
     async for event in events:
         if isinstance(event, AnswerDelta):
-            if not event.content:
-                continue
-            if text_index is None:
-                closed = close_open()
-                if closed:
-                    yield closed
-                text_index = next_index
-                next_index += 1
-                open_block = text_index
+            if event.reasoning and not thinking_done and text_index is None:
+                if thinking_index is None:
+                    thinking_index = next_index
+                    next_index += 1
+                    open_block = thinking_index
+                    yield _sse(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": thinking_index,
+                            "content_block": {"type": "thinking", "thinking": ""},
+                        },
+                    )
                 yield _sse(
-                    "content_block_start",
+                    "content_block_delta",
                     {
-                        "type": "content_block_start",
-                        "index": text_index,
-                        "content_block": {"type": "text", "text": ""},
+                        "type": "content_block_delta",
+                        "index": thinking_index,
+                        "delta": {"type": "thinking_delta", "thinking": event.reasoning},
                     },
                 )
-            yield _sse(
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": text_index,
-                    "delta": {"type": "text_delta", "text": event.content},
-                },
-            )
+            if event.content:
+                if text_index is None:
+                    closed = close_open()
+                    if closed:
+                        yield closed
+                    thinking_done = True
+                    text_index = next_index
+                    next_index += 1
+                    open_block = text_index
+                    yield _sse(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": text_index,
+                            "content_block": {"type": "text", "text": ""},
+                        },
+                    )
+                yield _sse(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": text_index,
+                        "delta": {"type": "text_delta", "text": event.content},
+                    },
+                )
         elif isinstance(event, ToolCallStarted):
             closed = close_open()
             if closed:
                 yield closed
+            thinking_done = True
             text_index = None
             index = next_index
             next_index += 1

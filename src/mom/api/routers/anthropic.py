@@ -33,11 +33,19 @@ async def messages(req: MessagesRequest, container: ContainerDep) -> object:
         request_id=container.ids.new_id("req"),
     )
     message_id = container.ids.new_id("msg")
+    input_tokens = _estimate_tokens(req)
     if req.stream:
-        stream = encode_sse(run_ensemble(plan, deps), message_id=message_id, model=ir.model)
+        stream = encode_sse(
+            run_ensemble(plan, deps),
+            message_id=message_id,
+            model=ir.model,
+            input_tokens=input_tokens,
+        )
         return StreamingResponse(stream, media_type="text/event-stream")
     result = await collect(run_ensemble(plan, deps))
-    return JSONResponse(build_message(result, message_id=message_id, model=ir.model))
+    return JSONResponse(
+        build_message(result, message_id=message_id, model=ir.model, input_tokens=input_tokens)
+    )
 
 
 def _message_text(message: AnthropicMessage) -> str:
@@ -55,10 +63,12 @@ def _message_text(message: AnthropicMessage) -> str:
     return " ".join(parts)
 
 
-def _estimate_tokens(req: CountTokensRequest) -> int:
+def _estimate_tokens(req: CountTokensRequest | MessagesRequest) -> int:
     """A deliberately rough token estimate (~4 chars/token) over the visible transcript.
 
-    Claude Code uses this only for context-window math; documented as an estimate.
+    Claude Code uses this only for context-window math; documented as an estimate. The same
+    estimate seeds ``message_start.usage.input_tokens`` on ``/v1/messages`` (both request shapes
+    expose ``system`` / ``messages`` / ``tools``).
     """
     chars = 0
     if isinstance(req.system, str):
