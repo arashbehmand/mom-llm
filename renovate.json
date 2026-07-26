@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 6am on the first day of the month"],
+  "labels": ["dependencies"],
+  "lockFileMaintenance": { "enabled": true },
+  "packageRules": [
+    {
+      "description": "litellm is a contract-tested boundary; group it separately and never automerge",
+      "matchPackageNames": ["litellm"],
+      "groupName": "litellm",
+      "automerge": false
+    },
+    {
+      "description": "Group dev/test tooling updates",
+      "matchDepTypes": ["dependency-groups", "devDependencies"],
+      "groupName": "dev tooling"
+    }
+  ]
+}

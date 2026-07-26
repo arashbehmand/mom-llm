@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+      - name: Build sdist + wheel
+        run: uv build
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+      # PyPI publish (trusted publishing) and ghcr image are enabled in Phase 10/11.

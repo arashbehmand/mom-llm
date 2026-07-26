@@ -1,84 +1,66 @@
-.PHONY: help install format lint test test-cov clean run docker-build docker-up docker-down pre-commit-install pre-commit-run
+.PHONY: help install fmt fmt-check lint typecheck imports test test-v1 cov check run clean \
+        docker-build docker-up docker-down
 
-# Default target
+# Tools resolve from the project venv (populated by `make install` / `uv sync`).
+PY  := .venv/bin/python
+BIN := .venv/bin
+
 help:
-	@echo "MoM Service - Available Commands:"
-	@echo ""
-	@echo "Setup:"
-	@echo "  make install            Install all dependencies"
-	@echo "  make pre-commit-install Install pre-commit hooks"
-	@echo ""
-	@echo "Code Quality:"
-	@echo "  make format             Format code with Black and Ruff"
-	@echo "  make lint               Lint code with Ruff"
-	@echo "  make pre-commit-run     Run all pre-commit hooks"
-	@echo ""
-	@echo "Testing:"
-	@echo "  make test               Run tests with pytest"
-	@echo "  make test-cov           Run tests with coverage report"
-	@echo ""
-	@echo "Development:"
-	@echo "  make run                Run service locally"
-	@echo "  make clean              Clean generated files"
-	@echo ""
-	@echo "Docker:"
-	@echo "  make docker-build       Build Docker image"
-	@echo "  make docker-up          Start services with docker-compose"
-	@echo "  make docker-down        Stop services with docker-compose"
+	@echo "MoM v2 — Available Commands:"
+	@echo "  make install     Sync deps into .venv (uv, dev group)"
+	@echo "  make fmt         Format (ruff)"
+	@echo "  make lint        Lint (ruff) + import contracts"
+	@echo "  make typecheck   Type-check src/mom (mypy --strict)"
+	@echo "  make test        Run the v2 test suite"
+	@echo "  make cov         v2 tests with coverage"
+	@echo "  make check       fmt-check + lint + typecheck + test"
+	@echo "  make run         Run the server (dev reload)"
+	@echo "  make test-v1     Run the legacy v1 suite (transition only)"
 
-# Installation
 install:
-	pip install -r requirements.txt
+	uv sync --group dev
 
-pre-commit-install:
-	pre-commit install
+fmt:
+	$(BIN)/ruff format src/mom tests_v2
+	$(BIN)/ruff check --fix src/mom tests_v2
 
-# Code quality
-format:
-	@echo "Formatting code with Black..."
-	black mom_service/ tests/
-	@echo "Formatting code with Ruff..."
-	ruff format mom_service/ tests/
+fmt-check:
+	$(BIN)/ruff format --check src/mom tests_v2
 
 lint:
-	@echo "Linting code with Ruff..."
-	ruff check mom_service/ tests/
+	$(BIN)/ruff check .
+	$(BIN)/lint-imports
 
-pre-commit-run:
-	@echo "Running pre-commit hooks on all files..."
-	pre-commit run --all-files
+typecheck:
+	$(BIN)/mypy
 
-# Testing
 test:
-	pytest
+	$(PY) -m pytest -c pyproject.toml
 
-test-cov:
-	pytest --cov=mom_service --cov-report=html --cov-report=term
+cov:
+	$(PY) -m pytest -c pyproject.toml --cov=mom --cov-report=term-missing
 
-# Development
+check: fmt-check lint typecheck test
+	@echo "All checks passed."
+
 run:
-	uvicorn mom_service.main:app --reload --host 0.0.0.0 --port 8000
+	$(BIN)/mom serve --reload
+
+# Legacy v1 suite (deleted at Phase 11 cutover).
+test-v1:
+	$(PY) -m pytest
 
 clean:
-	@echo "Cleaning generated files..."
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name "htmlcov" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
-	find . -type f -name ".coverage" -delete 2>/dev/null || true
-	@echo "Clean complete!"
 
-# Docker
+# Legacy v1 docker targets (replaced at cutover).
 docker-build:
 	docker build -t mom-service .
-
 docker-up:
 	docker-compose up -d
-
 docker-down:
 	docker-compose down
-
-# Combined quality check (format + lint + test)
-check: format lint test
-	@echo "All quality checks passed!"

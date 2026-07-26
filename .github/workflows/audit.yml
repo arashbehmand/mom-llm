@@ -1,0 +1,19 @@
+name: Audit
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+  push:
+    paths: ["uv.lock"]
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+      - name: Audit locked dependencies
+        run: uv export --no-dev --format requirements-txt | uvx pip-audit -r /dev/stdin
