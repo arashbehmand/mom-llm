@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
     "typer>=0.12",
     "structlog>=24.1",
 ]
@@ -50,6 +51,7 @@ dev = [
     "mypy>=1.11",
     "pre-commit>=3.7",
     "import-linter>=2.0",
+    "types-pyyaml>=6.0",
 ]
 
 # ----------------------------------------------------------------------------------------------
