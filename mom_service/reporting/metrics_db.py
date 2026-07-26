@@ -16,8 +16,9 @@ logger = logging.getLogger(__name__)
 
 # SQLite database file path - Store in /app/data for persistence in Docker
 METRICS_DB_PATH = os.getenv("METRICS_DB_PATH", "/app/data/usage_metrics.db")
-# Ensure directory exists
-os.makedirs(os.path.dirname(METRICS_DB_PATH), exist_ok=True)
+# Directory creation happens lazily in _init_metrics_db() so that merely importing this
+# module has no filesystem side effects (importing it must not fail on a read-only root,
+# e.g. during test collection).
 
 logger.info(f"Metrics DB path: {METRICS_DB_PATH}")
 
@@ -25,6 +26,9 @@ logger.info(f"Metrics DB path: {METRICS_DB_PATH}")
 def _init_metrics_db():
     """Initialize the SQLite database and create the usage_metrics table if it doesn't exist."""
     try:
+        db_dir = os.path.dirname(METRICS_DB_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         with sqlite3.connect(METRICS_DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute("""

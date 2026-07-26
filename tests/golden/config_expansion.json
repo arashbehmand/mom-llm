@@ -1,0 +1,1328 @@
+{
+  "langfuse": {
+    "host_env": "LANGFUSE_HOST",
+    "public_key_env": "LANGFUSE_PUBLIC_KEY",
+    "secret_key_env": "LANGFUSE_SECRET_KEY"
+  },
+  "llm_definitions": [
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "name": "cl45hk",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "name": "cl45hk:m",
+      "params": {
+        "thinking": {
+          "budget_tokens": 4096,
+          "type": "enabled"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-opus-4-8",
+      "name": "cl48op",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-opus-4-8",
+      "name": "cl48op:am",
+      "params": {
+        "reasoning_effort": "max",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-opus-4-8",
+      "name": "cl48op:h",
+      "params": {
+        "reasoning_effort": "high",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-opus-4-8",
+      "name": "cl48op:h:o",
+      "params": {
+        "reasoning_effort": "high",
+        "thinking": {
+          "type": "adaptive"
+        },
+        "web_search_options": {
+          "search_context_size": "high"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-opus-4-8",
+      "name": "cl48op:l",
+      "params": {
+        "reasoning_effort": "low",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-opus-4-8",
+      "name": "cl48op:m",
+      "params": {
+        "reasoning_effort": "medium",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-fable-5",
+      "name": "cl5f",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-fable-5",
+      "name": "cl5f:am",
+      "params": {
+        "reasoning_effort": "max",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-fable-5",
+      "name": "cl5f:h",
+      "params": {
+        "reasoning_effort": "high",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-fable-5",
+      "name": "cl5f:l",
+      "params": {
+        "reasoning_effort": "low",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-fable-5",
+      "name": "cl5f:m",
+      "params": {
+        "reasoning_effort": "medium",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-sonnet-5",
+      "name": "cl5st",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-sonnet-5",
+      "name": "cl5st:h",
+      "params": {
+        "reasoning_effort": "high",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-sonnet-5",
+      "name": "cl5st:h:o",
+      "params": {
+        "reasoning_effort": "high",
+        "thinking": {
+          "type": "adaptive"
+        },
+        "web_search_options": {
+          "search_context_size": "high"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-sonnet-5",
+      "name": "cl5st:l",
+      "params": {
+        "reasoning_effort": "low",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "api_mode": "auto",
+      "model": "anthropic/claude-sonnet-5",
+      "name": "cl5st:m",
+      "params": {
+        "reasoning_effort": "medium",
+        "thinking": {
+          "type": "adaptive"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "MISTRAL_API_KEY",
+      "api_mode": "auto",
+      "model": "mistral/codestral-2508",
+      "name": "codestral",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/deepseek/deepseek-v4-pro",
+      "name": "dsv4",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "name": "dsv4:f",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/baidu/ernie-4.5-300b-a47b",
+      "name": "ernie45t",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "name": "g31p",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "name": "g31p:h",
+      "params": {
+        "reasoning_effort": "high"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "name": "g31p:h:o",
+      "params": {
+        "reasoning_effort": "high",
+        "web_search_options": {
+          "search_context_size": "high"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.1-pro-preview",
+      "name": "g31p:l",
+      "params": {
+        "reasoning_effort": "low"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.5-flash-lite",
+      "name": "g35fl",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.5-flash-lite",
+      "name": "g35fl:h",
+      "params": {
+        "reasoning_effort": "high"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.5-flash-lite",
+      "name": "g35fl:h:o",
+      "params": {
+        "reasoning_effort": "high",
+        "web_search_options": {
+          "search_context_size": "high"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.5-flash-lite",
+      "name": "g35fl:l",
+      "params": {
+        "reasoning_effort": "low"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.5-flash-lite",
+      "name": "g35fl:m",
+      "params": {
+        "reasoning_effort": "medium"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.5-flash-lite",
+      "name": "g35fl:mi",
+      "params": {
+        "reasoning_effort": "minimal"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.6-flash",
+      "name": "g36f",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.6-flash",
+      "name": "g36f:h",
+      "params": {
+        "reasoning_effort": "high"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.6-flash",
+      "name": "g36f:h:o",
+      "params": {
+        "reasoning_effort": "high",
+        "web_search_options": {
+          "search_context_size": "high"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.6-flash",
+      "name": "g36f:l",
+      "params": {
+        "reasoning_effort": "low"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.6-flash",
+      "name": "g36f:m",
+      "params": {
+        "reasoning_effort": "medium"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "GOOGLE_API_KEY",
+      "api_mode": "auto",
+      "model": "gemini/gemini-3.6-flash",
+      "name": "g36f:mi",
+      "params": {
+        "reasoning_effort": "minimal"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/z-ai/glm-5.2",
+      "name": "glm52",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "XAI_API_KEY",
+      "api_mode": "responses",
+      "model": "xai/grok-4.20-multi-agent",
+      "name": "grok420ma",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "XAI_API_KEY",
+      "api_mode": "auto",
+      "model": "xai/grok-4.5",
+      "name": "grok45",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "XAI_API_KEY",
+      "api_mode": "auto",
+      "model": "xai/grok-4.5",
+      "name": "grok45:h",
+      "params": {
+        "reasoning_effort": "high"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "XAI_API_KEY",
+      "api_mode": "responses",
+      "model": "xai/grok-4.5",
+      "name": "grok45:h:o",
+      "params": {
+        "reasoning_effort": "high",
+        "tools": [
+          {
+            "type": "web_search"
+          }
+        ]
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "XAI_API_KEY",
+      "api_mode": "auto",
+      "model": "xai/grok-4.5",
+      "name": "grok45:l",
+      "params": {
+        "reasoning_effort": "low"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "XAI_API_KEY",
+      "api_mode": "auto",
+      "model": "xai/grok-4.5",
+      "name": "grok45:m",
+      "params": {
+        "reasoning_effort": "medium"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/x-ai/grok-build-0.1",
+      "name": "grokbuild",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/thinkingmachines/inkling",
+      "name": "ink",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/thinkingmachines/inkling",
+      "name": "ink:am",
+      "params": {
+        "reasoning": {
+          "effort": "max"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/thinkingmachines/inkling",
+      "name": "ink:h",
+      "params": {
+        "reasoning": {
+          "effort": "high"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/thinkingmachines/inkling",
+      "name": "ink:l",
+      "params": {
+        "reasoning": {
+          "effort": "low"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/thinkingmachines/inkling",
+      "name": "ink:m",
+      "params": {
+        "reasoning": {
+          "effort": "medium"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/thinkingmachines/inkling",
+      "name": "ink:mi",
+      "params": {
+        "reasoning": {
+          "effort": "minimal"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/thinkingmachines/inkling",
+      "name": "ink:n",
+      "params": {
+        "reasoning": {
+          "effort": "none"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/moonshotai/kimi-k2.7-code",
+      "name": "k27code",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/moonshotai/kimi-k3",
+      "name": "k3",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/moonshotai/kimi-k3",
+      "name": "k3:am",
+      "params": {
+        "reasoning": {
+          "effort": "max"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/moonshotai/kimi-k3",
+      "name": "k3:h",
+      "params": {
+        "reasoning": {
+          "effort": "high"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/moonshotai/kimi-k3",
+      "name": "k3:l",
+      "params": {
+        "reasoning": {
+          "effort": "low"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/minimax/minimax-m3",
+      "name": "m3",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/xiaomi/mimo-v2.5-pro:nitro",
+      "name": "mimo25",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/meta/muse-spark-1.1",
+      "name": "muse11",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": "MUSE_SPARK_PROXY_URL"
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/meta/muse-spark-1.1",
+      "name": "muse11:h",
+      "params": {
+        "reasoning": {
+          "effort": "high"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": "MUSE_SPARK_PROXY_URL"
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/meta/muse-spark-1.1",
+      "name": "muse11:l",
+      "params": {
+        "reasoning": {
+          "effort": "low"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": "MUSE_SPARK_PROXY_URL"
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/meta/muse-spark-1.1",
+      "name": "muse11:m",
+      "params": {
+        "reasoning": {
+          "effort": "medium"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": "MUSE_SPARK_PROXY_URL"
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/meta/muse-spark-1.1",
+      "name": "muse11:mi",
+      "params": {
+        "reasoning": {
+          "effort": "minimal"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": "MUSE_SPARK_PROXY_URL"
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/meta/muse-spark-1.1",
+      "name": "muse11:xh",
+      "params": {
+        "reasoning": {
+          "effort": "xhigh"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": "MUSE_SPARK_PROXY_URL"
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b",
+      "name": "nem3u",
+      "params": {
+        "reasoning": {
+          "enabled": true
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.3-codex",
+      "name": "oai53cdx",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.3-codex",
+      "name": "oai53cdx:h",
+      "params": {
+        "reasoning_effort": "high"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.3-codex",
+      "name": "oai53cdx:m",
+      "params": {
+        "reasoning_effort": "medium"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-luna",
+      "name": "oai56l",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-sol",
+      "name": "oai56s",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-sol",
+      "name": "oai56s:h",
+      "params": {
+        "reasoning_effort": "high"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-sol",
+      "name": "oai56s:l",
+      "params": {
+        "reasoning_effort": "low"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-sol",
+      "name": "oai56s:m",
+      "params": {
+        "reasoning_effort": "medium"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-sol",
+      "name": "oai56s:n",
+      "params": {
+        "reasoning_effort": "none"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "responses",
+      "model": "openai/gpt-5.6-sol",
+      "name": "oai56s:p",
+      "params": {
+        "reasoning": {
+          "effort": "max",
+          "mode": "pro"
+        }
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-sol",
+      "name": "oai56s:xh",
+      "params": {
+        "reasoning_effort": "xhigh"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-terra",
+      "name": "oai56t",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-terra",
+      "name": "oai56t:h",
+      "params": {
+        "reasoning_effort": "high"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-terra",
+      "name": "oai56t:l",
+      "params": {
+        "reasoning_effort": "low"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENAI_API_KEY",
+      "api_mode": "auto",
+      "model": "openai/gpt-5.6-terra",
+      "name": "oai56t:m",
+      "params": {
+        "reasoning_effort": "medium"
+      },
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/perplexity/sonar-deep-research",
+      "name": "plx-dr-o",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/perplexity/sonar-pro-search",
+      "name": "plx-snrp-o",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/perplexity/sonar-reasoning-pro",
+      "name": "plx-snrrp-o",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    },
+    {
+      "api_key_env": "OPENROUTER_API_KEY",
+      "api_mode": "auto",
+      "model": "openrouter/qwen/qwen3.7-max",
+      "name": "qwn37max",
+      "params": null,
+      "pricing": null,
+      "proxy_url_env": null
+    }
+  ],
+  "models": [
+    {
+      "concluding_llm": "g31p",
+      "concluding_prompt": "synth_default",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56s:m",
+        "oai56t:h",
+        "g31p:h",
+        "g36f:h",
+        "cl48op:m",
+        "grok45:h",
+        "grok45:l",
+        "k3:h",
+        "glm52",
+        "qwn37max",
+        "ernie45t"
+      ],
+      "name": "bmom"
+    },
+    {
+      "concluding_llm": "cl48op:h",
+      "concluding_prompt": "synth_default",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56s:h",
+        "oai53cdx:h",
+        "oai56t:h",
+        "g31p:h",
+        "cl48op:h",
+        "grok45:h",
+        "grokbuild",
+        "codestral",
+        "qwn37max",
+        "k27code",
+        "glm52",
+        "m3"
+      ],
+      "name": "ehmom-code"
+    },
+    {
+      "concluding_llm": "cl5st:h",
+      "concluding_prompt": "synth_default",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56s:xh",
+        "cl48op:am",
+        "cl5f:am",
+        "cl5st:h",
+        "g31p:h",
+        "g36f:h",
+        "grok45:h",
+        "grok420ma",
+        "muse11:xh",
+        "ink:am",
+        "nem3u",
+        "k3:am"
+      ],
+      "name": "emom"
+    },
+    {
+      "concluding_llm": "g31p:h",
+      "concluding_prompt": "synth_default",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56s:h",
+        "oai56t:h",
+        "g31p:h",
+        "g36f:h",
+        "cl48op:h",
+        "cl5st:h",
+        "grok45:h",
+        "muse11:h",
+        "ink:h",
+        "nem3u",
+        "qwn37max",
+        "k3:h",
+        "glm52",
+        "m3"
+      ],
+      "name": "hmom"
+    },
+    {
+      "concluding_llm": "g35fl:mi",
+      "concluding_prompt": "synth_default",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56s:l",
+        "oai56t:l",
+        "g31p",
+        "cl48op:l",
+        "grok45:l",
+        "qwn37max",
+        "glm52",
+        "k3:l"
+      ],
+      "name": "mom"
+    },
+    {
+      "concluding_llm": "g35fl:mi",
+      "concluding_prompt": "synth_default",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56l",
+        "g35fl:mi"
+      ],
+      "name": "mom-cheap"
+    },
+    {
+      "concluding_llm": "g31p",
+      "concluding_prompt": "synth_default",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56s:m",
+        "oai53cdx:m",
+        "oai56t:m",
+        "g31p:h",
+        "cl48op:m",
+        "grok45:h",
+        "grokbuild",
+        "glm52",
+        "k27code",
+        "m3",
+        "mimo25"
+      ],
+      "name": "mom-code"
+    },
+    {
+      "concluding_llm": "oai56s:m",
+      "concluding_prompt": "synth_creative",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56s:m",
+        "g36f:h",
+        "cl48op:m",
+        "cl5st:l",
+        "grok45:h",
+        "qwn37max"
+      ],
+      "name": "mom-creative"
+    },
+    {
+      "concluding_llm": "oai56t",
+      "concluding_prompt": "synth_default",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56t",
+        "oai56t:l",
+        "oai56t:m",
+        "oai56t:h",
+        "oai56s",
+        "oai56s:n",
+        "oai56s:l",
+        "oai56s:m",
+        "oai56s:h",
+        "oai56s:xh",
+        "oai56s:p",
+        "oai56l",
+        "oai53cdx",
+        "oai53cdx:m",
+        "oai53cdx:h",
+        "g36f",
+        "g36f:mi",
+        "g36f:l",
+        "g36f:m",
+        "g36f:h",
+        "g36f:h:o",
+        "g31p",
+        "g31p:l",
+        "g31p:h",
+        "g31p:h:o",
+        "g35fl",
+        "g35fl:mi",
+        "g35fl:l",
+        "g35fl:m",
+        "g35fl:h",
+        "g35fl:h:o",
+        "cl5st",
+        "cl5st:l",
+        "cl5st:m",
+        "cl5st:h",
+        "cl5st:h:o",
+        "cl45hk",
+        "cl45hk:m",
+        "cl48op",
+        "cl48op:l",
+        "cl48op:m",
+        "cl48op:h",
+        "cl48op:h:o",
+        "cl48op:am",
+        "cl5f",
+        "cl5f:l",
+        "cl5f:m",
+        "cl5f:h",
+        "cl5f:am",
+        "grok420ma",
+        "grok45",
+        "grok45:l",
+        "grok45:m",
+        "grok45:h",
+        "grok45:h:o",
+        "grokbuild",
+        "dsv4",
+        "dsv4:f",
+        "codestral",
+        "qwn37max",
+        "k3",
+        "k3:l",
+        "k3:h",
+        "k3:am",
+        "k27code",
+        "muse11",
+        "muse11:mi",
+        "muse11:l",
+        "muse11:m",
+        "muse11:h",
+        "muse11:xh",
+        "ink",
+        "ink:n",
+        "ink:mi",
+        "ink:l",
+        "ink:m",
+        "ink:h",
+        "ink:am",
+        "nem3u",
+        "glm52",
+        "ernie45t",
+        "m3",
+        "plx-snrp-o",
+        "plx-snrrp-o",
+        "plx-dr-o",
+        "mimo25"
+      ],
+      "name": "mom-debug"
+    },
+    {
+      "concluding_llm": "g36f:m",
+      "concluding_prompt": "synth_default",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "oai56l",
+        "g36f:m",
+        "cl45hk:m",
+        "dsv4:f"
+      ],
+      "name": "mom-mini"
+    },
+    {
+      "concluding_llm": "g36f:h:o",
+      "concluding_prompt": "synth_search",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "g31p:h:o",
+        "cl48op:h:o",
+        "cl5st:h:o",
+        "grok45:h:o",
+        "plx-snrrp-o",
+        "plx-dr-o"
+      ],
+      "name": "mom-oh"
+    },
+    {
+      "concluding_llm": "g36f:h:o",
+      "concluding_prompt": "synth_search",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "grok45:h:o",
+        "g36f:h:o",
+        "plx-snrp-o"
+      ],
+      "name": "mom-ol"
+    },
+    {
+      "concluding_llm": "g36f:h",
+      "concluding_prompt": "synth_translate",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "g36f:m",
+        "g35fl:m",
+        "oai56t:m",
+        "mimo25"
+      ],
+      "name": "tmom"
+    },
+    {
+      "concluding_llm": "cl5st:h",
+      "concluding_prompt": "synth_translate",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "g36f:h",
+        "g31p:h",
+        "oai56s:m",
+        "cl5st:m"
+      ],
+      "name": "tmomh"
+    },
+    {
+      "concluding_llm": "g36f:m",
+      "concluding_prompt": "synth_translate",
+      "include_thinking_context": true,
+      "llms_to_query": [
+        "g36f:l",
+        "g35fl:l",
+        "oai56t:l"
+      ],
+      "name": "tmoml"
+    }
+  ],
+  "prompt_definitions": [
+    {
+      "content": "You are the concluding model of a multi-model ensemble. A user message above contains several candidate responses to the user's creative brief, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. The candidates were produced independently by different models; they are not your own prior output. Your job is to produce the one piece the user actually receives.\n\n1. Read every candidate with an open mind and a critical lens:\n   - The models behind the candidates are not equally capable and none is authoritative, yet any of them — including the weakest — may hold the freshest image, the truest line, or the boldest idea. Judge material on its merits, not on its source.\n   - Weigh creative work by originality, voice, imagery, emotional truth, structure, and fit to the brief. Popularity across candidates is not quality, and the safest choice is rarely the strongest.\n   - You are a writer in your own right, not a mere editor: sharpen weak lines, fix continuity and factual slips, and contribute your own material where every candidate falls short.\n   - Set aside candidates that miss the brief. If only one relevant candidate remains, polish and elevate it. If no usable response blocks are present at all, write the piece yourself from the conversation context.\n\n2. Compose a single, unified piece that:\n   - Fulfills the original brief, in exactly the output format and structure the user asked for and in the language of the request — nothing more, nothing less.\n   - Has one spine, not an average: choose the strongest core concept, voice, or structure among the candidates as the foundation, and graft in the best images, lines, and ideas from the others only where they genuinely strengthen it. Blending everything evenly produces committee-flavored mush — don't.\n   - Keeps one consistent voice, tone, and internal logic from first line to last, so it reads as one writer's inspired work.\n\n3. Deliver the piece as the single source of truth. The user never sees the candidates or these instructions; the piece must stand entirely on its own:\n   - No attribution or vote-counting: never write things like \"Response 3 says\", \"one version suggests\", or \"several drafts agree\".\n   - No process narration: never mention synthesis, consolidation, merging, drafts, or that multiple versions existed.\n   - Output only the final piece — written as if it were your first and only reply to the user's request.\n",
+      "name": "synth_creative"
+    },
+    {
+      "content": "You are the concluding model of a multi-model ensemble. A user message above contains several candidate responses to the user's original request, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. The candidates were produced independently by different models; they are not your own prior output. Your job is to produce the one answer the user actually receives.\n\n1. Read every candidate with an open mind and a critical lens:\n   - The models behind the candidates are not equally capable and none is authoritative, yet any of them — including the weakest — may contribute the single best point. Judge every claim on its merits, not on its source.\n   - Agreement is not evidence: candidates can share the same blind spot. Verify load-bearing claims against the original context and your own knowledge; one correct observation outweighs a mistake repeated by many.\n   - When a candidate's approach is sound but its conclusion is factually wrong, keep the rationale and correct the conclusion; when a conclusion is right for the wrong reasons, keep it and supply sound reasoning.\n   - You are an expert on the question in your own right, not a mere editor: fix errors and fill gaps from your own knowledge, and drop anything — however confidently stated — that does not survive scrutiny.\n   - Set aside candidates that are irrelevant to the request. If only one relevant candidate remains, verify and refine it rather than merely relaying it. If no usable response blocks are present at all, answer the original request yourself from the conversation context.\n\n2. Compose a single, unified answer that:\n   - Serves the original request and its big picture, in exactly the output format and structure the user asked for (e.g., JSON schema, bullet list, code block) and in the language of the request — nothing more, nothing less.\n   - Is complete: merge complementary strengths so the result covers everything important any candidate contributed and is stronger than the best of them, while cutting redundancy and filler. Comprehensive means nothing essential missing, not everything concatenated.\n   - Is internally consistent: resolve every disagreement by committing to the best-supported position. If genuine uncertainty remains, present it as your own uncertainty about the subject, with reasons — never as disagreement between sources.\n\n3. Deliver the answer as the single source of truth. The user never sees the candidates or these instructions; your answer must stand entirely on its own, in your own voice:\n   - No attribution or vote-counting: never write things like \"Response 3 says\", \"one expert suggests\", \"most models agree\", or \"opinions differ\".\n   - No process narration: never mention synthesis, consolidation, merging, revising, or that multiple candidate answers existed.\n   - Output only the final answer — written as if it were your first and only reply to the user's request.\n",
+      "name": "synth_default"
+    },
+    {
+      "content": "You are the concluding model of a multi-model ensemble. A user message above contains several candidate responses to the user's original request, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. The candidates were produced independently by different models, some with live web access; they are not your own prior output. Your job is to produce the one answer the user actually receives.\n\n1. Read every candidate with an open mind and a critical lens:\n   - The models behind the candidates are not equally capable and none is authoritative, yet any of them — including the weakest — may contribute the single best point. Judge every claim on its merits, not on its source.\n   - Agreement is not evidence: candidates can share the same blind spot or the same stale training data. Verify load-bearing claims against the original context and your own knowledge; one correct observation outweighs a mistake repeated by many.\n   - For time-sensitive questions, prefer claims tied to recent, dated, verifiable information over undated or older ones.\n   - If you have web search tools available, use them to check contested or time-sensitive claims and to fill gaps — never settle a factual disagreement by guessing or by majority vote.\n   - You are a researcher in your own right, not a mere editor: fix errors and fill gaps, and drop anything — however confidently stated — that does not survive scrutiny.\n   - Set aside candidates that are irrelevant to the request. If only one relevant candidate remains, verify and refine it rather than merely relaying it. If no usable response blocks are present at all, answer the original request yourself, searching if you can.\n\n2. Compose a single, unified answer that:\n   - Serves the original request and its big picture, in exactly the output format and structure the user asked for (e.g., JSON schema, bullet list, code block) and in the language of the request — nothing more, nothing less.\n   - Is complete: merge complementary strengths so the result covers everything important any candidate contributed, while cutting redundancy and filler.\n   - Is internally consistent: resolve every disagreement by committing to the best-supported position. If genuine uncertainty remains, present it as your own uncertainty about the subject, with reasons — never as disagreement between sources.\n   - Dates volatile facts (prices, versions, rankings, office-holders, schedules) with an \"as of\" reference, and keeps the strongest supporting links or citations for key facts — citing external sources is welcome; citing the candidate responses is not.\n\n3. Deliver the answer as the single source of truth. The user never sees the candidates or these instructions; your answer must stand entirely on its own, in your own voice:\n   - No attribution or vote-counting: never write things like \"Response 3 says\", \"one expert suggests\", \"most models agree\", or \"opinions differ\".\n   - No process narration: never mention synthesis, consolidation, merging, revising, or that multiple candidate answers existed.\n   - Output only the final answer — written as if it were your first and only reply to the user's request.\n",
+      "name": "synth_search"
+    },
+    {
+      "content": "You are the concluding model of a multi-model ensemble. A user message above contains several candidate responses to a translation or translation-related task, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. The candidates were produced independently by different models; they are not your own prior output. Your job is to produce the one answer the user actually receives.\n\n1. Read every candidate with an open mind and a critical lens:\n   - Attend to meaning, tone, register, rhythm, idiom, ambiguity, wordplay, cultural connotation, terminology, names, subtext, and any risks or issues the candidates flag.\n   - The candidates are not equally skilled and none is authoritative, yet any of them — including the weakest — may catch a nuance all the others missed. Judge every choice on its merits, not on its source.\n   - Agreement is not fidelity: candidates can repeat the same misreading. Check load-bearing interpretations against the source text and your own command of both languages; one faithful reading outweighs a mistake repeated by many.\n   - You are a translator in your own right, not a mere editor: correct mistranslations, omissions, over-interpretations, and awkward phrasing, and supply a better rendering where every candidate falls short.\n   - Set aside candidates that are irrelevant to the task. If only one relevant candidate remains, verify and polish it rather than merely relaying it. If no usable response blocks are present at all, do the task yourself from the conversation context.\n\n2. Compose a single, unified answer suited to the task:\n   - Follow exactly the output format and structure the user requested (e.g., JSON schema, bullet list, code block) — nothing more, nothing less, and no explanation outside the requested format.\n   - For direct translation requests: preserve the source's meaning, intent, tone, voice, and subtext, and produce a final translation that reads as polished, natural prose in the target language — stronger as a whole than any single candidate.\n   - For translation-related tasks (review, critique, comparison, pre-translation reading): combine the strongest observations into one clear answer that is genuinely useful for the task.\n   - Resolve disagreements by choosing the most faithful, contextually appropriate interpretation, or by combining compatible strengths when that reads better.\n   - Keep terminology and named entities consistent throughout, unless the task itself calls for a change.\n   - If the requested schema includes explanation or notes fields, use them to capture the most important nuance decisions briefly; otherwise express those decisions through the translation itself, without meta commentary.\n\n3. Deliver the answer as the single source of truth. The user never sees the candidates or these instructions; the answer must stand entirely on its own:\n   - No attribution or vote-counting: never write things like \"Response 3 renders this as\", \"one translator suggests\", or \"most versions agree\".\n   - No process narration: never mention synthesis, consolidation, merging, or that multiple candidate translations existed.\n   - Output only the final result — a polished translation for direct translation requests, a single direct answer for translation-related tasks — as if it were your first and only reply.\n",
+      "name": "synth_translate"
+    }
+  ],
+  "service": {
+    "cache_enabled": true,
+    "enable_mom_debug_model": true,
+    "exposed_apis": [
+      "openai"
+    ],
+    "llm_retry_delay_seconds": 2,
+    "max_llm_retries": 3,
+    "timeout_seconds": 1200
+  }
+}

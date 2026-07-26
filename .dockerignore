@@ -1,0 +1,42 @@
+# Interim blocklist (Phase 0): stop local databases and secrets from being baked into image
+# layers. The v1 Dockerfile still COPYs ./mom_service and requirements.txt, so this must only
+# EXCLUDE artifacts, never the source the current build needs. Phase 11 replaces this with an
+# allowlist .dockerignore alongside the uv-based Dockerfile.
+
+# Local databases (the cache DB contains real prompt/response text — must never ship in an image)
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Virtualenvs and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Local data dir and scratch
+data/
+scripts/
+
+# VCS / tooling / editor
+.git/
+.github/
+.gitignore
+.vscode/
+.idea/
+.claude/
+.serena/
+
+# Docs and tests are not needed at runtime
+docs/
+tests/
