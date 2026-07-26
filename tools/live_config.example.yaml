@@ -1,0 +1,19 @@
+# Minimal config for the offline live smoke (see docs/live-testing.md). All members are
+# openai/* so they route to the mock via OPENAI_API_BASE; no real provider is contacted.
+version: 2
+server:
+  auth: bearer
+observability:
+  langfuse:
+    enabled: false
+llms:
+  m1: { model: openai/mock-a }
+  m2: { model: openai/mock-b }
+  syn: { model: openai/mock-syn }
+prompts:
+  synth: "Synthesize the responses into one answer."
+ensembles:
+  mom:
+    members: [{ llm: m1 }, { llm: m2 }]
+    synthesizer: { llm: syn, prompt: synth }
+    show_work: inline
