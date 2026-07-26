@@ -90,6 +90,7 @@ class ChatRequestIR:
     tool_choice: ToolChoice = "auto"
     parallel_tool_calls: bool | None = None
     effort: str | None = None  # raw effort token from the client, resolved by plan.py
+    web_search: bool = False  # propagates provider search params to search-capable members
     response_format: dict[str, Any] | None = None
     sampling: Sampling = field(default_factory=Sampling)
     stream: bool = False

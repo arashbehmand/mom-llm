@@ -115,7 +115,7 @@ def _translate_message(message: AnthropicMessage) -> list[MessageIR]:
 def _tools(raw: list[dict[str, Any]] | None) -> tuple[ToolSpec, ...]:
     specs: list[ToolSpec] = []
     for tool in raw or []:
-        if "name" not in tool:
+        if "name" not in tool or tool.get("type"):  # skip server tools (web_search etc.)
             continue
         specs.append(
             ToolSpec(
@@ -125,6 +125,10 @@ def _tools(raw: list[dict[str, Any]] | None) -> tuple[ToolSpec, ...]:
             )
         )
     return tuple(specs)
+
+
+def _wants_search(raw: list[dict[str, Any]] | None) -> bool:
+    return any(str(tool.get("type", "")).startswith("web_search") for tool in (raw or []))
 
 
 def _tool_choice(raw: dict[str, Any] | None) -> ToolChoice:
@@ -161,6 +165,7 @@ def messages_request_to_ir(req: MessagesRequest, *, stream: bool) -> ChatRequest
         tools=_tools(req.tools),
         tool_choice=_tool_choice(req.tool_choice),
         effort=_effort(req.thinking),
+        web_search=_wants_search(req.tools),
         sampling=sampling,
         stream=stream,
         metadata={k: str(v) for k, v in (req.metadata or {}).items()},

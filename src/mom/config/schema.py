@@ -142,6 +142,9 @@ class LlmConfig(_Model):
     api_key_env: EnvVarName | None = None  # inferred from provider when omitted
     proxy_url_env: EnvVarName | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+    # Provider-specific params merged in when the client requests web search. Presence (even an
+    # empty {} for inherently-online models) marks the LLM as search-capable.
+    search: dict[str, Any] | None = None
     pricing: PricingConfig | None = None
     capabilities: CapabilityOverride | None = None
     max_input_tokens: int | None = Field(default=None, ge=1)

@@ -6,8 +6,9 @@ clean HTTP errors instead of mid-stream surprises after fan-out money is spent.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from mom.config.resolve import ResolvedCatalog, ResolvedEnsemble, ResolvedLlm
 from mom.config.types import (
@@ -106,6 +107,29 @@ def _member_params(
     return params
 
 
+def _vision_ok(llm: ResolvedLlm) -> bool:
+    """A member is vision-usable unless its config explicitly marks vision unsupported."""
+    caps = llm.capabilities
+    return caps is None or caps.vision is not False
+
+
+def _apply_search(
+    params: dict[str, object], llm: ResolvedLlm, web_search: bool
+) -> dict[str, object]:
+    """Merge the LLM's provider search params when the client requested web search."""
+    if not web_search or llm.search is None:
+        return params
+    search: Mapping[str, Any] = llm.search
+    out = dict(params)
+    for key, value in search.items():
+        existing = out.get("tools")
+        if key == "tools" and isinstance(value, list) and isinstance(existing, list):
+            out["tools"] = [*existing, *value]
+        else:
+            out[key] = value
+    return out
+
+
 def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     """Resolve a chat request against the catalog into a ready-to-run plan."""
     ensemble = catalog.ensembles.get(ir.model)
@@ -136,6 +160,11 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     if not skip_fanout:
         for member in ensemble.members_at(tier):
             llm = catalog.llms[member.llm]
+            # Image requests propagate only to vision-capable members (others drop out).
+            if ir.has_images and not _vision_ok(llm):
+                continue
+            params = _member_params(llm, dict(member.effort_by_tier), tier, ir.effort)
+            params = _apply_search(params, llm, ir.web_search)
             members.append(
                 PlannedMember(
                     identity=member.identity,
@@ -143,7 +172,7 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
                         llm_name=member.identity,
                         model=llm.model,
                         messages=member_messages,
-                        params=_member_params(llm, dict(member.effort_by_tier), tier, ir.effort),
+                        params=params,
                         api=llm.api,
                         proxy_url_env=llm.proxy_url_env,
                         timeout_seconds=_timeout_seconds(catalog, llm),
@@ -154,6 +183,7 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     syn = ensemble.synthesizer
     syn_llm = catalog.llms[syn.llm]
     synth_params = _member_params(syn_llm, dict(syn.effort_by_tier), tier, ir.effort)
+    synth_params = _apply_search(synth_params, syn_llm, ir.web_search)
     if ir.tools:
         synth_params["tools"] = tools_to_wire(ir.tools)
         synth_params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)

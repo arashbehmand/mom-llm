@@ -96,6 +96,7 @@ def chat_request_to_ir(req: ChatCompletionRequest) -> ChatRequestIR:
         messages=tuple(_message(m) for m in req.messages),
         tools=_tools(req.tools),
         effort=req.reasoning_effort,
+        web_search=bool(req.web_search or req.web_search_options),
         response_format=req.response_format,
         sampling=sampling,
         stream=req.stream,
