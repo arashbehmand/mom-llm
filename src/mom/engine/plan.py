@@ -7,6 +7,7 @@ clean HTTP errors instead of mid-stream surprises after fan-out money is spent.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from mom.config.resolve import ResolvedCatalog, ResolvedEnsemble, ResolvedLlm
 from mom.config.types import (
@@ -21,6 +22,15 @@ from mom.domain.errors import InvalidRequestError, UnknownModelError
 from mom.domain.ports import CallSpec
 from mom.domain.request import ChatRequestIR
 from mom.domain.synthesis import extract_concluding_instruction, messages_to_dicts
+from mom.domain.tooling import (
+    classify_turn,
+    member_tool_summary,
+    tool_choice_to_wire,
+    tools_to_wire,
+)
+
+
+SkipReason = Literal["passthrough", "tool_continuation"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +54,8 @@ class SynthPlan:
 class ExecutionPlan:
     ensemble: str
     strategy: str
+    skip_fanout: bool
+    skip_reason: SkipReason | None
     show_work: str
     tier: EffortLevel | None
     client_messages: list[dict[str, object]]
@@ -104,32 +116,55 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     client_messages = messages_to_dicts(messages)
     tier = _resolve_tier(ensemble, ir.effort)
 
+    is_relay = ensemble.tools_continuation == "relay" and classify_turn(messages) == "relay"
+    skip_fanout = ensemble.strategy == "passthrough" or is_relay
+    skip_reason: SkipReason | None = None
+    if ensemble.strategy == "passthrough":
+        skip_reason = "passthrough"
+    elif is_relay:
+        skip_reason = "tool_continuation"
+
+    # Advisory members see a schema-free tool summary on fresh turns (they cannot invoke tools).
+    member_messages = client_messages
+    if ir.tools and ensemble.member_tool_context == "summary" and not skip_fanout:
+        member_messages = [
+            *client_messages,
+            {"role": "system", "content": member_tool_summary(ir.tools)},
+        ]
+
     members: list[PlannedMember] = []
-    for member in ensemble.members_at(tier):
-        llm = catalog.llms[member.llm]
-        members.append(
-            PlannedMember(
-                identity=member.identity,
-                spec=CallSpec(
-                    llm_name=member.identity,
-                    model=llm.model,
-                    messages=client_messages,
-                    params=_member_params(llm, dict(member.effort_by_tier), tier, ir.effort),
-                    api=llm.api,
-                    proxy_url_env=llm.proxy_url_env,
-                    timeout_seconds=_timeout_seconds(catalog, llm),
-                ),
+    if not skip_fanout:
+        for member in ensemble.members_at(tier):
+            llm = catalog.llms[member.llm]
+            members.append(
+                PlannedMember(
+                    identity=member.identity,
+                    spec=CallSpec(
+                        llm_name=member.identity,
+                        model=llm.model,
+                        messages=member_messages,
+                        params=_member_params(llm, dict(member.effort_by_tier), tier, ir.effort),
+                        api=llm.api,
+                        proxy_url_env=llm.proxy_url_env,
+                        timeout_seconds=_timeout_seconds(catalog, llm),
+                    ),
+                )
             )
-        )
 
     syn = ensemble.synthesizer
     syn_llm = catalog.llms[syn.llm]
+    synth_params = _member_params(syn_llm, dict(syn.effort_by_tier), tier, ir.effort)
+    if ir.tools:
+        synth_params["tools"] = tools_to_wire(ir.tools)
+        synth_params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)
+        if ir.parallel_tool_calls is not None:
+            synth_params["parallel_tool_calls"] = ir.parallel_tool_calls
     synth = SynthPlan(
         llm_name=syn.llm,
         model=syn_llm.model,
         api=syn_llm.api,
         proxy_url_env=syn_llm.proxy_url_env,
-        params=_member_params(syn_llm, dict(syn.effort_by_tier), tier, ir.effort),
+        params=synth_params,
         prompt=catalog.config.prompts.get(syn.prompt) if syn.prompt else None,
         timeout_seconds=_timeout_seconds(catalog, syn_llm),
     )
@@ -137,6 +172,8 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     return ExecutionPlan(
         ensemble=ir.model,
         strategy=ensemble.strategy,
+        skip_fanout=skip_fanout,
+        skip_reason=skip_reason,
         show_work=ensemble.show_work,
         tier=tier,
         client_messages=client_messages,

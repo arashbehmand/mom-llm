@@ -29,6 +29,8 @@ from mom.domain.events import (
     PipelineFailed,
     StreamEvent,
     SynthesisStarted,
+    ToolCallDelta,
+    ToolCallStarted,
 )
 from mom.domain.results import EnsembleResult, ModelOutcome
 
@@ -122,6 +124,28 @@ async def encode_sse(
                 yield first
             if event.content:
                 yield _chunk(frame, {"content": event.content}, None)
+        elif isinstance(event, ToolCallStarted):
+            first = open_role()
+            if first:
+                yield first
+            delta = {
+                "tool_calls": [
+                    {
+                        "index": event.index,
+                        "id": event.call_id,
+                        "type": "function",
+                        "function": {"name": event.name, "arguments": ""},
+                    }
+                ]
+            }
+            yield _chunk(frame, delta, None)
+        elif isinstance(event, ToolCallDelta):
+            delta = {
+                "tool_calls": [
+                    {"index": event.index, "function": {"arguments": event.arguments_fragment}}
+                ]
+            }
+            yield _chunk(frame, delta, None)
         elif isinstance(event, Completed):
             if think_open:
                 yield _chunk(frame, {"content": "</think>\n\n"}, None)
@@ -152,16 +176,15 @@ def build_completion(
     if show_work == "inline":
         content = render_think_block(result.outcomes) + content
     usage = result.usage
+    message = ChatMessageOut(
+        content=content or None,
+        tool_calls=list(result.tool_calls) or None,
+    )
     return ChatCompletionResponse(
         id=frame.id,
         created=frame.created,
         model=frame.model,
-        choices=[
-            Choice(
-                message=ChatMessageOut(content=content),
-                finish_reason=result.finish_reason,
-            )
-        ],
+        choices=[Choice(message=message, finish_reason=result.finish_reason)],
         usage=CompletionUsage(
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Any
 
 from mom.domain.errors import MomError, UpstreamError
 from mom.domain.events import (
@@ -21,6 +22,8 @@ from mom.domain.events import (
     PipelineFailed,
     StreamEvent,
     SynthesisStarted,
+    ToolCallDelta,
+    ToolCallStarted,
 )
 from mom.domain.ports import CallSpec, Clock, LLMClient
 from mom.domain.results import EnsembleResult, ModelOutcome, OutcomeStatus, Usage
@@ -96,8 +99,9 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
     """Run an ensemble, emitting a typed event stream. Never raises — failures are events."""
     try:
         outcomes: list[ModelOutcome] = []
-        if plan.strategy == "passthrough":
-            yield FanoutSkipped("passthrough")
+        if plan.skip_fanout:
+            if plan.skip_reason is not None:
+                yield FanoutSkipped(plan.skip_reason)
             synth_messages = plan.client_messages
         else:
             async for event in _fan_out(deps, plan):
@@ -117,9 +121,23 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         yield SynthesisStarted(plan.synth.llm_name, plan.synth.model)
         usage = Usage()
         finish: FinishReason = "stop"
+        started_tools: set[int] = set()
         async for chunk in deps.client.stream(_synth_spec(plan, synth_messages)):
             if chunk.content is not None or chunk.reasoning is not None:
                 yield AnswerDelta(content=chunk.content, reasoning=chunk.reasoning)
+            if chunk.tool_call is not None:
+                call = chunk.tool_call
+                index = int(call.get("index", 0))
+                if index not in started_tools:
+                    started_tools.add(index)
+                    yield ToolCallStarted(
+                        index=index,
+                        call_id=str(call.get("id", "")),
+                        name=str(call.get("name", "")),
+                    )
+                fragment = call.get("arguments")
+                if fragment:
+                    yield ToolCallDelta(index=index, arguments_fragment=str(fragment))
             if chunk.usage is not None:
                 usage = chunk.usage
             if chunk.finish_reason:
@@ -140,6 +158,7 @@ async def collect(events: AsyncIterator[StreamEvent]) -> EnsembleResult:
     """Drain an event stream into a single result (raises on a terminal failure)."""
     text: list[str] = []
     outcomes: list[ModelOutcome] = []
+    tool_calls: dict[int, dict[str, Any]] = {}
     usage = Usage()
     cost = 0.0
     finish = "stop"
@@ -149,6 +168,15 @@ async def collect(events: AsyncIterator[StreamEvent]) -> EnsembleResult:
         elif isinstance(event, AnswerDelta):
             if event.content:
                 text.append(event.content)
+        elif isinstance(event, ToolCallStarted):
+            tool_calls[event.index] = {
+                "id": event.call_id,
+                "type": "function",
+                "function": {"name": event.name, "arguments": ""},
+            }
+        elif isinstance(event, ToolCallDelta):
+            if event.index in tool_calls:
+                tool_calls[event.index]["function"]["arguments"] += event.arguments_fragment
         elif isinstance(event, Completed):
             finish, usage, cost = event.finish_reason, event.usage, event.total_cost_usd
         elif isinstance(event, PipelineFailed):
@@ -159,4 +187,5 @@ async def collect(events: AsyncIterator[StreamEvent]) -> EnsembleResult:
         usage=usage,
         total_cost_usd=cost,
         finish_reason=finish,
+        tool_calls=tuple(tool_calls[i] for i in sorted(tool_calls)),
     )

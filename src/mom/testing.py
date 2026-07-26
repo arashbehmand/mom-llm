@@ -52,11 +52,13 @@ class FakeLLM:
         synth_chunks: tuple[str, ...] = ("synth", "esized ", "answer"),
         fail: frozenset[str] = frozenset(),
         finish_reason: str = "stop",
+        tool_calls: tuple[dict[str, str], ...] = (),
     ) -> None:
         self._replies = dict(replies or {})
         self._synth_chunks = synth_chunks
         self._fail = fail
         self._finish_reason = finish_reason
+        self._tool_calls = tool_calls
         self.completions: list[CallSpec] = []
         self.streams: list[CallSpec] = []
 
@@ -74,6 +76,17 @@ class FakeLLM:
 
     async def stream(self, spec: CallSpec) -> AsyncIterator[CompletionChunk]:
         self.streams.append(spec)
+        if self._tool_calls:
+            for index, call in enumerate(self._tool_calls):
+                yield CompletionChunk(
+                    tool_call={"index": index, "id": call["id"], "name": call["name"]}
+                )
+                yield CompletionChunk(tool_call={"index": index, "arguments": call["arguments"]})
+            yield CompletionChunk(
+                finish_reason="tool_calls",
+                usage=Usage(prompt_tokens=50, completion_tokens=5),
+            )
+            return
         for piece in self._synth_chunks:
             yield CompletionChunk(content=piece)
         yield CompletionChunk(

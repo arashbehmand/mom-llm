@@ -7,7 +7,7 @@ string prefix on the content (v1's brittle ``content.startswith("Error:")`` conv
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 
 OutcomeStatus = Literal["ok", "empty", "error", "timeout", "skipped", "aborted"]
@@ -67,6 +67,7 @@ class EnsembleResult:
     usage: Usage
     total_cost_usd: float
     finish_reason: str
+    tool_calls: tuple[dict[str, Any], ...] = ()
 
     @property
     def successful(self) -> tuple[ModelOutcome, ...]:

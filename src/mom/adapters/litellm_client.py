@@ -36,6 +36,30 @@ def _usage(raw: Any) -> Usage:
     )
 
 
+def _tool_call_dict(tc: Any) -> dict[str, Any]:
+    """A complete (non-streaming) tool call -> OpenAI wire dict."""
+    fn = getattr(tc, "function", None)
+    return {
+        "id": getattr(tc, "id", "") or "",
+        "type": "function",
+        "function": {
+            "name": getattr(fn, "name", "") or "",
+            "arguments": getattr(fn, "arguments", "") or "",
+        },
+    }
+
+
+def _tool_call_fragment(tc: Any) -> dict[str, Any]:
+    """A streamed tool-call delta -> a normalized fragment for the pipeline."""
+    fn = getattr(tc, "function", None)
+    return {
+        "index": getattr(tc, "index", 0) or 0,
+        "id": getattr(tc, "id", None),
+        "name": getattr(fn, "name", None) if fn else None,
+        "arguments": getattr(fn, "arguments", None) if fn else None,
+    }
+
+
 def _call_params(spec: CallSpec) -> dict[str, Any]:
     params = dict(spec.params)
     params["model"] = spec.model
@@ -58,11 +82,15 @@ class LiteLLMClient:
 
         choice = response.choices[0]
         message = choice.message
+        tool_calls = tuple(
+            _tool_call_dict(tc) for tc in (getattr(message, "tool_calls", None) or [])
+        )
         return Completion(
             content=message.content or "",
             reasoning=getattr(message, "reasoning_content", None),
             finish_reason=choice.finish_reason or "stop",
             usage=_usage(getattr(response, "usage", None)),
+            tool_calls=tool_calls,
         )
 
     async def stream(self, spec: CallSpec) -> AsyncIterator[CompletionChunk]:
@@ -77,11 +105,16 @@ class LiteLLMClient:
                 delta = choices[0].delta if choices else None
                 finish = choices[0].finish_reason if choices else None
                 usage_raw = getattr(part, "usage", None)
-                yield CompletionChunk(
-                    content=getattr(delta, "content", None) if delta else None,
-                    reasoning=getattr(delta, "reasoning_content", None) if delta else None,
-                    finish_reason=finish,
-                    usage=_usage(usage_raw) if usage_raw else None,
-                )
+                for raw_tool in (getattr(delta, "tool_calls", None) or []) if delta else []:
+                    yield CompletionChunk(tool_call=_tool_call_fragment(raw_tool))
+                content = getattr(delta, "content", None) if delta else None
+                reasoning = getattr(delta, "reasoning_content", None) if delta else None
+                if content is not None or reasoning is not None or finish or usage_raw:
+                    yield CompletionChunk(
+                        content=content,
+                        reasoning=reasoning,
+                        finish_reason=finish,
+                        usage=_usage(usage_raw) if usage_raw else None,
+                    )
         except Exception as exc:
             raise UpstreamError(f"{spec.llm_name} stream failed") from exc
