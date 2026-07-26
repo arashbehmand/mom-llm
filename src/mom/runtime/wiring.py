@@ -1,0 +1,60 @@
+"""Composition root: build the container (and its async cleanup) from settings + config."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+
+import platformdirs
+
+from mom.adapters.caching import CachingClient
+from mom.adapters.litellm_client import LiteLLMClient
+from mom.api.deps import Container
+from mom.config.loader import load_config
+from mom.config.resolve import ResolvedCatalog
+from mom.domain.ports import LLMClient
+from mom.runtime.clock import SystemClock, UuidIds
+from mom.runtime.settings import Settings
+from mom.store.cache import SqliteCacheStore
+
+
+def resolve_data_dir(settings: Settings, catalog: ResolvedCatalog) -> Path:
+    if settings.data_dir is not None:
+        return Path(settings.data_dir)
+    if catalog.config.storage.data_dir is not None:
+        return Path(catalog.config.storage.data_dir)
+    return Path(platformdirs.user_data_dir("mom-llm"))
+
+
+async def build_container(settings: Settings) -> tuple[Container, Callable[[], Awaitable[None]]]:
+    """Load config, open stores, wire adapters. Returns the container and an async cleanup."""
+    if settings.config_file is None:
+        raise RuntimeError("MOM_CONFIG must point to a config file to serve")
+    catalog = load_config(settings.config_file)
+    clock = SystemClock()
+    data_dir = resolve_data_dir(settings, catalog)
+
+    closers: list[Callable[[], Awaitable[None]]] = []
+    client: LLMClient = LiteLLMClient()
+    if catalog.config.cache.enabled:
+        cache = await SqliteCacheStore.open(
+            data_dir / "cache.db",
+            ttl_seconds=catalog.config.cache.ttl.total_seconds(),
+            max_bytes=catalog.config.cache.max_size,
+        )
+        client = CachingClient(client, cache, clock)
+        closers.append(cache.close)
+
+    container = Container(
+        settings=settings,
+        catalog=catalog,
+        client=client,
+        clock=clock,
+        ids=UuidIds(),
+    )
+
+    async def cleanup() -> None:
+        for close in closers:
+            await close()
+
+    return container, cleanup

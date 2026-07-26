@@ -35,6 +35,7 @@ class Completion:
     finish_reason: str
     usage: Usage
     tool_calls: tuple[dict[str, Any], ...] = ()
+    cached: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +59,11 @@ class LLMClient(Protocol):
     def stream(self, spec: CallSpec) -> AsyncIterator[CompletionChunk]:
         """Streaming call (used for the synthesizer)."""
         ...
+
+
+class CacheStore(Protocol):
+    async def get(self, key: str, *, now: float) -> str | None: ...
+    async def put(self, key: str, llm: str, body: str, *, now: float) -> None: ...
 
 
 class Clock(Protocol):

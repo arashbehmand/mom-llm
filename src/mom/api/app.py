@@ -21,31 +21,24 @@ from mom.api.routers.chat import router as chat_router
 from mom.runtime.settings import Settings
 
 
-def _build_container(settings: Settings) -> Container:
-    from mom.adapters.litellm_client import LiteLLMClient
-    from mom.config.loader import load_config
-    from mom.runtime.clock import SystemClock, UuidIds
-
-    if settings.config_file is None:
-        raise RuntimeError("MOM_CONFIG must point to a config file to serve")
-    catalog = load_config(settings.config_file)
-    return Container(
-        settings=settings,
-        catalog=catalog,
-        client=LiteLLMClient(),
-        clock=SystemClock(),
-        ids=UuidIds(),
-    )
-
-
 def create_app(settings: Settings | None = None, *, container: Container | None = None) -> FastAPI:
     """Build the MoM FastAPI application."""
     settings = settings or (container.settings if container else Settings())
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        app.state.container = container or _build_container(settings)
-        yield
+        if container is not None:
+            app.state.container = container
+            yield
+            return
+        from mom.runtime.wiring import build_container
+
+        built, cleanup = await build_container(settings)
+        app.state.container = built
+        try:
+            yield
+        finally:
+            await cleanup()
 
     app = FastAPI(title="MoM — Mixture of Models", version=__version__, lifespan=lifespan)
     if container is not None:  # tests: make the container available without the lifespan

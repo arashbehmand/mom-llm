@@ -65,6 +65,7 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
         content=completion.content,
         reasoning=completion.reasoning,
         usage=completion.usage,
+        cached=completion.cached,
         duration_ms=duration_ms,
     )
 
