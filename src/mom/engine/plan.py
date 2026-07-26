@@ -28,6 +28,7 @@ from mom.domain.synthesis import extract_concluding_instruction, messages_to_dic
 from mom.domain.tooling import (
     classify_turn,
     member_tool_summary,
+    provider_supports_remote_mcp,
     tool_choice_to_wire,
     tools_to_wire,
 )
@@ -62,6 +63,10 @@ class SynthPlan:
 class ExecutionPlan:
     ensemble: str
     strategy: str
+    # Tool-call arbitration axis (orthogonal to `strategy`): arbitrate | vote | first.
+    tool_strategy: str
+    vote_threshold: int
+    stream_profile: str
     skip_fanout: bool
     skip_reason: SkipReason | None
     show_work: str
@@ -218,9 +223,17 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     elif is_relay:
         skip_reason = "tool_continuation"
 
-    # Advisory members see a schema-free tool summary on fresh turns (they cannot invoke tools).
+    # vote/first make members the deciders: they get the real tool schemas so they can propose
+    # structured calls. In arbitrate mode members stay advisory — a schema-free summary only (they
+    # cannot invoke tools; the synthesizer owns the client-visible call).
+    members_propose = ensemble.tool_strategy in ("vote", "first")
     member_messages = client_messages
-    if ir.tools and ensemble.member_tool_context == "summary" and not skip_fanout:
+    if (
+        ir.tools
+        and ensemble.member_tool_context == "summary"
+        and not skip_fanout
+        and not members_propose
+    ):
         member_messages = [
             *client_messages,
             {"role": "system", "content": member_tool_summary(ir.tools)},
@@ -246,6 +259,11 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
                 continue
             params = _member_params(llm, dict(member.effort_by_tier), tier, ir.effort)
             params = _apply_search(params, llm, ir.web_search)
+            if members_propose and ir.tools:
+                params["tools"] = tools_to_wire(ir.tools)
+                params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)
+                if ir.parallel_tool_calls is not None:
+                    params["parallel_tool_calls"] = ir.parallel_tool_calls
             members.append(
                 PlannedMember(
                     identity=member.identity,
@@ -271,8 +289,20 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     _apply_sampling(synth_params, ir.sampling)
     if ir.response_format is not None:
         synth_params["response_format"] = ir.response_format
+    wire_tools = tools_to_wire(ir.tools) if ir.tools else []
+    if ir.mcp_tools:
+        # Forward opaque `type: mcp` blocks only to a synthesizer whose provider accepts them;
+        # otherwise keep the clean 400 (before any fan-out spend) — MCP runs client-side instead.
+        if provider_supports_remote_mcp(syn_llm.model, syn_llm.api):
+            wire_tools = [*wire_tools, *ir.mcp_tools]
+        else:
+            raise InvalidRequestError(
+                "MCP tools are not supported by this ensemble's synthesizer; execute MCP "
+                "client-side and pass plain function tools instead"
+            )
+    if wire_tools:
+        synth_params["tools"] = wire_tools
     if ir.tools:
-        synth_params["tools"] = tools_to_wire(ir.tools)
         synth_params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)
         if ir.parallel_tool_calls is not None:
             synth_params["parallel_tool_calls"] = ir.parallel_tool_calls
@@ -302,6 +332,9 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     return ExecutionPlan(
         ensemble=ir.model,
         strategy=ensemble.strategy,
+        tool_strategy=ensemble.tool_strategy,
+        vote_threshold=ensemble.vote_threshold,
+        stream_profile=ensemble.stream_profile,
         skip_fanout=skip_fanout,
         skip_reason=skip_reason,
         show_work=ensemble.show_work,

@@ -79,7 +79,9 @@ async def test_non_streaming_tool_calls():
     body = resp.json()
     assert body["choices"][0]["finish_reason"] == "tool_calls"
     calls = body["choices"][0]["message"]["tool_calls"]
-    assert calls[0]["id"] == "call_1"
+    # The client sees a MoM-minted id, never the provider's raw id (custody hides any signature).
+    assert calls[0]["id"] != "call_1"
+    assert calls[0]["id"].startswith("call")
     assert calls[0]["function"]["name"] == "get_weather"
     assert json.loads(calls[0]["function"]["arguments"]) == {"city": "SF"}
     # the synthesizer received the tools

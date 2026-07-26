@@ -12,6 +12,7 @@ from typing import Any
 
 from mom.domain.request import ImagePart, MessageIR, TextPart
 from mom.domain.results import ModelOutcome
+from mom.domain.tooling import summarize_member_tool_calls
 
 
 _CONCLUDING_INSTRUCTION_RE = re.compile(
@@ -102,6 +103,11 @@ def build_synthesis_messages(
         "above. Synthesize them into a single, superior answer.\n\n" + "\n\n".join(blocks)
     )
     messages = [*client_messages, {"role": "user", "content": candidate_message}]
+    # Surface any member-proposed tool calls as advisory context (the candidate envelope). Volatile,
+    # so it stays after the cacheable history prefix and before the fixed synthesis prompt.
+    tool_note = summarize_member_tool_calls(outcomes)
+    if tool_note:
+        messages.append({"role": "user", "content": tool_note})
     if prompt:
         messages.append({"role": "user", "content": prompt})
     if instruction:

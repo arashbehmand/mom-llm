@@ -76,16 +76,18 @@ def _input_messages(value: str | list[dict[str, Any]]) -> list[MessageIR]:
     return messages
 
 
-def _tools(raw: list[dict[str, Any]] | None) -> tuple[tuple[ToolSpec, ...], bool]:
+def _tools(
+    raw: list[dict[str, Any]] | None,
+) -> tuple[tuple[ToolSpec, ...], bool, tuple[dict[str, Any], ...]]:
     specs: list[ToolSpec] = []
     web_search = False
+    mcp_tools: list[dict[str, Any]] = []
     for tool in raw or []:
         kind = tool.get("type")
         if kind == "mcp":
-            raise InvalidRequestError(
-                "MCP tools are not supported here; execute MCP client-side and pass plain "
-                "function tools instead"
-            )
+            # Carried opaquely; plan.py forwards it to an MCP-capable synthesizer, else 400s.
+            mcp_tools.append(tool)
+            continue
         if kind and kind not in _SUPPORTED_TOOL_TYPES:
             raise InvalidRequestError(f"unsupported tool type {kind!r}")
         if kind in ("web_search", "web_search_preview"):
@@ -99,7 +101,7 @@ def _tools(raw: list[dict[str, Any]] | None) -> tuple[tuple[ToolSpec, ...], bool
                 strict=tool.get("strict"),
             )
         )
-    return tuple(specs), web_search
+    return tuple(specs), web_search, tuple(mcp_tools)
 
 
 def _tool_choice(raw: Any) -> ToolChoice:
@@ -126,7 +128,7 @@ def responses_request_to_ir(req: ResponsesRequest, *, stream: bool) -> ChatReque
         messages.append(MessageIR(role="system", content=req.instructions))
     messages.extend(_input_messages(req.input))
 
-    tools, web_search = _tools(req.tools)
+    tools, web_search, mcp_tools = _tools(req.tools)
     effort = None
     if req.reasoning:
         effort = req.reasoning.get("effort")
@@ -142,6 +144,7 @@ def responses_request_to_ir(req: ResponsesRequest, *, stream: bool) -> ChatReque
         model=req.model,
         messages=tuple(messages),
         tools=tools,
+        mcp_tools=mcp_tools,
         tool_choice=_tool_choice(req.tool_choice),
         parallel_tool_calls=req.parallel_tool_calls,
         effort=effort,

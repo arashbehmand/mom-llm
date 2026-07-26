@@ -134,6 +134,7 @@ async def test_mcp_tool_is_rejected():
             "/v1/responses",
             json={"model": "e", "input": "hi", "tools": [{"type": "mcp", "server_label": "x"}]},
         )
+    # ensemble "e" synthesizes on the chat API, which cannot forward remote MCP -> clean 400
     assert resp.status_code == 400
     assert "MCP" in resp.json()["error"]["message"]
 
@@ -177,3 +178,40 @@ async def test_streaming_reasoning_summary_events():
     seqs = [d["sequence_number"] for _, d in events]
     assert seqs == sorted(seqs)
     assert len(set(seqs)) == len(seqs)
+
+
+_MCP_CONFIG = dedent("""
+    version: 2
+    server: { auth: none }
+    llms:
+      a: { model: openai/a }
+      resp: { model: openai/gpt-5, api: responses }
+    ensembles:
+      forward:
+        members: [{ llm: a }]
+        synthesizer: { llm: resp }
+    prompts: {}
+""")
+
+
+async def test_mcp_tool_forwarded_when_synth_supports_it():
+    fake = FakeLLM()
+    catalog = resolve_catalog(Config.model_validate(yaml.safe_load(_MCP_CONFIG)))
+    container = Container(
+        settings=Settings(_env_file=None),
+        catalog=catalog,
+        client=fake,
+        clock=ManualClock(),
+        ids=SequentialIds(),
+    )
+    app = create_app(container=container)
+    mcp_tool = {"type": "mcp", "server_label": "x", "server_url": "https://mcp.example/sse"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/v1/responses", json={"model": "forward", "input": "hi", "tools": [mcp_tool]}
+        )
+    # a Responses-API synthesizer that supports remote MCP: forwarded opaquely, no 400
+    assert resp.status_code == 200
+    assert fake.streams[0].params["tools"] == [mcp_tool]

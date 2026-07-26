@@ -67,12 +67,15 @@ class FakeLLM:
         fail: frozenset[str] = frozenset(),
         finish_reason: str = "stop",
         tool_calls: tuple[dict[str, str], ...] = (),
+        member_tool_calls: Mapping[str, tuple[Mapping[str, str], ...]] | None = None,
     ) -> None:
         self._replies = dict(replies or {})
         self._synth_chunks = synth_chunks
         self._fail = fail
         self._finish_reason = finish_reason
         self._tool_calls = tool_calls
+        # identity -> tool calls a fan-out member *proposes* (advisory; drives vote/first/envelope).
+        self._member_tool_calls = dict(member_tool_calls or {})
         self.completions: list[CallSpec] = []
         self.streams: list[CallSpec] = []
 
@@ -80,12 +83,22 @@ class FakeLLM:
         self.completions.append(spec)
         if spec.llm_name in self._fail:
             raise UpstreamError(f"{spec.llm_name} failed")
-        content = self._replies.get(spec.llm_name, f"reply from {spec.llm_name}")
+        proposed = self._member_tool_calls.get(spec.llm_name, ())
+        wire = tuple(
+            {
+                "id": call["id"],
+                "type": "function",
+                "function": {"name": call["name"], "arguments": call["arguments"]},
+            }
+            for call in proposed
+        )
+        content = self._replies.get(spec.llm_name, "" if wire else f"reply from {spec.llm_name}")
         return Completion(
             content=content,
             reasoning=None,
-            finish_reason="stop",
+            finish_reason="tool_calls" if wire else "stop",
             usage=Usage(prompt_tokens=10, completion_tokens=5),
+            tool_calls=wire,
         )
 
     async def stream(self, spec: CallSpec) -> AsyncIterator[CompletionChunk]:

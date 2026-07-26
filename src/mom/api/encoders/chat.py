@@ -42,6 +42,22 @@ class ChatFrame:
     model: str
 
 
+# User-Agent substrings for clients that need the `compat` tool-call shape (id/type/name on every
+# delta). Vercel's AI SDK is the canonical example; matched case-insensitively.
+_COMPAT_USER_AGENTS = ("ai-sdk", "vercel-ai", "vercel/ai")
+
+
+def resolve_stream_profile(configured: str, user_agent: str | None) -> str:
+    """The effective streaming profile: a recognized AI-SDK ``User-Agent`` forces ``compat``.
+
+    User-Agent can only *upgrade* strict→compat (the safe direction) for known-fragile clients; it
+    never downgrades an ensemble that deliberately configured ``compat``.
+    """
+    if user_agent and any(marker in user_agent.lower() for marker in _COMPAT_USER_AGENTS):
+        return "compat"
+    return configured if configured in ("compat", "strict") else "compat"
+
+
 def _member_line(outcome: ModelOutcome) -> str:
     body = outcome.content if outcome.ok else (outcome.error or outcome.status)
     return f"Model: {html.escape(outcome.model)}\nContent: {html.escape(body)}\n---\n"
@@ -93,10 +109,20 @@ async def encode_sse(
     *,
     show_work: str,
     include_usage: bool,
+    stream_profile: str = "compat",
 ) -> AsyncIterator[bytes]:
-    """Fold the event stream into an OpenAI SSE byte stream."""
+    """Fold the event stream into an OpenAI SSE byte stream.
+
+    ``stream_profile`` controls the tool-call delta shape: ``compat`` (default) re-emits
+    ``id``/``type``/``function.name`` on every delta (safe for AI-SDK-style clients that only read
+    the header once); ``strict`` sends them on the first delta only. Both keep ``index`` present as
+    an int and ``arguments`` a (possibly empty) string, never null; parallel calls stay serialized
+    by their distinct ``index``.
+    """
     role_sent = False
     think_open = False
+    compat = stream_profile != "strict"
+    tool_headers: dict[int, tuple[str, str]] = {}  # index -> (minted id, name), for compat re-emit
 
     def open_role() -> bytes | None:
         nonlocal role_sent
@@ -130,10 +156,12 @@ async def encode_sse(
             first = open_role()
             if first:
                 yield first
+            index = int(event.index)
+            tool_headers[index] = (event.call_id, event.name)
             delta = {
                 "tool_calls": [
                     {
-                        "index": event.index,
+                        "index": index,
                         "id": event.call_id,
                         "type": "function",
                         "function": {"name": event.name, "arguments": ""},
@@ -142,12 +170,17 @@ async def encode_sse(
             }
             yield _chunk(frame, delta, None)
         elif isinstance(event, ToolCallDelta):
-            delta = {
-                "tool_calls": [
-                    {"index": event.index, "function": {"arguments": event.arguments_fragment}}
-                ]
+            index = int(event.index)
+            call: dict[str, Any] = {
+                "index": index,
+                "function": {"arguments": event.arguments_fragment},
             }
-            yield _chunk(frame, delta, None)
+            if compat and index in tool_headers:
+                call_id, name = tool_headers[index]
+                call["id"] = call_id
+                call["type"] = "function"
+                call["function"] = {"name": name, "arguments": event.arguments_fragment}
+            yield _chunk(frame, {"tool_calls": [call]}, None)
         elif isinstance(event, Completed):
             if think_open:
                 yield _chunk(frame, {"content": "</think>\n\n"}, None)

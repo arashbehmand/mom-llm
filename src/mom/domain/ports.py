@@ -110,3 +110,21 @@ class IdFactory(Protocol):
     def new_id(self, prefix: str) -> str:
         """A fresh unique id with the given prefix."""
         ...
+
+
+class ToolCallCustody(Protocol):
+    """Custody of provider-native tool-call ids behind MoM-minted, client-facing ids.
+
+    The provider's raw id (e.g. Gemini's ``call_..__thought__..`` signature) never reaches the
+    client; it is stashed here under the minted id so a later relay continuation can restore it
+    for the *same* owner (the synthesizer that emitted the call). Best-effort and in-memory: a
+    miss (a restart, another worker) simply relays the minted id, which providers still accept.
+    """
+
+    def remember(self, client_id: str, provider_id: str, owner: str) -> None:
+        """Stash ``provider_id`` (owned by ``owner``) under the minted ``client_id``."""
+        ...
+
+    def provider_id(self, client_id: str, owner: str) -> str | None:
+        """The stored provider id for ``client_id`` iff it was minted by ``owner`` (else None)."""
+        ...

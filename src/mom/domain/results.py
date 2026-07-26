@@ -52,6 +52,9 @@ class ModelOutcome:
     cached: bool = False
     duration_ms: float = 0.0
     error: str | None = None
+    # A member's *proposed* tool calls (advisory). The synthesizer owns the client-visible call by
+    # default; `vote`/`first` strategies promote a member proposal directly. OpenAI wire shape.
+    tool_calls: tuple[dict[str, Any], ...] = ()
 
     @property
     def ok(self) -> bool:

@@ -191,6 +191,14 @@ class SynthesizerConfig(_Model):
 class EnsembleToolsConfig(_Model):
     continuation: Literal["relay", "fanout"] = "relay"
     member_tool_context: Literal["summary", "none"] = "summary"
+    # How a tool call is chosen. `arbitrate` (default): the synthesizer decides, seeing member
+    # proposals as advisory context. `vote`: return the call proposed by >= `vote_threshold`
+    # members directly (skip synthesis). `first`: return the first member's proposed call.
+    strategy: Literal["arbitrate", "vote", "first"] = "arbitrate"
+    vote_threshold: int = Field(default=2, ge=1)
+    # Streaming tool-call delta shape. `compat` (default) re-emits id/type/name on every delta
+    # (safe for AI-SDK-style clients); `strict` sends them only on the first delta.
+    stream_profile: Literal["compat", "strict"] = "compat"
 
 
 class EnsembleConfig(_Model):

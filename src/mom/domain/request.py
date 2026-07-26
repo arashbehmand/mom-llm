@@ -87,6 +87,9 @@ class ChatRequestIR:
     model: str
     messages: tuple[MessageIR, ...]
     tools: tuple[ToolSpec, ...] = ()
+    # Opaque provider tool blocks (Responses `type: mcp`) relayed verbatim to a synthesizer that
+    # supports them; plan.py 400s when it does not. Empty for the OpenAI-function/Anthropic paths.
+    mcp_tools: tuple[dict[str, Any], ...] = ()
     tool_choice: ToolChoice = "auto"
     parallel_tool_calls: bool | None = None
     effort: str | None = None  # raw effort token from the client, resolved by plan.py

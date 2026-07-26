@@ -265,7 +265,15 @@ async def test_streaming_reasoning_emits_thinking_block():
     )
     assert thinking_text == "let me think carefully"
 
-    # The thinking block closes before the text block opens, and indexes stay monotonic.
+    # The thinking block is signed (signature_delta) then closed before the text block opens, and
+    # indexes stay monotonic.
+    signature = next(
+        d
+        for k, d in events
+        if k == "content_block_delta" and d["delta"]["type"] == "signature_delta"
+    )
+    assert signature["index"] == thinking_start["index"]
+    assert signature["delta"]["signature"]  # opaque, deterministic, non-empty
     text_start = next(
         d for k, d in events if k == "content_block_start" and d["content_block"]["type"] == "text"
     )
@@ -273,8 +281,9 @@ async def test_streaming_reasoning_emits_thinking_block():
     order = [(k, d.get("index")) for k, d in events if k.startswith("content_block")]
     assert order == [
         ("content_block_start", thinking_start["index"]),
-        ("content_block_delta", thinking_start["index"]),
-        ("content_block_delta", thinking_start["index"]),
+        ("content_block_delta", thinking_start["index"]),  # thinking "let me think"
+        ("content_block_delta", thinking_start["index"]),  # thinking " carefully"
+        ("content_block_delta", thinking_start["index"]),  # signature_delta
         ("content_block_stop", thinking_start["index"]),
         ("content_block_start", text_start["index"]),
         ("content_block_delta", text_start["index"]),
@@ -286,3 +295,12 @@ async def test_streaming_reasoning_emits_thinking_block():
         if k == "content_block_delta" and d["delta"]["type"] == "text_delta"
     )
     assert text == "final answer"
+
+
+def test_thinking_signature_is_deterministic():
+    from mom.api.encoders.anthropic import _thinking_signature
+
+    # Same thinking text -> same opaque signature; different text -> different signature.
+    assert _thinking_signature("let me think") == _thinking_signature("let me think")
+    assert _thinking_signature("a") != _thinking_signature("b")
+    assert _thinking_signature("hello")  # non-empty

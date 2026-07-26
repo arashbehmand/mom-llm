@@ -102,6 +102,9 @@ class ResolvedEnsemble:
     show_work: str
     tools_continuation: str
     member_tool_context: str
+    tool_strategy: str
+    vote_threshold: int
+    stream_profile: str
     advertise: Mapping[str, Any]
     on_input_overflow: str
 
@@ -299,6 +302,9 @@ def _resolve_ensemble(
         show_work=ens.show_work,
         tools_continuation=ens.tools.continuation,
         member_tool_context=ens.tools.member_tool_context,
+        tool_strategy=ens.tools.strategy,
+        vote_threshold=ens.tools.vote_threshold,
+        stream_profile=ens.tools.stream_profile,
         advertise=MappingProxyType(dict(ens.advertise)),
         on_input_overflow=ens.on_input_overflow,
     )
