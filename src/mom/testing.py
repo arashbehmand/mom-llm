@@ -37,6 +37,20 @@ class SequentialIds:
         return f"{prefix}-{self._counter}"
 
 
+class RecordingTracer:
+    """A tracer that records observations in memory (for tests)."""
+
+    def __init__(self) -> None:
+        self.observations: list[dict[str, object]] = []
+        self.flushed = 0
+
+    def observe(self, **kwargs: object) -> None:
+        self.observations.append(kwargs)
+
+    def flush(self) -> None:
+        self.flushed += 1
+
+
 class FakeLLM:
     """A scripted :class:`~mom.domain.ports.LLMClient`.
 
