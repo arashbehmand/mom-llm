@@ -7,7 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 from mom.adapters.litellm_client import (
+    LiteLLMTokenEstimator,
     _call_params,
+    _fallback_token_estimate,
     _proxy_client,
     _resolve_api_key,
     _responses_event_to_chunk,
@@ -303,3 +305,31 @@ def test_responses_event_completed_usage_and_cost():
 
 def test_responses_event_lifecycle_ignored():
     assert _responses_event_to_chunk(SimpleNamespace(type="response.created"), "m") is None
+
+
+def test_fallback_token_estimate_counts_chars_over_four():
+    messages = [
+        {"role": "user", "content": "x" * 40},
+        {"role": "user", "content": [{"type": "text", "text": "yyyy"}, {"type": "image_url"}]},
+    ]
+    assert _fallback_token_estimate(messages) == (40 + 4) // 4  # 11
+
+
+def test_token_estimator_returns_positive_int_and_never_raises():
+    estimator = LiteLLMTokenEstimator()
+    count = estimator.count(model="gpt-3.5-turbo", messages=[{"role": "user", "content": "hello"}])
+    assert isinstance(count, int)
+    assert count >= 1
+
+
+def test_token_estimator_falls_back_when_tokenizer_unavailable(monkeypatch: pytest.MonkeyPatch):
+    import litellm
+
+    def _boom(*_args: object, **_kwargs: object) -> int:
+        raise RuntimeError("no tokenizer / offline")
+
+    monkeypatch.setattr(litellm, "token_counter", _boom)
+    estimator = LiteLLMTokenEstimator()
+    # Falls back to the chars/4 heuristic instead of propagating the tokenizer failure.
+    count = estimator.count(model="gpt-4", messages=[{"role": "user", "content": "x" * 40}])
+    assert count == 10

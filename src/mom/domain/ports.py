@@ -94,6 +94,12 @@ class Tracer(Protocol):
         ...
 
 
+class TokenEstimator(Protocol):
+    def count(self, *, model: str, messages: list[dict[str, Any]]) -> int:
+        """Best-effort input-token count for ``messages`` against ``model``. Never raises."""
+        ...
+
+
 class Clock(Protocol):
     def now(self) -> float:
         """Wall-clock seconds since the epoch (injected for deterministic tests)."""

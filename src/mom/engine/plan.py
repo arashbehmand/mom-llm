@@ -75,6 +75,9 @@ class ExecutionPlan:
     # optional overall wall-clock budget after which stragglers are abandoned.
     max_concurrency: int = 16
     fanout_deadline: float | None = None
+    # Quorum: at least this many members must succeed (`ok`) before the pipeline synthesizes;
+    # fewer fails with QuorumNotMet (502). 0 disables the check (the all-failed fallback runs).
+    min_results: int = 1
 
 
 def _effort_param(token: str, client_effort: str | None) -> dict[str, object]:
@@ -137,6 +140,26 @@ def _vision_ok(llm: ResolvedLlm) -> bool:
     """A member is vision-usable unless its config explicitly marks vision unsupported."""
     caps = llm.capabilities
     return caps is None or caps.vision is not False
+
+
+def _estimate_input_tokens(messages: list[dict[str, object]]) -> int:
+    """A cheap ~chars/4 heuristic over a member's wire messages (for the input-overflow guard).
+
+    Deliberately provider-naive: the guard only needs a rough magnitude to compare against an
+    llm's ``max_input_tokens``, and staying pure keeps plan resolution free of any tokenizer.
+    """
+    chars = 0
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            chars += len(content)
+        elif isinstance(content, list):
+            chars += sum(
+                len(part["text"])
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
+    return chars // 4
 
 
 def _apply_search(
@@ -205,10 +228,21 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
 
     members: list[PlannedMember] = []
     if not skip_fanout:
+        estimated_input_tokens = _estimate_input_tokens(member_messages)
         for member in ensemble.members_at(tier):
             llm = catalog.llms[member.llm]
             # Image requests propagate only to vision-capable members (others drop out).
             if ir.has_images and not _vision_ok(llm):
+                continue
+            # Per-llm input budget: a member whose estimated input exceeds its max_input_tokens
+            # either drops out of the panel (on_input_overflow: skip, the default) or fails the
+            # whole request (reject) — resolved pre-flight so 'reject' is a clean 400 before spend.
+            if llm.max_input_tokens is not None and estimated_input_tokens > llm.max_input_tokens:
+                if ensemble.on_input_overflow == "reject":
+                    raise InvalidRequestError(
+                        f"input (~{estimated_input_tokens} tokens) exceeds "
+                        f"max_input_tokens={llm.max_input_tokens} for llm {member.llm!r}"
+                    )
                 continue
             params = _member_params(llm, dict(member.effort_by_tier), tier, ir.effort)
             params = _apply_search(params, llm, ir.web_search)
@@ -278,4 +312,5 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         instruction=instruction,
         max_concurrency=fanout.max_concurrency or 16,
         fanout_deadline=fanout.deadline.total_seconds() if fanout.deadline else None,
+        min_results=fanout.min_results,
     )

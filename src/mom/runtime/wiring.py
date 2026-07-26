@@ -9,7 +9,7 @@ from pathlib import Path
 import platformdirs
 
 from mom.adapters.caching import CachingClient
-from mom.adapters.litellm_client import LiteLLMClient
+from mom.adapters.litellm_client import LiteLLMClient, LiteLLMTokenEstimator
 from mom.adapters.observability import LangfuseTracer, NoopTracer
 from mom.config.loader import load_config
 from mom.config.resolve import ResolvedCatalog
@@ -60,7 +60,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
             ttl_seconds=catalog.config.cache.ttl.total_seconds(),
             max_bytes=catalog.config.cache.max_size,
         )
-        client = CachingClient(client, cache, clock)
+        client = CachingClient(client, cache, clock, coalesce=catalog.config.cache.coalesce)
         closers.append(cache.close)
 
     metrics_store = await MetricsStore.open(data_dir / "metrics.db")
@@ -80,6 +80,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
         metrics=recorder,
         metrics_reader=metrics_store,
         tracer=tracer,
+        token_estimator=LiteLLMTokenEstimator(),
     )
 
     async def cleanup() -> None:

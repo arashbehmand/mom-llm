@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from mom.domain.cost import compute_cost
-from mom.domain.errors import MomError, UpstreamError, UpstreamTimeout
+from mom.domain.errors import MomError, QuorumNotMet, UpstreamError, UpstreamTimeout
 from mom.domain.events import (
     AnswerDelta,
     Completed,
@@ -241,6 +241,14 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                             error=outcome.error,
                         )
                 yield event
+            # Quorum: refuse to synthesize on a thin panel. With the default min_results=1 this
+            # also replaces the all-failed fallback (0 ok -> 502); min_results=0 re-enables it.
+            ok_count = sum(1 for o in outcomes if o.ok)
+            if ok_count < plan.min_results:
+                raise QuorumNotMet(
+                    f"only {ok_count} of {len(outcomes)} members succeeded "
+                    f"(min_results={plan.min_results})"
+                )
             if any(o.ok for o in outcomes):
                 synth_messages = build_synthesis_messages(
                     plan.client_messages,
