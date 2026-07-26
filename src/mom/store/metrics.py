@@ -11,18 +11,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 import contextlib
-from dataclasses import astuple, dataclass
+from dataclasses import astuple
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import aiosqlite
 
+from mom.domain.metrics import CallMetric
 from mom.store.connection import open_database
 
-
-Role = Literal["fanout", "synthesis"]
-Status = Literal["ok", "error"]
-TurnType = Literal["ensemble", "relay"]
 
 MIGRATIONS: tuple[str, ...] = (
     # v1: initial schema
@@ -77,28 +74,6 @@ _AGGREGATE_SELECT = (
     "SUM(CASE WHEN turn_type = 'relay' THEN 1 ELSE 0 END) AS relay_calls "
     "FROM llm_calls"
 )
-
-
-@dataclass(frozen=True, slots=True)
-class CallMetric:
-    request_id: str
-    ts: float
-    ensemble: str
-    llm: str
-    model: str | None
-    role: Role
-    status: Status
-    cache_hit: bool = False
-    turn_type: TurnType = "ensemble"
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    reasoning_tokens: int | None = None
-    cached_prompt_tokens: int = 0
-    cache_write_tokens: int = 0
-    total_tokens: int | None = None
-    cost_usd: float | None = None
-    duration_ms: float | None = None
-    error: str | None = None
 
 
 class MetricsStore:

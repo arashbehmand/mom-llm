@@ -21,7 +21,12 @@ router = APIRouter(dependencies=[Depends(require_api_key)])
 async def chat_completions(req: ChatCompletionRequest, container: ContainerDep) -> object:
     ir = chat_request_to_ir(req)
     plan = resolve_plan(container.catalog, ir)  # MomError -> handled by exception handler
-    deps = PipelineDeps(client=container.client, clock=container.clock)
+    deps = PipelineDeps(
+        client=container.client,
+        clock=container.clock,
+        recorder=container.metrics,
+        request_id=container.ids.new_id("req"),
+    )
     frame = ChatFrame(
         id=container.ids.new_id("chatcmpl-mom"),
         created=int(container.clock.now()),

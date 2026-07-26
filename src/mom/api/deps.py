@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from mom.config.resolve import ResolvedCatalog
+from mom.domain.metrics import MetricsReader, MetricsSink
 from mom.domain.ports import Clock, IdFactory, LLMClient
 from mom.runtime.settings import Settings
 
@@ -21,6 +22,8 @@ class Container:
     client: LLMClient
     clock: Clock
     ids: IdFactory
+    metrics: MetricsSink | None = None
+    metrics_reader: MetricsReader | None = None
 
 
 def get_container(request: Request) -> Container:

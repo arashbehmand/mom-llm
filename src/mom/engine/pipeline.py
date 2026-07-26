@@ -25,6 +25,7 @@ from mom.domain.events import (
     ToolCallDelta,
     ToolCallStarted,
 )
+from mom.domain.metrics import CallMetric, MetricsSink, TurnType
 from mom.domain.ports import CallSpec, Clock, LLMClient
 from mom.domain.results import EnsembleResult, ModelOutcome, OutcomeStatus, Usage
 from mom.domain.synthesis import all_failed_message, build_synthesis_messages
@@ -35,6 +36,63 @@ from mom.engine.plan import ExecutionPlan, PlannedMember
 class PipelineDeps:
     client: LLMClient
     clock: Clock
+    recorder: MetricsSink | None = None
+    request_id: str = ""
+
+
+def _record_member(
+    deps: PipelineDeps, plan: ExecutionPlan, outcome: ModelOutcome, turn_type: TurnType
+) -> None:
+    if deps.recorder is None:
+        return
+    usage = outcome.usage
+    deps.recorder.record(
+        CallMetric(
+            request_id=deps.request_id,
+            ts=deps.clock.now(),
+            ensemble=plan.ensemble,
+            llm=outcome.llm,
+            model=outcome.model,
+            role="fanout",
+            status="ok" if outcome.ok else "error",
+            cache_hit=outcome.cached,
+            turn_type=turn_type,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            reasoning_tokens=usage.reasoning_tokens,
+            cached_prompt_tokens=usage.cached_prompt_tokens,
+            cache_write_tokens=usage.cache_write_tokens,
+            total_tokens=usage.total_tokens,
+            cost_usd=outcome.cost_usd,
+            duration_ms=outcome.duration_ms,
+            error=outcome.error,
+        )
+    )
+
+
+def _record_synth(
+    deps: PipelineDeps, plan: ExecutionPlan, usage: Usage, turn_type: TurnType
+) -> None:
+    if deps.recorder is None:
+        return
+    deps.recorder.record(
+        CallMetric(
+            request_id=deps.request_id,
+            ts=deps.clock.now(),
+            ensemble=plan.ensemble,
+            llm=plan.synth.llm_name,
+            model=plan.synth.model,
+            role="synthesis",
+            status="ok",
+            turn_type=turn_type,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            reasoning_tokens=usage.reasoning_tokens,
+            cached_prompt_tokens=usage.cached_prompt_tokens,
+            cache_write_tokens=usage.cache_write_tokens,
+            total_tokens=usage.total_tokens,
+        )
+    )
 
 
 def _coerce_finish(value: str | None) -> FinishReason:
@@ -98,6 +156,7 @@ def _synth_spec(plan: ExecutionPlan, messages: list[dict[str, object]]) -> CallS
 
 async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator[StreamEvent]:
     """Run an ensemble, emitting a typed event stream. Never raises — failures are events."""
+    turn_type: TurnType = "relay" if plan.skip_reason == "tool_continuation" else "ensemble"
     try:
         outcomes: list[ModelOutcome] = []
         if plan.skip_fanout:
@@ -108,6 +167,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             async for event in _fan_out(deps, plan):
                 if isinstance(event, MemberCompleted):
                     outcomes.append(event.outcome)
+                    _record_member(deps, plan, event.outcome, turn_type)
                 yield event
             if any(o.ok for o in outcomes):
                 synth_messages = build_synthesis_messages(
@@ -144,6 +204,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             if chunk.finish_reason:
                 finish = _coerce_finish(chunk.finish_reason)
 
+        _record_synth(deps, plan, usage, turn_type)
         total_usage = usage
         for outcome in outcomes:
             total_usage = total_usage + outcome.usage
