@@ -338,7 +338,31 @@ llms:
   plx-snrp:  { model: openrouter/perplexity/sonar-pro-search }
   plx-snrrp: { model: openrouter/perplexity/sonar-reasoning-pro }
   plx-dr:    { model: openrouter/perplexity/sonar-deep-research }
+  # Deep-research models (force-on): the browse tool + reasoning are baked in, so they always
+  # research. Perplexity above is a dedicated model; these are regular models forced into research
+  # via the OpenAI Responses web_search tool / Google grounding. Used by the drmom ensemble.
+  oai-dr:
+    model: openai/gpt-5.6-sol
+    api: responses                              # deep research runs over the Responses API
+    params:
+      tools: [{ type: web_search_preview }]     # the browse tool the model researches with
+      reasoning: { effort: medium }
+  gem-dr:
+    model: gemini/gemini-3.1-pro-preview
+    params:
+      web_search_options: { search_context_size: high }   # Google Search grounding
+      reasoning_effort: high
+  # grok-dr: BLOCKED — xAI retired live_search (-> Agent Tools API), but litellm doesn't yet accept
+  #   the new web_search tool for xai (tools[0].type must be function|live_search). Re-enable when
+  #   litellm ships it:  grok-dr: { model: xai/grok-4.5, params: { tools: [{ type: web_search }] } }
 prompts:
+  synth_research: |
+    You are the concluding model of a multi-model research ensemble. Each candidate above is an
+    independently researched answer, many carrying live web citations (source URLs). Produce one
+    comprehensive, well-structured report that reconciles the findings and flags disagreements,
+    preferring claims backed by cited sources. You MUST carry the source URLs through into your
+    report as inline markdown links next to the claims they support — a research report that drops
+    its citations is a failed answer.
   synth_default: "You are the concluding model of a multi-model ensemble. A user message\
     \ above contains several candidate responses to the user's original request, each\
     \ enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====`\
@@ -746,4 +770,14 @@ ensembles:
     synthesizer:
       llm: oai56t
       prompt: synth_default
+    show_work: inline
+  drmom:
+    description: Deep-research council — each member researches the web; the synthesizer writes one cited report.
+    members:
+    - llm: plx-dr
+    - llm: oai-dr
+    - llm: gem-dr
+    synthesizer:
+      llm: g31p-h
+      prompt: synth_research
     show_work: inline
