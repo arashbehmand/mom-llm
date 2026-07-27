@@ -59,6 +59,12 @@ async def test_openai_models_rich_metadata():
     assert mom["supports_vision"] is True  # `a` is vision-capable (only `b` is not)
     assert mom["members"] == ["a", "b"]
     assert mom["remote_mcp"] is False
+    # Flat booleans some OpenAI-compatible clients (e.g. lobe-chat) read directly off the list
+    # entry instead of the nested `mom` block.
+    assert model["search"] is True
+    assert model["vision"] is True
+    assert model["functionCall"] == mom["supports_tools"]
+    assert model["reasoning"] == mom["supports_reasoning"]
 
 
 async def test_get_single_model():

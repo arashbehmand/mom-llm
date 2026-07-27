@@ -8,15 +8,22 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from mom.api.auth import require_api_key
 from mom.api.deps import ContainerDep
 from mom.api.encoders.chat import ChatFrame, build_completion, encode_sse, resolve_stream_profile
-from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id
+from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id, response_headers
 from mom.api.schemas.openai_chat import ChatCompletionRequest
 from mom.api.sse import with_heartbeat
 from mom.api.translate import chat_request_to_ir
+from mom.domain.request import ToolChoice
 from mom.engine.pipeline import PipelineDeps, collect, run_ensemble
 from mom.engine.plan import resolve_plan
+from mom.runtime.logging import get_logger
 
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
+logger = get_logger("mom.api.chat")
+
+
+def _tool_choice_repr(choice: ToolChoice) -> str:
+    return choice if isinstance(choice, str) else f"function:{choice.name}"
 
 
 @router.post("/chat/completions")
@@ -26,7 +33,18 @@ async def chat_completions(
     ir = chat_request_to_ir(req)
     plan = resolve_plan(container.catalog, ir)  # MomError -> handled by exception handler
     request_id = resolve_request_id(http_request.headers.get(REQUEST_ID_HEADER), container.ids)
-    headers = {"X-Request-Id": request_id}
+    logger.debug(
+        "chat request",
+        request_id=request_id,
+        model=ir.model,
+        stream=ir.stream,
+        effort=ir.effort,
+        web_search=ir.web_search,
+        tools=[t.name for t in ir.tools],
+        tool_choice=_tool_choice_repr(ir.tool_choice),
+        response_format=ir.response_format is not None,
+    )
+    headers = response_headers(http_request, request_id, container)
     deps = PipelineDeps(
         client=container.client,
         clock=container.clock,

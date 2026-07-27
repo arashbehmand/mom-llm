@@ -58,6 +58,32 @@ def _container(bus: InMemoryEventBus, *, client=None) -> Container:
     )
 
 
+AUTH_CONFIG = dedent("""
+    version: 2
+    server: { auth: bearer }
+    llms:
+      a: { model: openai/a }
+      b: { model: openai/b }
+    ensembles:
+      e:
+        members: [{ llm: a }, { llm: b }]
+        synthesizer: { llm: a, prompt: p }
+    prompts:
+      p: "synthesize"
+""")
+
+
+def _authed_container(bus: InMemoryEventBus) -> Container:
+    return Container(
+        settings=Settings(_env_file=None, MOM_API_TOKEN="secret-token"),
+        catalog=resolve_catalog(Config.model_validate(yaml.safe_load(AUTH_CONFIG))),
+        client=FakeLLM(),
+        clock=ManualClock(),
+        ids=SequentialIds(),
+        bus=bus,
+    )
+
+
 def _asgi(container: Container) -> httpx.AsyncClient:
     app = create_app(container=container)
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
@@ -193,3 +219,83 @@ async def test_progress_endpoint_without_bus_returns_empty_stream():
         resp = await client.get("/v1/progress/whatever")
     assert resp.status_code == 200
     assert resp.text == ""
+
+
+# ---------------------------------------------------------------------------------------------
+# Browser-friendly HTML page (content-negotiated on the same endpoint)
+# ---------------------------------------------------------------------------------------------
+async def test_progress_html_page_for_browser_accept():
+    bus = InMemoryEventBus()
+    async with _asgi(_container(bus)) as client:
+        resp = await client.get("/v1/progress/req-y", headers={"accept": "text/html"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "req-y" in resp.text
+    assert "EventSource" in resp.text
+
+
+async def test_progress_default_accept_still_returns_sse():
+    bus = InMemoryEventBus()
+    bus.publish("req-y", ProgressEvent(kind="completed", ensemble="e", status="stop"))
+    async with _asgi(_container(bus)) as client:
+        resp = await client.get("/v1/progress/req-y")
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+
+async def test_progress_html_page_escapes_request_id():
+    bus = InMemoryEventBus()
+    async with _asgi(_container(bus)) as client:
+        resp = await client.get(
+            "/v1/progress/<script>alert(1)</script>", headers={"accept": "text/html"}
+        )
+    assert "<script>alert" not in resp.text
+
+
+# ---------------------------------------------------------------------------------------------
+# Progress URL header + query-token auth (a plain link can't carry an Authorization header)
+# ---------------------------------------------------------------------------------------------
+async def test_chat_completions_carries_progress_url_header():
+    bus = InMemoryEventBus()
+    async with _asgi(_container(bus)) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "e", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    url = resp.headers["x-mom-progress-url"]
+    assert url.endswith(f"/v1/progress/{resp.headers['x-request-id']}")
+
+
+async def test_progress_url_header_carries_token_when_auth_enabled():
+    bus = InMemoryEventBus()
+    async with _asgi(_authed_container(bus)) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "e", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"authorization": "Bearer secret-token"},
+        )
+    url = resp.headers["x-mom-progress-url"]
+    assert "token=secret-token" in url
+
+
+async def test_progress_query_token_auth():
+    bus = InMemoryEventBus()
+    for event in (
+        ProgressEvent(kind="fanout_started", ensemble="e", members_total=2),
+        ProgressEvent(kind="completed", ensemble="e", status="stop"),
+    ):
+        bus.publish("req-secure", event)
+
+    async with _asgi(_authed_container(bus)) as client:
+        denied = await client.get("/v1/progress/req-secure")
+        assert denied.status_code == 401
+
+        wrong = await client.get("/v1/progress/req-secure", params={"token": "nope"})
+        assert wrong.status_code == 401
+
+        via_header = await client.get(
+            "/v1/progress/req-secure", headers={"authorization": "Bearer secret-token"}
+        )
+        assert via_header.status_code == 200
+
+        via_query = await client.get("/v1/progress/req-secure", params={"token": "secret-token"})
+        assert via_query.status_code == 200

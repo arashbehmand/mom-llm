@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from mom.api.auth import require_api_key
 from mom.api.deps import ContainerDep
 from mom.api.encoders.responses import build_response, encode_sse
-from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id
+from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id, response_headers
 from mom.api.schemas.responses import ResponsesRequest
 from mom.engine.pipeline import PipelineDeps, collect, run_ensemble
 from mom.engine.plan import resolve_plan
@@ -26,7 +26,7 @@ async def responses(
     ir = responses_request_to_ir(req, stream=req.stream)
     plan = resolve_plan(container.catalog, ir)
     request_id = resolve_request_id(http_request.headers.get(REQUEST_ID_HEADER), container.ids)
-    headers = {"X-Request-Id": request_id}
+    headers = response_headers(http_request, request_id, container)
     deps = PipelineDeps(
         client=container.client,
         clock=container.clock,

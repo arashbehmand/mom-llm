@@ -55,6 +55,12 @@ def _openai_model(card: ModelCard, created: int) -> dict[str, Any]:
         },
         "supported_parameters": _supported_params(card),
         "reasoning_effort_levels": list(card.effort_levels),
+        # Flat capability booleans some OpenAI-compatible clients (e.g. lobe-chat) read directly
+        # off each /models list entry instead of a nested vendor block.
+        "functionCall": card.supports_tools,
+        "vision": card.supports_vision,
+        "reasoning": card.supports_reasoning,
+        "search": card.supports_web_search,
         "mom": {
             "members": list(card.members),
             "synthesizer": card.synthesizer,
