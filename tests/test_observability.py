@@ -28,6 +28,14 @@ class _Generation:
     def __init__(self) -> None:
         self.updates: list[dict[str, Any]] = []
         self.ended = False
+        self.start_calls: list[dict[str, Any]] = []
+        self.children: list[_Generation] = []
+
+    def start_observation(self, **kwargs: Any) -> _Generation:
+        self.start_calls.append(kwargs)
+        child = _Generation()
+        self.children.append(child)
+        return child
 
     def update(self, **kwargs: Any) -> None:
         self.updates.append(kwargs)
@@ -105,20 +113,41 @@ def test_noop_tracer_is_inert() -> None:
 def test_observe_records_generation_with_usage_details() -> None:
     client = _StubClient()
     tracer = LangfuseTracer(client)
-    _observe(tracer)
+    _observe(tracer)  # role="fanout"
 
-    (start,) = client.start_calls
-    assert start["as_type"] == "generation"
-    assert start["name"] == "fanout:member-a"
-    assert start["model"] == "openai/gpt-x"
-    assert start["trace_context"] == {"trace_id": "trace-123"}
-    assert start["metadata"]["ensemble"] == "panel"
-    assert start["metadata"]["cached"] is False
+    # the client creates ONE root span named after the ensemble (this becomes the trace name)
+    (root_start,) = client.start_calls
+    assert root_start["as_type"] == "span"
+    assert root_start["name"] == "panel"
+    assert root_start["trace_context"] == {"trace_id": "trace-123"}
 
-    assert client.generation.ended is True
-    output_update = client.generation.updates[0]
+    # the generation is nested UNDER the root span
+    root = client.generation
+    (gen_start,) = root.start_calls
+    assert gen_start["as_type"] == "generation"
+    assert gen_start["name"] == "fanout:member-a"
+    assert gen_start["model"] == "openai/gpt-x"
+    assert gen_start["metadata"]["ensemble"] == "panel"
+    assert gen_start["metadata"]["cached"] is False
+
+    gen = root.children[0]
+    assert gen.ended is True
+    output_update = gen.updates[0]
     assert output_update["output"] == "the answer"
     assert output_update["usage_details"] == {"input": 10, "output": 5, "cache_read": 3}
+    assert root.ended is False  # a fan-out call does NOT close the ensemble root
+
+
+def test_synthesis_closes_ensemble_root_span() -> None:
+    client = _StubClient()
+    tracer = LangfuseTracer(client)
+    _observe(tracer, role="synthesis", llm="concluder")
+
+    root = client.generation
+    assert client.start_calls[0]["name"] == "panel"  # trace named after the ensemble, not the synth
+    assert root.start_calls[0]["name"] == "synthesis:concluder"  # synth generation nests under it
+    assert root.ended is True  # the concluding call closes the root
+    assert root.updates[-1]["output"] == "the answer"  # root output = the final answer
 
 
 def test_observe_marks_error_level_when_error_present() -> None:
@@ -126,10 +155,11 @@ def test_observe_marks_error_level_when_error_present() -> None:
     tracer = LangfuseTracer(client)
     _observe(tracer, error="boom", cached=True)
 
-    assert client.start_calls[0]["metadata"]["cached"] is True
-    error_update = next(u for u in client.generation.updates if u.get("level") == "ERROR")
+    gen = client.generation.children[0]
+    assert client.generation.start_calls[0]["metadata"]["cached"] is True
+    error_update = next(u for u in gen.updates if u.get("level") == "ERROR")
     assert error_update["status_message"] == "boom"
-    assert client.generation.ended is True
+    assert gen.ended is True
 
 
 def test_observe_never_raises_when_client_fails() -> None:

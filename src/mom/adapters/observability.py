@@ -2,14 +2,16 @@
 
 Tracing is fire-and-forget: it never raises into the request path, and it is a no-op when the
 backend is disabled or misconfigured. Langfuse groups observations per request via a deterministic
-trace id derived from the request id; OTel emits one span per LLM call following the GenAI
-semantic conventions. ``langfuse`` and ``opentelemetry`` are optional dependencies imported lazily,
-so this module imports (and ``NoopTracer`` runs) without either installed.
+trace id derived from the request id, and nests each call's generation under one root span named
+after the ensemble (so the trace reads ``bmom``, not ``synthesis:...``); OTel emits one span per
+LLM call following the GenAI semantic conventions. ``langfuse`` and ``opentelemetry`` are optional
+dependencies imported lazily, so this module imports (and ``NoopTracer`` runs) without either.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+import contextlib
 import hashlib
 import time
 from typing import Any
@@ -49,6 +51,9 @@ class LangfuseTracer:
 
     def __init__(self, client: Any) -> None:
         self._client = client
+        # trace_id -> the ensemble-named root span each request's generations nest under. Created
+        # on a request's first observed call, closed when its synthesis call is observed.
+        self._roots: dict[str, Any] = {}
 
     @classmethod
     def create(cls, *, public_key: str, secret_key: str, host: str) -> LangfuseTracer | None:
@@ -67,6 +72,32 @@ class LangfuseTracer:
         except Exception:
             return hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:32]
 
+    def _root_span(self, trace_id: str, ensemble: str, messages: list[dict[str, Any]]) -> Any:
+        """The ensemble-named root span for this trace; its name becomes the trace name."""
+        root = self._roots.get(trace_id)
+        if root is None:
+            self._roots[trace_id] = root = self._start_root(trace_id, ensemble, messages)
+        return root
+
+    def _start_root(self, trace_id: str, ensemble: str, messages: list[dict[str, Any]]) -> Any:
+        kwargs: dict[str, Any] = {
+            "trace_context": {"trace_id": trace_id},
+            "as_type": "span",
+            "name": ensemble,
+            "input": messages,
+        }
+        # Sever any ambient OTel span (left current by a prior request's generation) so the root
+        # has no stale cross-request parent — a true root of its own trace.
+        try:
+            from opentelemetry import context as otel_context
+        except ImportError:
+            return self._client.start_observation(**kwargs)
+        token = otel_context.attach(otel_context.Context())
+        try:
+            return self._client.start_observation(**kwargs)
+        finally:
+            otel_context.detach(token)
+
     def observe(
         self,
         *,
@@ -83,8 +114,9 @@ class LangfuseTracer:
         error: str | None = None,
     ) -> None:
         try:
-            generation = self._client.start_observation(
-                trace_context={"trace_id": self._trace_id(request_id)},
+            trace_id = self._trace_id(request_id)
+            root = self._root_span(trace_id, ensemble, messages)
+            generation = root.start_observation(  # nest under the ensemble root, not the trace
                 as_type="generation",
                 name=f"{role}:{llm}",
                 model=model,
@@ -107,11 +139,21 @@ class LangfuseTracer:
             if error:
                 generation.update(level="ERROR", status_message=error)
             generation.end()
+            if role == "synthesis":  # the concluding call closes the ensemble root span
+                closing = self._roots.pop(trace_id, None)
+                if closing is not None:
+                    closing.update(output=output)
+                    closing.end()
         except Exception:
             logger.debug("langfuse observe failed", exc_info=True)
 
     def flush(self) -> None:
         try:
+            # close any request whose synthesis was never observed (disconnect / all-failed)
+            for root in list(self._roots.values()):
+                with contextlib.suppress(Exception):
+                    root.end()
+            self._roots.clear()
             self._client.flush()
         except Exception:
             logger.debug("langfuse flush failed", exc_info=True)
