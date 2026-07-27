@@ -1,7 +1,6 @@
 .claude
 .serena
 .vscode
-config.yaml
 *.db
 data/
 scripts/

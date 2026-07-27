@@ -1,0 +1,749 @@
+# yaml-language-server: $schema=./schema/mom-config.schema.json
+#
+# MoM v2 configuration — the owner's real setup. No secrets: only the NAMES of the environment
+# variables that hold them appear here.
+#
+# Online search is REQUEST-TRIGGERED for models that can toggle it (a `search:` block activates
+# only when the client sends web_search) — no always-on ":online" variants. Perplexity Sonar is
+# the exception: it is inherently online (no offline variant), so it carries no `search:` block.
+version: 2
+defaults:
+  call:
+    timeout: 20m
+    retries: 3
+    retry_backoff: 2s
+cache:
+  enabled: true
+observability:
+  langfuse:
+    enabled: true
+llms:
+  oai56t:
+    model: openai/gpt-5.6-terra
+  oai56t-l:
+    model: openai/gpt-5.6-terra
+    params:
+      reasoning_effort: low
+  oai56t-m:
+    model: openai/gpt-5.6-terra
+    params:
+      reasoning_effort: medium
+  oai56t-h:
+    model: openai/gpt-5.6-terra
+    params:
+      reasoning_effort: high
+  oai56s:
+    model: openai/gpt-5.6-sol
+  oai56s-n:
+    model: openai/gpt-5.6-sol
+    params:
+      reasoning_effort: none
+  oai56s-l:
+    model: openai/gpt-5.6-sol
+    params:
+      reasoning_effort: low
+  oai56s-m:
+    model: openai/gpt-5.6-sol
+    params:
+      reasoning_effort: medium
+  oai56s-h:
+    model: openai/gpt-5.6-sol
+    params:
+      reasoning_effort: high
+  oai56s-xh:
+    model: openai/gpt-5.6-sol
+    params:
+      reasoning_effort: xhigh
+  oai56s-p:
+    model: openai/gpt-5.6-sol
+    api: responses
+    params:
+      reasoning:
+        effort: max
+        mode: pro
+  oai56l:
+    model: openai/gpt-5.6-luna
+  oai53cdx:
+    model: openai/gpt-5.3-codex
+  oai53cdx-m:
+    model: openai/gpt-5.3-codex
+    params:
+      reasoning_effort: medium
+  oai53cdx-h:
+    model: openai/gpt-5.3-codex
+    params:
+      reasoning_effort: high
+  g36f:
+    model: gemini/gemini-3.6-flash
+  g36f-mi:
+    model: gemini/gemini-3.6-flash
+    params:
+      reasoning_effort: minimal
+  g36f-l:
+    model: gemini/gemini-3.6-flash
+    params:
+      reasoning_effort: low
+  g36f-m:
+    model: gemini/gemini-3.6-flash
+    params:
+      reasoning_effort: medium
+  g36f-h:
+    model: gemini/gemini-3.6-flash
+    params:
+      reasoning_effort: high
+  g31p:
+    model: gemini/gemini-3.1-pro-preview
+  g31p-l:
+    model: gemini/gemini-3.1-pro-preview
+    params:
+      reasoning_effort: low
+  g31p-h:
+    model: gemini/gemini-3.1-pro-preview
+    params:
+      reasoning_effort: high
+  g35fl:
+    model: gemini/gemini-3.5-flash-lite
+  g35fl-mi:
+    model: gemini/gemini-3.5-flash-lite
+    params:
+      reasoning_effort: minimal
+  g35fl-l:
+    model: gemini/gemini-3.5-flash-lite
+    params:
+      reasoning_effort: low
+  g35fl-m:
+    model: gemini/gemini-3.5-flash-lite
+    params:
+      reasoning_effort: medium
+  g35fl-h:
+    model: gemini/gemini-3.5-flash-lite
+    params:
+      reasoning_effort: high
+  cl5st:
+    model: anthropic/claude-sonnet-5
+  cl5st-l:
+    model: anthropic/claude-sonnet-5
+    params:
+      reasoning_effort: low
+      thinking:
+        type: adaptive
+  cl5st-m:
+    model: anthropic/claude-sonnet-5
+    params:
+      reasoning_effort: medium
+      thinking:
+        type: adaptive
+  cl5st-h:
+    model: anthropic/claude-sonnet-5
+    params:
+      reasoning_effort: high
+      thinking:
+        type: adaptive
+  cl45hk:
+    model: anthropic/claude-haiku-4-5-20251001
+  cl45hk-m:
+    model: anthropic/claude-haiku-4-5-20251001
+    params:
+      thinking:
+        type: enabled
+        budget_tokens: 4096
+  cl48op:
+    model: anthropic/claude-opus-4-8
+  cl48op-l:
+    model: anthropic/claude-opus-4-8
+    params:
+      reasoning_effort: low
+      thinking:
+        type: adaptive
+  cl48op-m:
+    model: anthropic/claude-opus-4-8
+    params:
+      reasoning_effort: medium
+      thinking:
+        type: adaptive
+  cl48op-h:
+    model: anthropic/claude-opus-4-8
+    params:
+      reasoning_effort: high
+      thinking:
+        type: adaptive
+  cl48op-am:
+    model: anthropic/claude-opus-4-8
+    params:
+      reasoning_effort: max
+      thinking:
+        type: adaptive
+  cl5f:
+    model: anthropic/claude-fable-5
+  cl5f-l:
+    model: anthropic/claude-fable-5
+    params:
+      reasoning_effort: low
+      thinking:
+        type: adaptive
+  cl5f-m:
+    model: anthropic/claude-fable-5
+    params:
+      reasoning_effort: medium
+      thinking:
+        type: adaptive
+  cl5f-h:
+    model: anthropic/claude-fable-5
+    params:
+      reasoning_effort: high
+      thinking:
+        type: adaptive
+  cl5f-am:
+    model: anthropic/claude-fable-5
+    params:
+      reasoning_effort: max
+      thinking:
+        type: adaptive
+  grok420ma:
+    model: xai/grok-4.20-multi-agent
+    api: responses
+  grok45:
+    model: xai/grok-4.5
+  grok45-l:
+    model: xai/grok-4.5
+    params:
+      reasoning_effort: low
+  grok45-m:
+    model: xai/grok-4.5
+    params:
+      reasoning_effort: medium
+  grok45-h:
+    model: xai/grok-4.5
+    params:
+      reasoning_effort: high
+  grokbuild:
+    model: openrouter/x-ai/grok-build-0.1
+  dsv4:
+    model: openrouter/deepseek/deepseek-v4-pro
+  dsv4-f:
+    model: openrouter/deepseek/deepseek-v4-flash
+  codestral:
+    model: mistral/codestral-2508
+  qwn37max:
+    model: openrouter/qwen/qwen3.7-max
+  k3:
+    model: openrouter/moonshotai/kimi-k3
+    search:                                # request-triggered online: OpenRouter web plugin,
+      extra_body:                          # merged ONLY when the client asks for web_search
+        plugins:
+          - id: web
+  k3-l:
+    model: openrouter/moonshotai/kimi-k3
+    params:
+      reasoning:
+        effort: low
+  k3-h:
+    model: openrouter/moonshotai/kimi-k3
+    params:
+      reasoning:
+        effort: high
+  k3-am:
+    model: openrouter/moonshotai/kimi-k3
+    params:
+      reasoning:
+        effort: max
+  k27code:
+    model: openrouter/moonshotai/kimi-k2.7-code
+  muse11:
+    model: openrouter/meta/muse-spark-1.1
+    proxy_url_env: MUSE_SPARK_PROXY_URL
+  muse11-mi:
+    model: openrouter/meta/muse-spark-1.1
+    proxy_url_env: MUSE_SPARK_PROXY_URL
+    params:
+      reasoning:
+        effort: minimal
+  muse11-l:
+    model: openrouter/meta/muse-spark-1.1
+    proxy_url_env: MUSE_SPARK_PROXY_URL
+    params:
+      reasoning:
+        effort: low
+  muse11-m:
+    model: openrouter/meta/muse-spark-1.1
+    proxy_url_env: MUSE_SPARK_PROXY_URL
+    params:
+      reasoning:
+        effort: medium
+  muse11-h:
+    model: openrouter/meta/muse-spark-1.1
+    proxy_url_env: MUSE_SPARK_PROXY_URL
+    params:
+      reasoning:
+        effort: high
+  muse11-xh:
+    model: openrouter/meta/muse-spark-1.1
+    proxy_url_env: MUSE_SPARK_PROXY_URL
+    params:
+      reasoning:
+        effort: xhigh
+  ink:
+    model: openrouter/thinkingmachines/inkling
+  ink-n:
+    model: openrouter/thinkingmachines/inkling
+    params:
+      reasoning:
+        effort: none
+  ink-mi:
+    model: openrouter/thinkingmachines/inkling
+    params:
+      reasoning:
+        effort: minimal
+  ink-l:
+    model: openrouter/thinkingmachines/inkling
+    params:
+      reasoning:
+        effort: low
+  ink-m:
+    model: openrouter/thinkingmachines/inkling
+    params:
+      reasoning:
+        effort: medium
+  ink-h:
+    model: openrouter/thinkingmachines/inkling
+    params:
+      reasoning:
+        effort: high
+  ink-am:
+    model: openrouter/thinkingmachines/inkling
+    params:
+      reasoning:
+        effort: max
+  nem3u:
+    model: openrouter/nvidia/nemotron-3-ultra-550b-a55b
+    params:
+      reasoning:
+        enabled: true
+  glm52:
+    model: openrouter/z-ai/glm-5.2
+  ernie45t:
+    model: openrouter/baidu/ernie-4.5-300b-a47b
+  m3:
+    model: openrouter/minimax/minimax-m3
+  mimo25:
+    model: openrouter/xiaomi/mimo-v2.5-pro:nitro
+  rsynth:
+    model: openai/gpt-5.6-sol
+    api: responses
+    params:
+      reasoning:
+        effort: low
+  # Perplexity Sonar: inherently online — no offline variant, so no `search:` block / request
+  # toggle applies (they always search). Available for ad-hoc use, e.g. via mom-debug.
+  plx-snrp:  { model: openrouter/perplexity/sonar-pro-search }
+  plx-snrrp: { model: openrouter/perplexity/sonar-reasoning-pro }
+  plx-dr:    { model: openrouter/perplexity/sonar-deep-research }
+prompts:
+  synth_default: "You are the concluding model of a multi-model ensemble. A user message\
+    \ above contains several candidate responses to the user's original request, each\
+    \ enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====`\
+    \ markers, where N is the total count stated in that message. The candidates were\
+    \ produced independently by different models; they are not your own prior output.\
+    \ Your job is to produce the one answer the user actually receives.\n\n1. Read\
+    \ every candidate with an open mind and a critical lens:\n   - The models behind\
+    \ the candidates are not equally capable and none is authoritative, yet any of\
+    \ them \u2014 including the weakest \u2014 may contribute the single best point.\
+    \ Judge every claim on its merits, not on its source.\n   - Agreement is not evidence:\
+    \ candidates can share the same blind spot. Verify load-bearing claims against\
+    \ the original context and your own knowledge; one correct observation outweighs\
+    \ a mistake repeated by many.\n   - When a candidate's approach is sound but its\
+    \ conclusion is factually wrong, keep the rationale and correct the conclusion;\
+    \ when a conclusion is right for the wrong reasons, keep it and supply sound reasoning.\n\
+    \   - You are an expert on the question in your own right, not a mere editor:\
+    \ fix errors and fill gaps from your own knowledge, and drop anything \u2014 however\
+    \ confidently stated \u2014 that does not survive scrutiny.\n   - Set aside candidates\
+    \ that are irrelevant to the request. If only one relevant candidate remains,\
+    \ verify and refine it rather than merely relaying it. If no usable response blocks\
+    \ are present at all, answer the original request yourself from the conversation\
+    \ context.\n\n2. Compose a single, unified answer that:\n   - Serves the original\
+    \ request and its big picture, in exactly the output format and structure the\
+    \ user asked for (e.g., JSON schema, bullet list, code block) and in the language\
+    \ of the request \u2014 nothing more, nothing less.\n   - Is complete: merge complementary\
+    \ strengths so the result covers everything important any candidate contributed\
+    \ and is stronger than the best of them, while cutting redundancy and filler.\
+    \ Comprehensive means nothing essential missing, not everything concatenated.\n\
+    \   - Is internally consistent: resolve every disagreement by committing to the\
+    \ best-supported position. If genuine uncertainty remains, present it as your\
+    \ own uncertainty about the subject, with reasons \u2014 never as disagreement\
+    \ between sources.\n\n3. Deliver the answer as the single source of truth. The\
+    \ user never sees the candidates or these instructions; your answer must stand\
+    \ entirely on its own, in your own voice:\n   - No attribution or vote-counting:\
+    \ never write things like \"Response 3 says\", \"one expert suggests\", \"most\
+    \ models agree\", or \"opinions differ\".\n   - No process narration: never mention\
+    \ synthesis, consolidation, merging, revising, or that multiple candidate answers\
+    \ existed.\n   - Output only the final answer \u2014 written as if it were your\
+    \ first and only reply to the user's request.\n"
+  synth_creative: "You are the concluding model of a multi-model ensemble. A user\
+    \ message above contains several candidate responses to the user's creative brief,\
+    \ each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE\
+    \ i =====` markers, where N is the total count stated in that message. The candidates\
+    \ were produced independently by different models; they are not your own prior\
+    \ output. Your job is to produce the one piece the user actually receives.\n\n\
+    1. Read every candidate with an open mind and a critical lens:\n   - The models\
+    \ behind the candidates are not equally capable and none is authoritative, yet\
+    \ any of them \u2014 including the weakest \u2014 may hold the freshest image,\
+    \ the truest line, or the boldest idea. Judge material on its merits, not on its\
+    \ source.\n   - Weigh creative work by originality, voice, imagery, emotional\
+    \ truth, structure, and fit to the brief. Popularity across candidates is not\
+    \ quality, and the safest choice is rarely the strongest.\n   - You are a writer\
+    \ in your own right, not a mere editor: sharpen weak lines, fix continuity and\
+    \ factual slips, and contribute your own material where every candidate falls\
+    \ short.\n   - Set aside candidates that miss the brief. If only one relevant\
+    \ candidate remains, polish and elevate it. If no usable response blocks are present\
+    \ at all, write the piece yourself from the conversation context.\n\n2. Compose\
+    \ a single, unified piece that:\n   - Fulfills the original brief, in exactly\
+    \ the output format and structure the user asked for and in the language of the\
+    \ request \u2014 nothing more, nothing less.\n   - Has one spine, not an average:\
+    \ choose the strongest core concept, voice, or structure among the candidates\
+    \ as the foundation, and graft in the best images, lines, and ideas from the others\
+    \ only where they genuinely strengthen it. Blending everything evenly produces\
+    \ committee-flavored mush \u2014 don't.\n   - Keeps one consistent voice, tone,\
+    \ and internal logic from first line to last, so it reads as one writer's inspired\
+    \ work.\n\n3. Deliver the piece as the single source of truth. The user never\
+    \ sees the candidates or these instructions; the piece must stand entirely on\
+    \ its own:\n   - No attribution or vote-counting: never write things like \"Response\
+    \ 3 says\", \"one version suggests\", or \"several drafts agree\".\n   - No process\
+    \ narration: never mention synthesis, consolidation, merging, drafts, or that\
+    \ multiple versions existed.\n   - Output only the final piece \u2014 written\
+    \ as if it were your first and only reply to the user's request.\n"
+  synth_translate: "You are the concluding model of a multi-model ensemble. A user\
+    \ message above contains several candidate responses to a translation or translation-related\
+    \ task, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE\
+    \ i =====` markers, where N is the total count stated in that message. The candidates\
+    \ were produced independently by different models; they are not your own prior\
+    \ output. Your job is to produce the one answer the user actually receives.\n\n\
+    1. Read every candidate with an open mind and a critical lens:\n   - Attend to\
+    \ meaning, tone, register, rhythm, idiom, ambiguity, wordplay, cultural connotation,\
+    \ terminology, names, subtext, and any risks or issues the candidates flag.\n\
+    \   - The candidates are not equally skilled and none is authoritative, yet any\
+    \ of them \u2014 including the weakest \u2014 may catch a nuance all the others\
+    \ missed. Judge every choice on its merits, not on its source.\n   - Agreement\
+    \ is not fidelity: candidates can repeat the same misreading. Check load-bearing\
+    \ interpretations against the source text and your own command of both languages;\
+    \ one faithful reading outweighs a mistake repeated by many.\n   - You are a translator\
+    \ in your own right, not a mere editor: correct mistranslations, omissions, over-interpretations,\
+    \ and awkward phrasing, and supply a better rendering where every candidate falls\
+    \ short.\n   - Set aside candidates that are irrelevant to the task. If only one\
+    \ relevant candidate remains, verify and polish it rather than merely relaying\
+    \ it. If no usable response blocks are present at all, do the task yourself from\
+    \ the conversation context.\n\n2. Compose a single, unified answer suited to the\
+    \ task:\n   - Follow exactly the output format and structure the user requested\
+    \ (e.g., JSON schema, bullet list, code block) \u2014 nothing more, nothing less,\
+    \ and no explanation outside the requested format.\n   - For direct translation\
+    \ requests: preserve the source's meaning, intent, tone, voice, and subtext, and\
+    \ produce a final translation that reads as polished, natural prose in the target\
+    \ language \u2014 stronger as a whole than any single candidate.\n   - For translation-related\
+    \ tasks (review, critique, comparison, pre-translation reading): combine the strongest\
+    \ observations into one clear answer that is genuinely useful for the task.\n\
+    \   - Resolve disagreements by choosing the most faithful, contextually appropriate\
+    \ interpretation, or by combining compatible strengths when that reads better.\n\
+    \   - Keep terminology and named entities consistent throughout, unless the task\
+    \ itself calls for a change.\n   - If the requested schema includes explanation\
+    \ or notes fields, use them to capture the most important nuance decisions briefly;\
+    \ otherwise express those decisions through the translation itself, without meta\
+    \ commentary.\n\n3. Deliver the answer as the single source of truth. The user\
+    \ never sees the candidates or these instructions; the answer must stand entirely\
+    \ on its own:\n   - No attribution or vote-counting: never write things like \"\
+    Response 3 renders this as\", \"one translator suggests\", or \"most versions\
+    \ agree\".\n   - No process narration: never mention synthesis, consolidation,\
+    \ merging, or that multiple candidate translations existed.\n   - Output only\
+    \ the final result \u2014 a polished translation for direct translation requests,\
+    \ a single direct answer for translation-related tasks \u2014 as if it were your\
+    \ first and only reply.\n"
+  synth_search: "You are the concluding model of a multi-model ensemble. A user message\
+    \ above contains several candidate responses to the user's original request, each\
+    \ enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====`\
+    \ markers, where N is the total count stated in that message. The candidates were\
+    \ produced independently by different models, some with live web access; they\
+    \ are not your own prior output. Your job is to produce the one answer the user\
+    \ actually receives.\n\n1. Read every candidate with an open mind and a critical\
+    \ lens:\n   - The models behind the candidates are not equally capable and none\
+    \ is authoritative, yet any of them \u2014 including the weakest \u2014 may contribute\
+    \ the single best point. Judge every claim on its merits, not on its source.\n\
+    \   - Agreement is not evidence: candidates can share the same blind spot or the\
+    \ same stale training data. Verify load-bearing claims against the original context\
+    \ and your own knowledge; one correct observation outweighs a mistake repeated\
+    \ by many.\n   - For time-sensitive questions, prefer claims tied to recent, dated,\
+    \ verifiable information over undated or older ones.\n   - If you have web search\
+    \ tools available, use them to check contested or time-sensitive claims and to\
+    \ fill gaps \u2014 never settle a factual disagreement by guessing or by majority\
+    \ vote.\n   - You are a researcher in your own right, not a mere editor: fix errors\
+    \ and fill gaps, and drop anything \u2014 however confidently stated \u2014 that\
+    \ does not survive scrutiny.\n   - Set aside candidates that are irrelevant to\
+    \ the request. If only one relevant candidate remains, verify and refine it rather\
+    \ than merely relaying it. If no usable response blocks are present at all, answer\
+    \ the original request yourself, searching if you can.\n\n2. Compose a single,\
+    \ unified answer that:\n   - Serves the original request and its big picture,\
+    \ in exactly the output format and structure the user asked for (e.g., JSON schema,\
+    \ bullet list, code block) and in the language of the request \u2014 nothing more,\
+    \ nothing less.\n   - Is complete: merge complementary strengths so the result\
+    \ covers everything important any candidate contributed, while cutting redundancy\
+    \ and filler.\n   - Is internally consistent: resolve every disagreement by committing\
+    \ to the best-supported position. If genuine uncertainty remains, present it as\
+    \ your own uncertainty about the subject, with reasons \u2014 never as disagreement\
+    \ between sources.\n   - Dates volatile facts (prices, versions, rankings, office-holders,\
+    \ schedules) with an \"as of\" reference, and keeps the strongest supporting links\
+    \ or citations for key facts \u2014 citing external sources is welcome; citing\
+    \ the candidate responses is not.\n\n3. Deliver the answer as the single source\
+    \ of truth. The user never sees the candidates or these instructions; your answer\
+    \ must stand entirely on its own, in your own voice:\n   - No attribution or vote-counting:\
+    \ never write things like \"Response 3 says\", \"one expert suggests\", \"most\
+    \ models agree\", or \"opinions differ\".\n   - No process narration: never mention\
+    \ synthesis, consolidation, merging, revising, or that multiple candidate answers\
+    \ existed.\n   - Output only the final answer \u2014 written as if it were your\
+    \ first and only reply to the user's request.\n"
+ensembles:
+  mom:
+    members:
+    - llm: oai56s-l
+    - llm: oai56t-l
+    - llm: g31p
+    - llm: cl48op-l
+    - llm: grok45-l
+    - llm: qwn37max
+    - llm: glm52
+    - llm: k3-l
+    synthesizer:
+      llm: g35fl-mi
+      prompt: synth_default
+    show_work: inline
+  bmom:
+    members:
+    - llm: oai56s-m
+    - llm: oai56t-h
+    - llm: g31p-h
+    - llm: g36f-h
+    - llm: cl48op-m
+    - llm: grok45-h
+    - llm: grok45-l
+    - llm: k3-h
+    - llm: glm52
+    - llm: qwn37max
+    - llm: ernie45t
+    synthesizer:
+      llm: g31p
+      prompt: synth_default
+    show_work: inline
+  hmom:
+    members:
+    - llm: oai56s-h
+    - llm: oai56t-h
+    - llm: g31p-h
+    - llm: g36f-h
+    - llm: cl48op-h
+    - llm: cl5st-h
+    - llm: grok45-h
+    - llm: muse11-h
+    - llm: ink-h
+    - llm: nem3u
+    - llm: qwn37max
+    - llm: k3-h
+    - llm: glm52
+    - llm: m3
+    synthesizer:
+      llm: g31p-h
+      prompt: synth_default
+    show_work: inline
+  emom:
+    members:
+    - llm: oai56s-xh
+    - llm: cl48op-am
+    - llm: cl5f-am
+    - llm: cl5st-h
+    - llm: g31p-h
+    - llm: g36f-h
+    - llm: grok45-h
+    - llm: grok420ma
+    - llm: muse11-xh
+    - llm: ink-am
+    - llm: nem3u
+    - llm: k3-am
+    synthesizer:
+      llm: cl5st-h
+      prompt: synth_default
+    show_work: inline
+  mom-code:
+    members:
+    - llm: oai56s-m
+    - llm: oai53cdx-m
+    - llm: oai56t-m
+    - llm: g31p-h
+    - llm: cl48op-m
+    - llm: grok45-h
+    - llm: grokbuild
+    - llm: glm52
+    - llm: k27code
+    - llm: m3
+    - llm: mimo25
+    synthesizer:
+      llm: g31p
+      prompt: synth_default
+    show_work: inline
+  mom-creative:
+    members:
+    - llm: oai56s-m
+    - llm: g36f-h
+    - llm: cl48op-m
+    - llm: cl5st-l
+    - llm: grok45-h
+    - llm: qwn37max
+    synthesizer:
+      llm: oai56s-m
+      prompt: synth_creative
+    show_work: inline
+  ehmom-code:
+    members:
+    - llm: oai56s-h
+    - llm: oai53cdx-h
+    - llm: oai56t-h
+    - llm: g31p-h
+    - llm: cl48op-h
+    - llm: grok45-h
+    - llm: grokbuild
+    - llm: codestral
+    - llm: qwn37max
+    - llm: k27code
+    - llm: glm52
+    - llm: m3
+    synthesizer:
+      llm: cl48op-h
+      prompt: synth_default
+    show_work: inline
+  mom-cheap:
+    members:
+    - llm: oai56l
+    - llm: g35fl-mi
+    synthesizer:
+      llm: g35fl-mi
+      prompt: synth_default
+    show_work: inline
+  mom-mini:
+    members:
+    - llm: oai56l
+    - llm: g36f-m
+    - llm: cl45hk-m
+    - llm: dsv4-f
+    synthesizer:
+      llm: g36f-m
+      prompt: synth_default
+    show_work: inline
+  tmom:
+    members:
+    - llm: g36f-m
+    - llm: g35fl-m
+    - llm: oai56t-m
+    - llm: mimo25
+    synthesizer:
+      llm: g36f-h
+      prompt: synth_translate
+    show_work: inline
+  tmoml:
+    members:
+    - llm: g36f-l
+    - llm: g35fl-l
+    - llm: oai56t-l
+    synthesizer:
+      llm: g36f-m
+      prompt: synth_translate
+    show_work: inline
+  tmomh:
+    members:
+    - llm: g36f-h
+    - llm: g31p-h
+    - llm: oai56s-m
+    - llm: cl5st-m
+    synthesizer:
+      llm: cl5st-h
+      prompt: synth_translate
+    show_work: inline
+  mom-debug:
+    members:
+    - llm: oai56t
+    - llm: oai56t-l
+    - llm: oai56t-m
+    - llm: oai56t-h
+    - llm: oai56s
+    - llm: oai56s-n
+    - llm: oai56s-l
+    - llm: oai56s-m
+    - llm: oai56s-h
+    - llm: oai56s-xh
+    - llm: oai56s-p
+    - llm: oai56l
+    - llm: oai53cdx
+    - llm: oai53cdx-m
+    - llm: oai53cdx-h
+    - llm: g36f
+    - llm: g36f-mi
+    - llm: g36f-l
+    - llm: g36f-m
+    - llm: g36f-h
+    - llm: g31p
+    - llm: g31p-l
+    - llm: g31p-h
+    - llm: g35fl
+    - llm: g35fl-mi
+    - llm: g35fl-l
+    - llm: g35fl-m
+    - llm: g35fl-h
+    - llm: cl5st
+    - llm: cl5st-l
+    - llm: cl5st-m
+    - llm: cl5st-h
+    - llm: cl45hk
+    - llm: cl45hk-m
+    - llm: cl48op
+    - llm: cl48op-l
+    - llm: cl48op-m
+    - llm: cl48op-h
+    - llm: cl48op-am
+    - llm: cl5f
+    - llm: cl5f-l
+    - llm: cl5f-m
+    - llm: cl5f-h
+    - llm: cl5f-am
+    - llm: grok420ma
+    - llm: grok45
+    - llm: grok45-l
+    - llm: grok45-m
+    - llm: grok45-h
+    - llm: grokbuild
+    - llm: dsv4
+    - llm: dsv4-f
+    - llm: codestral
+    - llm: qwn37max
+    - llm: k3
+    - llm: k3-l
+    - llm: k3-h
+    - llm: k3-am
+    - llm: k27code
+    - llm: muse11
+    - llm: muse11-mi
+    - llm: muse11-l
+    - llm: muse11-m
+    - llm: muse11-h
+    - llm: muse11-xh
+    - llm: ink
+    - llm: ink-n
+    - llm: ink-mi
+    - llm: ink-l
+    - llm: ink-m
+    - llm: ink-h
+    - llm: ink-am
+    - llm: nem3u
+    - llm: glm52
+    - llm: ernie45t
+    - llm: m3
+    - llm: mimo25
+    - llm: plx-snrp
+    - llm: plx-snrrp
+    - llm: plx-dr
+    synthesizer:
+      llm: oai56t
+      prompt: synth_default
+    show_work: inline
