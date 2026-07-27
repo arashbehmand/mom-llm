@@ -10,6 +10,8 @@ version: 2
 server:
   auth: bearer            # bearer (token from MOM_API_TOKEN) | none (explicit dev opt-out)
   public_url: null        # external base URL, used to build progress links
+  stream_heartbeat: null  # e.g. 15s: SSE keepalive comment on idle, so a slow fan-out doesn't
+                          # trip a streaming client's idle read-timeout. null = off.
   cors:
     origins: []           # empty = CORS disabled; ["*"] with allow_creditals=true is rejected
     allow_credentials: false
@@ -22,6 +24,8 @@ defaults:
   fanout:
     max_concurrency: null # null = unbounded
     min_results: 1        # quorum: successful members required before synthesis
+    detach_on_disconnect: false  # true: on disconnect, let members finish + cache (retry hits
+                                 # cache -> straight to synth) instead of cancelling them
   provider_cache:
     anthropic: { enabled: true, ttl: 5m }
     openai: { prompt_cache_key: auto }

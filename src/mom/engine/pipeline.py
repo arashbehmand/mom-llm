@@ -183,7 +183,39 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
     )
 
 
-async def _fan_out(deps: PipelineDeps, plan: ExecutionPlan) -> AsyncIterator[StreamEvent]:
+# Members detached on client disconnect keep running here so they finish and cache; the strong
+# reference stops the event loop from GC-ing them, and the callback clears it when they're done.
+_DETACHED: set[asyncio.Task[ModelOutcome]] = set()
+
+
+def _detach_member(
+    task: asyncio.Task[ModelOutcome],
+    deps: PipelineDeps,
+    plan: ExecutionPlan,
+    turn_type: TurnType,
+) -> None:
+    """Let an in-flight member finish in the background (and cache) instead of cancelling it.
+
+    The request loop is gone, so record the member's metric from the completion callback — the
+    spend really happened, and a later retry that cache-hits it must not double-count as free.
+    """
+    _DETACHED.add(task)
+
+    def _done(t: asyncio.Task[ModelOutcome]) -> None:
+        _DETACHED.discard(t)
+        if t.cancelled():
+            return
+        if t.exception() is not None:
+            logger.warning("detached fan-out member errored", error=str(t.exception()))
+            return
+        _record_member(deps, plan, t.result(), turn_type)
+
+    task.add_done_callback(_done)
+
+
+async def _fan_out(
+    deps: PipelineDeps, plan: ExecutionPlan, turn_type: TurnType = "ensemble"
+) -> AsyncIterator[StreamEvent]:
     for member in plan.members:
         yield FanoutStarted(member.identity, member.spec.model)
     sem = asyncio.Semaphore(plan.max_concurrency)
@@ -210,7 +242,12 @@ async def _fan_out(deps: PipelineDeps, plan: ExecutionPlan) -> AsyncIterator[Str
     finally:
         for task in tasks:
             if not task.done():
-                task.cancel()
+                if plan.detach_on_disconnect:
+                    # finish + cache in the background (a retry hits it); its metric is recorded
+                    # from the completion callback since the request loop is gone.
+                    _detach_member(task, deps, plan, turn_type)
+                else:
+                    task.cancel()
 
 
 async def _stream_with_timeout(
@@ -308,7 +345,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                     kind="fanout_started", ensemble=plan.ensemble, members_total=members_total
                 ),
             )
-            async for event in _fan_out(deps, plan):
+            async for event in _fan_out(deps, plan, turn_type):
                 if isinstance(event, MemberCompleted):
                     outcome = event.outcome
                     outcomes.append(outcome)

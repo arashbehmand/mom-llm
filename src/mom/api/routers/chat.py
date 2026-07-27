@@ -10,6 +10,7 @@ from mom.api.deps import ContainerDep
 from mom.api.encoders.chat import ChatFrame, build_completion, encode_sse, resolve_stream_profile
 from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id
 from mom.api.schemas.openai_chat import ChatCompletionRequest
+from mom.api.sse import with_heartbeat
 from mom.api.translate import chat_request_to_ir
 from mom.engine.pipeline import PipelineDeps, collect, run_ensemble
 from mom.engine.plan import resolve_plan
@@ -51,6 +52,9 @@ async def chat_completions(
             include_usage=ir.include_usage,
             stream_profile=profile,
         )
+        heartbeat = container.catalog.config.server.stream_heartbeat
+        if heartbeat is not None:  # keepalive comments so a slow fan-out doesn't idle-timeout
+            stream = with_heartbeat(stream, heartbeat.total_seconds())
         return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
     result = await collect(run_ensemble(plan, deps))
     response = build_completion(result, frame, show_work=plan.show_work)

@@ -83,6 +83,9 @@ class ExecutionPlan:
     # Quorum: at least this many members must succeed (`ok`) before the pipeline synthesizes;
     # fewer fails with QuorumNotMet (502). 0 disables the check (the all-failed fallback runs).
     min_results: int = 1
+    # When true, in-flight members are NOT cancelled if the request is torn down (client
+    # disconnect); they finish and cache in the background so a retry of the turn hits cache.
+    detach_on_disconnect: bool = False
 
 
 def _effort_param(token: str, client_effort: str | None) -> dict[str, object]:
@@ -346,4 +349,5 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         max_concurrency=fanout.max_concurrency or 16,
         fanout_deadline=fanout.deadline.total_seconds() if fanout.deadline else None,
         min_results=fanout.min_results,
+        detach_on_disconnect=fanout.detach_on_disconnect,
     )
