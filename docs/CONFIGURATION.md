@@ -23,6 +23,26 @@ mom cache stats                        # response-cache entries / bytes / hits (
 mom cache purge --yes                  # clear the response cache
 ```
 
+### Local overlay (deployment-specific values that don't belong in the tracked config)
+
+`MOM_CONFIG_OVERLAY` (or `mom config validate/show --overlay <file>`) deep-merges a second YAML
+file over the main config at load time — for a value that's specific to *this* deployment and
+has no business sitting in a config you publish or share (e.g. `server.public_url`, your real
+domain). Keep the overlay out of git (`config.local.yaml` and `*.local.yaml` are gitignored by
+default):
+
+```bash
+cat > config.local.yaml <<'EOF'
+server:
+  public_url: https://mom.example.com
+EOF
+export MOM_CONFIG_OVERLAY=./config.local.yaml
+mom serve
+```
+
+Merge semantics are the same as `extends:` (see below): nested maps merge key-by-key, a scalar
+in the overlay replaces the base value, `null` deletes an inherited key.
+
 A minimal but complete file — `version`, `llms`, and `ensembles` are the only required keys;
 everything else has a sensible default:
 
@@ -566,6 +586,7 @@ from `MOM_`-prefixed variables; several **legacy v1 names** are still accepted a
 | Purpose | Primary variable | Legacy alias | Notes |
 | --- | --- | --- | --- |
 | Config file path | `MOM_CONFIG` | `MOM_CONFIG_PATH` | Path to the YAML catalog. |
+| Config overlay | `MOM_CONFIG_OVERLAY` | — | Optional file deep-merged over `MOM_CONFIG` — see [Local overlay](#local-overlay-deployment-specific-values-that-dont-belong-in-the-tracked-config) above. |
 | Data directory | `MOM_DATA_DIR` | — | Overrides `storage.data_dir`; metrics DB + cache. |
 | API token | `MOM_API_TOKEN` | `API_TOKEN` | The bearer token clients must present (when `auth: bearer`). |
 | Listen host / port | `MOM_HOST` / `MOM_PORT` | — | Also settable via `mom serve --host/--port`. |
