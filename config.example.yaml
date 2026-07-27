@@ -53,6 +53,13 @@ observability:
 # --------------------------------------------------------------------------------------------
 llms:
   gpt:        { model: openai/gpt-5.6-sol }
+  # `extends` in practice: a fixed-effort variant is the base plus a lean override — the model
+  # string is never repeated. This is a SEPARATE mechanism from bmom's `effort: [l, m, h]` below
+  # (one llm, a per-tier value vector, picked by the client's requested effort): use `extends` when
+  # you want a model at one FIXED effort as its own distinct, reusable identity — e.g. to reference
+  # from several ensembles, or (as `mom-debug` does in config.yaml) to expose every effort of every
+  # model side by side in one panel. Not referenced by an ensemble here; see config.yaml for scale.
+  gpt-high: { extends: gpt, params: { reasoning_effort: high } }
   claude:     { model: anthropic/claude-opus-4-8 }
   gemini:                                             # api_key_env inferred (GEMINI/GOOGLE)
     model: gemini/gemini-3.1-pro
