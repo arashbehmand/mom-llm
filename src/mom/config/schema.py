@@ -155,11 +155,10 @@ _RESERVED_PARAM_KEYS = frozenset(
 class LlmVariantConfig(_Model):
     """One entry in an llm's ``variants:`` map — expands to a sibling llm named ``<parent>-<key>``.
 
-    Sugar over ``extends``: inherits the parent's ``model``/``api``/``api_key_env``/
-    ``proxy_url_env`` unless overridden here, and deep-merges ``params``. Deliberately does NOT
-    inherit capability-ish fields (``search``/``pricing``/``capabilities``/...) — a family of
-    effort variants shouldn't silently gain the parent's web-search capability, say. Set one of
-    those explicitly on a variant in the rare case it's actually wanted.
+    Sugar over ``extends``: inherits everything from the parent unless overridden here, and
+    deep-merges ``params``. Capability fields (``search``/``pricing``/``capabilities``/...)
+    inherit too — a variant is the same model at a different effort, so what the model can do
+    travels with it.
     """
 
     model: str | None = None

@@ -155,10 +155,10 @@ def test_variants_expand_into_sibling_llms():
     assert catalog.llms["base"].params == {}  # the parent itself is untouched
 
 
-def test_variant_does_not_inherit_capability_fields():
-    # A variant of a search-capable model must NOT silently gain web search — only params (and
-    # explicit overrides) propagate. Otherwise every effort variant of an online model would
-    # accidentally become search-capable too.
+def test_variant_inherits_capability_fields():
+    # A variant is the same model at a different effort — capability fields like `search` travel
+    # with it (search is request-triggered anyway, so inheriting it just means the variant CAN
+    # search when the client asks, exactly like its parent).
     catalog = _resolve(
         """
         version: 2
@@ -173,7 +173,7 @@ def test_variant_does_not_inherit_capability_fields():
         """
     )
     assert catalog.llms["base"].search is not None
-    assert catalog.llms["base-l"].search is None
+    assert catalog.llms["base-l"].search == catalog.llms["base"].search
 
 
 def test_variant_name_collision_is_rejected():

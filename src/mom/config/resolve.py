@@ -337,9 +337,9 @@ def _expand_variants(llms: Mapping[str, LlmConfig]) -> dict[str, LlmConfig]:
     """Expand each llm's ``variants:`` map into synthetic ``<name>-<suffix>`` sibling entries.
 
     Pure sugar over ``extends``: a variant becomes ``{extends: name, params: variant.params, ...}``
-    resolved through the normal path below, so it inherits everything `extends` inherits — EXCEPT
-    the variant's own fields are limited to model/api/api_key_env/proxy_url_env/params (see
-    ``LlmVariantConfig``), so capability fields like ``search`` never propagate to a variant.
+    resolved through the normal path below, so it inherits EVERYTHING `extends` inherits —
+    including capability fields like ``search``/``pricing``: a variant is the same model at a
+    different effort, so what the model can do (and costs) travels with it.
     """
     expanded = dict(llms)
     for name, cfg in llms.items():
@@ -360,17 +360,9 @@ def _expand_variants(llms: Mapping[str, LlmConfig]) -> dict[str, LlmConfig]:
                 )
                 if v is not None
             }
-            # Explicit None (not omission) is what makes these register as "set" below, so the
-            # extends resolution overrides to None instead of inheriting the parent's value.
             expanded[child] = LlmConfig(
                 extends=name,
                 params=variant.params,
-                search=None,
-                pricing=None,
-                capabilities=None,
-                max_input_tokens=None,
-                timeout=None,
-                cache_ttl=None,
                 **overrides,
             )
     return expanded

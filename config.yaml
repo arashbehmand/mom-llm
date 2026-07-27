@@ -30,8 +30,12 @@ llms:
   # named `<base>-<key>`; `params` deep-merges with the base, other fields (model/api/api_key_env/
   # proxy_url_env) inherit unless overridden. Capability fields (search/pricing/...) never
   # propagate to a variant — see k3 below for why that matters.
+  # OpenAI search is Responses-API-only (chat completions rejects web_search_options for these
+  # models) — like grok45 below, `api: responses` makes the request-triggered search block usable.
   oai56t:
     model: openai/gpt-5.6-terra
+    api: responses
+    search: { tools: [{ type: web_search }] }
     variants:
       l: { params: { reasoning_effort: low } }
       m: { params: { reasoning_effort: medium } }
@@ -39,15 +43,17 @@ llms:
 
   oai56s:
     model: openai/gpt-5.6-sol
+    api: responses
+    search: { tools: [{ type: web_search }] }
     variants:
       n:  { params: { reasoning_effort: none } }
       l:  { params: { reasoning_effort: low } }
       m:  { params: { reasoning_effort: medium } }
       h:  { params: { reasoning_effort: high } }
       xh: { params: { reasoning_effort: xhigh } }
-      p:  { api: responses, params: { reasoning: { effort: max, mode: pro } } }
+      p:  { params: { reasoning: { effort: max, mode: pro } } }
 
-  oai56l: { model: openai/gpt-5.6-luna }
+  oai56l: { model: openai/gpt-5.6-luna, api: responses, search: { tools: [{ type: web_search }] } }
 
   oai53cdx:
     model: openai/gpt-5.3-codex
@@ -138,7 +144,7 @@ llms:
     model: openrouter/moonshotai/kimi-k3
     search:                                # request-triggered online: OpenRouter web plugin,
       extra_body:                          # merged ONLY when the client asks for web_search.
-        plugins:                           # NOT inherited by the variants below (by design).
+        plugins:                           # Inherited by the variants below (same model).
           - id: web
     variants:
       l:  { params: { reasoning: { effort: low } } }
@@ -549,6 +555,7 @@ ensembles:
     synthesizer:
       llm: g35fl-mi
       prompt: synth_default
+      search_prompt: synth_search
     show_work: inline
   mom-mini:
     description: >-
@@ -558,6 +565,7 @@ ensembles:
     synthesizer:
       llm: g36f-m
       prompt: synth_default
+      search_prompt: synth_search
     show_work: inline
   tmom:
     description: Translation Mom — a mid-effort multilingual panel for translation and language tasks.
