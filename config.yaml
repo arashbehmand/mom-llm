@@ -400,7 +400,7 @@ ensembles:
       - { llm: k3,       effort: [low, high, max] }
     synthesizer:
       llm: g35fl
-      effort: low
+      effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
     show_work: inline
@@ -424,6 +424,7 @@ ensembles:
       - qwn37max
     synthesizer:
       llm: g31p
+      effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
     show_work: inline
@@ -450,7 +451,7 @@ ensembles:
       - m3
     synthesizer:
       llm: g31p
-      effort: high
+      effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
     show_work: inline
@@ -501,6 +502,7 @@ ensembles:
       - mimo25
     synthesizer:
       llm: g31p
+      effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
     show_work: inline
@@ -535,7 +537,7 @@ ensembles:
       - m3
     synthesizer:
       llm: cl48op
-      effort: high
+      effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
     show_work: inline
