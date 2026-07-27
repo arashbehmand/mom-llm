@@ -50,6 +50,9 @@ class ServerConfig(_Model):
     auth: Literal["bearer", "none"] = "bearer"
     public_url: str | None = None
     cors: CorsConfig = Field(default_factory=CorsConfig)
+    # Emit an SSE keepalive comment (`: ...`) on the response stream whenever it goes idle this
+    # long, so a slow fan-out doesn't trip a client's idle read-timeout. null = off.
+    stream_heartbeat: Duration | None = None
 
 
 class CallDefaults(_Model):
@@ -62,6 +65,10 @@ class FanoutDefaults(_Model):
     max_concurrency: int | None = Field(default=None, ge=1)
     min_results: int = Field(default=1, ge=0)
     deadline: Duration | None = None
+    # When the client disconnects mid-fan-out, let the in-flight member calls finish (and cache) in
+    # the background instead of cancelling them — so a retry of the same turn hits cache and goes
+    # straight to synthesis. Default false keeps the zero-orphaned-spend behavior.
+    detach_on_disconnect: bool = False
 
 
 class AnthropicCache(_Model):

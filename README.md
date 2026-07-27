@@ -140,6 +140,10 @@ Also served: `GET /v1/models`, `/v1/models/{id}`, `/v1/model/info` (capability c
   `prompt_cache_key` affinity are injected automatically.
 - **aiosqlite stores** — a response cache (TTL + size-cap eviction, optional coalescing of identical
   concurrent calls) and a usage/metrics table, both on WAL SQLite with batched off-path writes.
+- **Survives slow turns** — a client that drops a long turn no longer wastes the work: SSE
+  keepalive heartbeats (`server.stream_heartbeat`) hold the connection through a slow fan-out, and
+  `fanout.detach_on_disconnect` lets in-flight members finish and cache anyway, so retrying the turn
+  hits cache and goes straight to synthesis. Default off (cancel-on-disconnect stays the safe base).
 
 ## 🎯 Advanced features
 

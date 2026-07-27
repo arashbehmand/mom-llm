@@ -7,11 +7,19 @@
 # only when the client sends web_search) — no always-on ":online" variants. Perplexity Sonar is
 # the exception: it is inherently online (no offline variant), so it carries no `search:` block.
 version: 2
+server:
+  # SSE keepalive comment whenever the stream idles this long, so a slow fan-out doesn't trip a
+  # client's idle read-timeout (lobe-chat and friends dropping long turns).
+  stream_heartbeat: 15s
 defaults:
   call:
     timeout: 20m
     retries: 3
     retry_backoff: 2s
+  fanout:
+    # On client disconnect, let in-flight members finish and cache in the background instead of
+    # cancelling them — so retrying the same turn hits cache and goes straight to the synthesizer.
+    detach_on_disconnect: true
 cache:
   enabled: true
 observability:
