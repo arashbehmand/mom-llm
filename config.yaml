@@ -57,6 +57,7 @@ llms:
 
   g36f:
     model: gemini/gemini-3.6-flash
+    search: { web_search_options: { search_context_size: high } }
     variants:
       mi: { params: { reasoning_effort: minimal } }
       l:  { params: { reasoning_effort: low } }
@@ -65,12 +66,14 @@ llms:
 
   g31p:
     model: gemini/gemini-3.1-pro-preview
+    search: { web_search_options: { search_context_size: high } }
     variants:
       l: { params: { reasoning_effort: low } }
       h: { params: { reasoning_effort: high } }
 
   g35fl:
     model: gemini/gemini-3.5-flash-lite
+    search: { web_search_options: { search_context_size: high } }
     variants:
       mi: { params: { reasoning_effort: minimal } }
       l:  { params: { reasoning_effort: low } }
@@ -79,6 +82,7 @@ llms:
 
   cl5st:
     model: anthropic/claude-sonnet-5
+    search: { web_search_options: { search_context_size: high } }
     variants:
       l: { params: { reasoning_effort: low, thinking: { type: adaptive } } }
       m: { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
@@ -86,11 +90,13 @@ llms:
 
   cl45hk:
     model: anthropic/claude-haiku-4-5-20251001
+    search: { web_search_options: { search_context_size: high } }
     variants:
       m: { params: { thinking: { type: enabled, budget_tokens: 4096 } } }
 
   cl48op:
     model: anthropic/claude-opus-4-8
+    search: { web_search_options: { search_context_size: high } }
     variants:
       l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
       m:  { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
@@ -99,25 +105,34 @@ llms:
 
   cl5f:
     model: anthropic/claude-fable-5
+    search: { web_search_options: { search_context_size: high } }
     variants:
       l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
       m:  { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
       h:  { params: { reasoning_effort: high, thinking: { type: adaptive } } }
       am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
 
-  grok420ma: { model: xai/grok-4.20-multi-agent, api: responses }
+  grok420ma: { model: xai/grok-4.20-multi-agent, api: responses, search: { tools: [{ type: web_search }] } }
   grok45:
     model: xai/grok-4.5
+    # api: responses (like grok420ma) — needed for web search: xai's chat-completions tool type
+    # is restricted to function|live_search, but the Responses API accepts tools:[{type:web_search}].
+    api: responses
+    search: { tools: [{ type: web_search }] }
     variants:
       l: { params: { reasoning_effort: low } }
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
 
-  grokbuild: { model: openrouter/x-ai/grok-build-0.1 }
-  dsv4:      { model: openrouter/deepseek/deepseek-v4-pro }
-  dsv4-f:    { model: openrouter/deepseek/deepseek-v4-flash }
+  # OpenRouter's web plugin is a PLATFORM capability, not model-specific — verified live on both
+  # k3 and qwn37max (two unrelated architectures), so it's wired on every openrouter/* model here
+  # except glm52 (independently broken — 'NoneType' object is not subscriptable even without
+  # search, a pre-existing litellm/provider issue, not a search-wiring one; fix separately).
+  grokbuild: { model: openrouter/x-ai/grok-build-0.1, search: { extra_body: { plugins: [{ id: web }] } } }
+  dsv4:      { model: openrouter/deepseek/deepseek-v4-pro, search: { extra_body: { plugins: [{ id: web }] } } }
+  dsv4-f:    { model: openrouter/deepseek/deepseek-v4-flash, search: { extra_body: { plugins: [{ id: web }] } } }
   codestral: { model: mistral/codestral-2508 }
-  qwn37max:  { model: openrouter/qwen/qwen3.7-max }
+  qwn37max:  { model: openrouter/qwen/qwen3.7-max, search: { extra_body: { plugins: [{ id: web }] } } }
 
   k3:
     model: openrouter/moonshotai/kimi-k3
@@ -130,11 +145,12 @@ llms:
       h:  { params: { reasoning: { effort: high } } }
       am: { params: { reasoning: { effort: max } } }
 
-  k27code: { model: openrouter/moonshotai/kimi-k2.7-code }
+  k27code: { model: openrouter/moonshotai/kimi-k2.7-code, search: { extra_body: { plugins: [{ id: web }] } } }
 
   muse11:
     model: openrouter/meta/muse-spark-1.1
     proxy_url_env: MUSE_SPARK_PROXY_URL
+    search: { extra_body: { plugins: [{ id: web }] } }
     variants:
       mi: { params: { reasoning: { effort: minimal } } }
       l:  { params: { reasoning: { effort: low } } }
@@ -144,6 +160,7 @@ llms:
 
   ink:
     model: openrouter/thinkingmachines/inkling
+    search: { extra_body: { plugins: [{ id: web }] } }
     variants:
       n:  { params: { reasoning: { effort: none } } }
       mi: { params: { reasoning: { effort: minimal } } }
@@ -152,10 +169,13 @@ llms:
       h:  { params: { reasoning: { effort: high } } }
       am: { params: { reasoning: { effort: max } } }
 
-  nem3u:    { model: openrouter/nvidia/nemotron-3-ultra-550b-a55b, params: { reasoning: { enabled: true } } }
-  glm52:    { model: openrouter/z-ai/glm-5.2 }
-  m3:       { model: openrouter/minimax/minimax-m3 }
-  mimo25:   { model: openrouter/xiaomi/mimo-v2.5-pro:nitro }
+  nem3u:
+    model: openrouter/nvidia/nemotron-3-ultra-550b-a55b
+    params: { reasoning: { enabled: true } }
+    search: { extra_body: { plugins: [{ id: web }] } }
+  glm52:    { model: openrouter/z-ai/glm-5.2 }  # search omitted: broken independent of search, see above
+  m3:       { model: openrouter/minimax/minimax-m3, search: { extra_body: { plugins: [{ id: web }] } } }
+  mimo25:   { model: openrouter/xiaomi/mimo-v2.5-pro:nitro, search: { extra_body: { plugins: [{ id: web }] } } }
 
   # One-off reuses of a base model for a different purpose (not an effort family) — `extends`
   # still fits these: no repeated model string, and each needs its OWN api/params shape.
@@ -177,9 +197,11 @@ llms:
   plx-snrp:  { model: openrouter/perplexity/sonar-pro-search }
   plx-snrrp: { model: openrouter/perplexity/sonar-reasoning-pro }
   plx-dr:    { model: openrouter/perplexity/sonar-deep-research }
-  # grok-dr: BLOCKED — xAI retired live_search (-> Agent Tools API), but litellm doesn't yet accept
-  #   the new web_search tool for xai (tools[0].type must be function|live_search). Re-enable when
-  #   litellm ships it:  grok-dr: { model: xai/grok-4.5, params: { tools: [{ type: web_search }] } }
+  # A dedicated grok-dr (always-on, like oai-dr/gem-dr) isn't wired: xAI retired live_search (->
+  # Agent Tools API), and litellm's xai CHAT COMPLETIONS path still only accepts tool type
+  # function|live_search, not web_search. The Responses API path works though (verified live) —
+  # see grok45 above (api: responses + search: tools:web_search), request-triggered like everyone
+  # else, so no separate always-on variant is needed here.
 
 prompts:
   synth_research: |
@@ -378,8 +400,9 @@ ensembles:
       - { llm: k3,       effort: [low, high, max] }
     synthesizer:
       llm: g35fl
-      effort: minimal
+      effort: low
       prompt: synth_default
+      search_prompt: synth_search
     show_work: inline
   bmom:
     description: >-
@@ -402,6 +425,7 @@ ensembles:
     synthesizer:
       llm: g31p
       prompt: synth_default
+      search_prompt: synth_search
     show_work: inline
   hmom:
     description: >-
@@ -428,6 +452,7 @@ ensembles:
       llm: g31p
       effort: high
       prompt: synth_default
+      search_prompt: synth_search
     show_work: inline
   emom:
     description: >-
@@ -454,6 +479,7 @@ ensembles:
       llm: cl5st
       effort: high
       prompt: synth_default
+      search_prompt: synth_search
     show_work: inline
   mom-code:
     description: >-
@@ -476,6 +502,7 @@ ensembles:
     synthesizer:
       llm: g31p
       prompt: synth_default
+      search_prompt: synth_search
     show_work: inline
   mom-creative:
     description: >-
@@ -510,6 +537,7 @@ ensembles:
       llm: cl48op
       effort: high
       prompt: synth_default
+      search_prompt: synth_search
     show_work: inline
   mom-cheap:
     description: >-
@@ -582,6 +610,7 @@ ensembles:
     synthesizer:
       llm: oai56t
       prompt: synth_default
+      search_prompt: synth_search
     show_work: inline
   drmom:
     description: >-

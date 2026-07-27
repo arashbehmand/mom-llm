@@ -89,6 +89,7 @@ class ResolvedMember:
 class ResolvedSynthesizer:
     llm: str
     prompt: str | None
+    search_prompt: str | None
     effort_by_tier: Mapping[EffortLevel, str]
 
 
@@ -299,9 +300,15 @@ def _resolve_ensemble(
         raise ConfigError(
             f"ensemble {name!r} synthesizer references unknown prompt {ens.synthesizer.prompt!r}"
         )
+    if ens.synthesizer.search_prompt is not None and ens.synthesizer.search_prompt not in prompts:
+        raise ConfigError(
+            f"ensemble {name!r} synthesizer references unknown search_prompt "
+            f"{ens.synthesizer.search_prompt!r}"
+        )
     synthesizer = ResolvedSynthesizer(
         llm=ens.synthesizer.llm,
         prompt=ens.synthesizer.prompt,
+        search_prompt=ens.synthesizer.search_prompt,
         effort_by_tier=MappingProxyType(
             _resolve_effort_matrix(ens.synthesizer.effort, tiers, f"ensemble {name!r} synthesizer")
         ),

@@ -234,6 +234,9 @@ class AllMembersConfig(_Model):
 class SynthesizerConfig(_Model):
     llm: str
     prompt: str | None = None
+    # Used instead of `prompt` only when the request has web_search=true — request-triggered,
+    # like `search:` on an llm. Falls back to `prompt` when unset or web_search is false.
+    search_prompt: str | None = None
     effort: EffortSpec | None = None
 
 

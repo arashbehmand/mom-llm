@@ -318,6 +318,7 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         anthropic_cache_ttl = "1h" if pcache.anthropic.ttl.total_seconds() > 300 else "5m"
     elif provider in {"openai", "azure", "xai"} and pcache.openai.prompt_cache_key == "auto":
         synth_params["prompt_cache_key"] = openai_prompt_cache_key(client_messages)
+    prompt_name = syn.search_prompt if (ir.web_search and syn.search_prompt) else syn.prompt
     synth = SynthPlan(
         llm_name=syn.llm,
         model=syn_llm.model,
@@ -326,7 +327,7 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         key_env_candidates=syn_llm.key_env_candidates,
         retries=retries,
         params=synth_params,
-        prompt=catalog.config.prompts.get(syn.prompt) if syn.prompt else None,
+        prompt=catalog.config.prompts.get(prompt_name) if prompt_name else None,
         timeout_seconds=_timeout_seconds(catalog, syn_llm),
         pricing=_pricing_of(syn_llm),
         anthropic_cache_ttl=anthropic_cache_ttl,
