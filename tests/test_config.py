@@ -28,8 +28,14 @@ def _yaml(text: str):
 # ---- happy path: the shipped example ---------------------------------------------------------
 def test_example_config_loads_and_resolves():
     catalog = load_config(EXAMPLE)
-    assert set(catalog.ensembles) == {"bmom", "mom-code"}
+    assert set(catalog.ensembles) == {"bmom", "mom-code", "mom-debug"}
     assert "gpt" in catalog.llms
+
+
+def test_example_mom_debug_covers_every_llm():
+    catalog = load_config(EXAMPLE)
+    debug_members = {m.identity for m in catalog.ensembles["mom-debug"].members}
+    assert debug_members == set(catalog.llms)
 
 
 def test_example_effort_matrix():
@@ -199,6 +205,63 @@ def test_bare_string_members_are_shorthand_for_llm_mapping():
     )
     members = {m.identity: m for m in catalog.ensembles["e"].members}
     assert set(members) == {"a", "b"}
+
+
+def test_members_all_expands_to_every_llm_including_variants():
+    catalog = _resolve(
+        """
+        version: 2
+        llms:
+          a: { model: x/a, variants: { l: { params: { reasoning_effort: low } } } }
+          b: { model: x/b }
+        ensembles:
+          e:
+            members: all
+            synthesizer: { llm: a }
+        """
+    )
+    assert {m.identity for m in catalog.ensembles["e"].members} == {"a", "a-l", "b"}
+
+
+def test_members_all_exclude_opts_specific_llms_out():
+    catalog = _resolve(
+        """
+        version: 2
+        llms:
+          a: { model: x/a }
+          b: { model: x/b }
+          c: { model: x/c }
+        ensembles:
+          e:
+            members: { all: true, exclude: [b] }
+            synthesizer: { llm: a }
+        """
+    )
+    assert {m.identity for m in catalog.ensembles["e"].members} == {"a", "c"}
+
+
+def test_members_all_exclude_of_unknown_llm_is_rejected():
+    with pytest.raises(ConfigError, match="unknown llm"):
+        _resolve(
+            """
+            version: 2
+            llms: { a: { model: x/y } }
+            ensembles:
+              e: { members: { all: true, exclude: [ghost] }, synthesizer: { llm: a } }
+            """
+        )
+
+
+def test_members_all_rejected_for_passthrough():
+    with pytest.raises(ConfigError, match="at most one member"):
+        _resolve(
+            """
+            version: 2
+            llms: { a: { model: x/y } }
+            ensembles:
+              e: { strategy: passthrough, members: all, synthesizer: { llm: a } }
+            """
+        )
 
 
 # ---- validation errors -----------------------------------------------------------------------

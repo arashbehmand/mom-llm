@@ -219,6 +219,18 @@ class MemberConfig(_Model):
         return self.member_as or self.llm
 
 
+class AllMembersConfig(_Model):
+    """``members: all`` (or ``{all: true, exclude: [...]}``) — every llm in the catalog (bases and
+    expanded variants alike) becomes a member, so a debug/eval panel never needs manual upkeep as
+    llms are added or removed. ``exclude`` opts specific llms out by name (e.g. slow/costly
+    special-purpose variants that don't belong in a routine debug fan-out). Expanded in
+    resolve.py, where the full catalog is known.
+    """
+
+    all: Literal[True] = True
+    exclude: list[str] = Field(default_factory=list)
+
+
 class SynthesizerConfig(_Model):
     llm: str
     prompt: str | None = None
@@ -243,7 +255,8 @@ class EnsembleConfig(_Model):
     strategy: Literal["synthesize", "passthrough"] = "synthesize"
     effort_tiers: list[Tier] | None = None
     default_tier: Tier | None = None
-    members: list[MemberConfig] = Field(default_factory=list)
+    # See AllMembersConfig for the "all"/{all: true, exclude: [...]} kitchen-sink shorthand.
+    members: AllMembersConfig | list[MemberConfig] = Field(default_factory=list)
     synthesizer: SynthesizerConfig
     show_work: Literal["off", "inline", "native"] = "off"
     tools: EnsembleToolsConfig = Field(default_factory=EnsembleToolsConfig)
@@ -263,6 +276,9 @@ class EnsembleConfig(_Model):
     @field_validator("members", mode="before")
     @classmethod
     def _coerce_bare_member_names(cls, value: object) -> object:
+        # `members: all` is shorthand for `members: {all: true}` (no exclusions).
+        if value == "all":
+            return {"all": True}
         # `members: [name, ...]` is shorthand for `members: [{llm: name}, ...]` — for a panel
         # with no per-member effort override (e.g. a debug/kitchen-sink ensemble), a flow-style
         # list of names is far more compact than one `- llm: name` mapping per line.
@@ -287,14 +303,17 @@ class EnsembleConfig(_Model):
 
         if self.strategy == "synthesize" and not self.members:
             raise ValueError("a 'synthesize' ensemble needs at least one member")
-        if self.strategy == "passthrough" and len(self.members) > 1:
+        if self.strategy == "passthrough" and (
+            isinstance(self.members, AllMembersConfig) or len(self.members) > 1
+        ):
             raise ValueError("a 'passthrough' ensemble takes at most one member")
 
-        seen: set[str] = set()
-        for member in self.members:
-            if member.identity in seen:
-                raise ValueError(f"duplicate member identity {member.identity!r} in ensemble")
-            seen.add(member.identity)
+        if isinstance(self.members, list):
+            seen: set[str] = set()
+            for member in self.members:
+                if member.identity in seen:
+                    raise ValueError(f"duplicate member identity {member.identity!r} in ensemble")
+                seen.add(member.identity)
         return self
 
 

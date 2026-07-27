@@ -61,9 +61,8 @@ llms:
     # SEPARATE mechanism from bmom's `effort: [l, m, h]` below (one llm, a per-tier value vector,
     # picked by the client's requested effort): reach for `variants:` when you want a model at
     # one FIXED effort as its own distinct, reusable identity — e.g. to reference from several
-    # ensembles, or (as `mom-debug` does in config.yaml) to expose every effort of every model
-    # side by side in one panel. `gpt-high` isn't referenced by an ensemble here; see config.yaml
-    # for a whole config built this way.
+    # ensembles, or to expose every effort of every model side by side in a `mom-debug`-style
+    # panel (see `members: all` below). `gpt-high` isn't referenced by an ensemble here.
     variants:
       high: { params: { reasoning_effort: high } }
   claude:     { model: anthropic/claude-opus-4-8 }
@@ -115,3 +114,13 @@ ensembles:
       - { llm: claude, effort: pass }
     synthesizer: { llm: claude, prompt: synth_default }
     tools: { continuation: relay }
+
+  # Kitchen sink for manual testing: `members: all` is every llm in the catalog (bases and
+  # expanded variants alike), so this panel never needs hand-editing as llms come and go.
+  # `{ all: true, exclude: [...] }` opts specific llms out by name — e.g. a slow/costly
+  # special-purpose variant that doesn't belong in a routine debug fan-out.
+  mom-debug:
+    description: Every llm side by side, auto-synced — for manual testing, never hand-maintained.
+    members: all
+    synthesizer: { llm: claude, prompt: synth_default }
+    show_work: inline

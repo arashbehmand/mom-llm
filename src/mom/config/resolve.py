@@ -20,9 +20,11 @@ from types import MappingProxyType
 from typing import Any
 
 from mom.config.schema import (
+    AllMembersConfig,
     Config,
     EnsembleConfig,
     LlmConfig,
+    MemberConfig,
 )
 from mom.config.types import (
     EFFORT_OFF,
@@ -263,8 +265,22 @@ def _resolve_ensemble(
         if llm_name not in llms:
             raise ConfigError(f"ensemble {name!r} {ref} references unknown llm {llm_name!r}")
 
+    # AllMembersConfig = every llm in the catalog (bases + expanded variants), minus `exclude`, in
+    # resolution order — the kitchen-sink shorthand for a debug/eval panel that must never fall
+    # out of sync by hand.
+    if isinstance(ens.members, AllMembersConfig):
+        unknown = set(ens.members.exclude) - set(llms)
+        if unknown:
+            raise ConfigError(
+                f"ensemble {name!r} members.exclude references unknown llm(s) {sorted(unknown)}"
+            )
+        excluded = set(ens.members.exclude)
+        member_specs = [MemberConfig(llm=n) for n in llms if n not in excluded]
+    else:
+        member_specs = ens.members
+
     members: list[ResolvedMember] = []
-    for member in ens.members:
+    for member in member_specs:
         require_llm(member.llm, f"member {member.identity!r}")
         members.append(
             ResolvedMember(

@@ -317,8 +317,8 @@ instead of four, and the model string appears once. Two things worth knowing:
   plain. Set one of those fields explicitly on a variant in the rare case you actually want it.
 - A variant name colliding with an existing top-level llm name is a config error at load time.
 
-`members:` list items also accept a bare string as shorthand for `{llm: <name>}` — useful for a
-kitchen-sink ensemble that lists many llms with no per-member effort override:
+`members:` list items also accept a bare string as shorthand for `{llm: <name>}` — useful for an
+ensemble that lists several llms with no per-member effort override:
 
 ```yaml
 ensembles:
@@ -326,6 +326,35 @@ ensembles:
     members: [sol, sol-l, sol-m, sol-h, sol-p]   # same as [{llm: sol}, {llm: sol-l}, ...]
     synthesizer: { llm: sol }
 ```
+
+### `members: all` — a self-maintaining kitchen-sink panel
+
+For a true "every llm, side by side" panel (a debug/eval ensemble), don't list members by hand at
+all — `all` expands to every llm in the catalog (bases and expanded variants alike), so the panel
+never falls out of sync as llms are added, renamed, or removed:
+
+```yaml
+ensembles:
+  mom-debug:
+    members: all
+    synthesizer: { llm: sol, prompt: synth_default }
+    show_work: inline
+```
+
+Opt specific llms out by name with `exclude` — e.g. a slow or costly special-purpose variant that
+doesn't belong in a routine debug fan-out:
+
+```yaml
+ensembles:
+  mom-debug:
+    members: { all: true, exclude: [oai-dr, gem-dr] }   # skip the deep-research variants
+    synthesizer: { llm: sol, prompt: synth_default }
+    show_work: inline
+```
+
+An unknown name in `exclude` is a config error at load time (the same "never silently drift"
+guarantee as everywhere else). `all` is only valid for `strategy: synthesize` — a `passthrough`
+ensemble takes at most one member.
 
 ---
 
@@ -423,7 +452,9 @@ ensembles:
   member just runs its own configured params). See [The effort matrix](#the-effort-matrix).
 - **`members`** — the panel. Each entry names an `llm`, may set `as` to give a distinct
   identity (so the same `llm` can appear twice with different effort), and may set `effort`
-  (the per-tier matrix cell). Identities must be unique within the ensemble.
+  (the per-tier matrix cell). Identities must be unique within the ensemble. Or `all` /
+  `{all: true, exclude: [...]}` for a self-maintaining kitchen-sink panel — see
+  [`members: all`](#members-all--a-self-maintaining-kitchen-sink-panel).
 - **`synthesizer`** *(required)* — the concluding model: `llm`, an optional `prompt` (a key
   from `prompts`), and an optional `effort`. The synthesizer owns the client-visible output,
   its tool calls, and structured-output/`response_format`. Client sampling controls
