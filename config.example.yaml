@@ -2,8 +2,9 @@
 #
 # MoM v2 example configuration.
 #
-# Read top to bottom: `llms` are the individual models (an `extends` chain avoids repetition),
-# `prompts` are synthesis instructions, and `ensembles` are the models clients actually call.
+# Read top to bottom: `llms` are the individual models (`variants:` nests an effort family under
+# its base, `extends` links one-off reuses of a model), `prompts` are synthesis instructions, and
+# `ensembles` are the models clients actually call.
 # Secrets never appear here — only the NAMES of environment variables that hold them.
 version: 2
 
@@ -49,17 +50,22 @@ observability:
     service_name: mom-llm
 
 # --------------------------------------------------------------------------------------------
-# LLMs: one entry per callable model. `extends` inherits everything; `params` deep-merge.
+# LLMs: one entry per callable model.
 # --------------------------------------------------------------------------------------------
 llms:
-  gpt:        { model: openai/gpt-5.6-sol }
-  # `extends` in practice: a fixed-effort variant is the base plus a lean override — the model
-  # string is never repeated. This is a SEPARATE mechanism from bmom's `effort: [l, m, h]` below
-  # (one llm, a per-tier value vector, picked by the client's requested effort): use `extends` when
-  # you want a model at one FIXED effort as its own distinct, reusable identity — e.g. to reference
-  # from several ensembles, or (as `mom-debug` does in config.yaml) to expose every effort of every
-  # model side by side in one panel. Not referenced by an ensemble here; see config.yaml for scale.
-  gpt-high: { extends: gpt, params: { reasoning_effort: high } }
+  gpt:
+    model: openai/gpt-5.6-sol
+    # `variants:` in practice: nest a fixed-effort family right under its base — no repeated
+    # model string, and the family reads as one block. Each key becomes its own llm identity
+    # `gpt-<key>` (here `gpt-high`), with `params` deep-merged onto the base's. This is a
+    # SEPARATE mechanism from bmom's `effort: [l, m, h]` below (one llm, a per-tier value vector,
+    # picked by the client's requested effort): reach for `variants:` when you want a model at
+    # one FIXED effort as its own distinct, reusable identity — e.g. to reference from several
+    # ensembles, or (as `mom-debug` does in config.yaml) to expose every effort of every model
+    # side by side in one panel. `gpt-high` isn't referenced by an ensemble here; see config.yaml
+    # for a whole config built this way.
+    variants:
+      high: { params: { reasoning_effort: high } }
   claude:     { model: anthropic/claude-opus-4-8 }
   gemini:                                             # api_key_env inferred (GEMINI/GOOGLE)
     model: gemini/gemini-3.1-pro

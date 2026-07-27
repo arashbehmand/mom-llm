@@ -152,6 +152,23 @@ _RESERVED_PARAM_KEYS = frozenset(
 )
 
 
+class LlmVariantConfig(_Model):
+    """One entry in an llm's ``variants:`` map — expands to a sibling llm named ``<parent>-<key>``.
+
+    Sugar over ``extends``: inherits the parent's ``model``/``api``/``api_key_env``/
+    ``proxy_url_env`` unless overridden here, and deep-merges ``params``. Deliberately does NOT
+    inherit capability-ish fields (``search``/``pricing``/``capabilities``/...) — a family of
+    effort variants shouldn't silently gain the parent's web-search capability, say. Set one of
+    those explicitly on a variant in the rare case it's actually wanted.
+    """
+
+    model: str | None = None
+    api: Literal["chat", "responses"] | None = None
+    api_key_env: EnvVarName | None = None
+    proxy_url_env: EnvVarName | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class LlmConfig(_Model):
     model: str | None = None  # required directly or via `extends`
     extends: str | None = None
@@ -167,6 +184,9 @@ class LlmConfig(_Model):
     max_input_tokens: int | None = Field(default=None, ge=1)
     timeout: Duration | None = None
     cache_ttl: Duration | None = None
+    # A compact way to author an effort/variant family without repeating `model:` per sibling —
+    # see LlmVariantConfig. Expanded into ordinary sibling llm entries at resolve time.
+    variants: dict[str, LlmVariantConfig] | None = None
 
     @model_validator(mode="after")
     def _reject_reserved_params(self) -> LlmConfig:
@@ -239,6 +259,16 @@ class EnsembleConfig(_Model):
         if value is True:
             return "inline"
         return value
+
+    @field_validator("members", mode="before")
+    @classmethod
+    def _coerce_bare_member_names(cls, value: object) -> object:
+        # `members: [name, ...]` is shorthand for `members: [{llm: name}, ...]` — for a panel
+        # with no per-member effort override (e.g. a debug/kitchen-sink ensemble), a flow-style
+        # list of names is far more compact than one `- llm: name` mapping per line.
+        if not isinstance(value, list):
+            return value
+        return [{"llm": item} if isinstance(item, str) else item for item in value]
 
     @model_validator(mode="after")
     def _validate_tiers_and_members(self) -> EnsembleConfig:
