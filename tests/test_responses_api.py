@@ -228,6 +228,65 @@ _MCP_CONFIG = dedent("""
 """)
 
 
+_SHOW_WORK_CONFIG = dedent("""
+    version: 2
+    server: { auth: bearer }
+    llms:
+      a: { model: openai/a }
+      b: { model: openai/b }
+    ensembles:
+      e:
+        members: [{ llm: a }, { llm: b }]
+        synthesizer: { llm: a, prompt: p }
+        show_work: inline
+    prompts:
+      p: "synthesize"
+""")
+
+
+def _authed_client(fake: FakeLLM):
+    catalog = resolve_catalog(Config.model_validate(yaml.safe_load(_SHOW_WORK_CONFIG)))
+    container = Container(
+        settings=Settings(_env_file=None, MOM_API_TOKEN="secret-token"),
+        catalog=catalog,
+        client=fake,
+        clock=ManualClock(),
+        ids=SequentialIds(),
+    )
+    app = create_app(container=container)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+async def test_show_work_inline_includes_progress_link_non_streaming():
+    async with _authed_client(FakeLLM()) as client:
+        resp = await client.post(
+            "/v1/responses",
+            json={"model": "e", "input": "hi"},
+            headers={"authorization": "Bearer secret-token"},
+        )
+    body = resp.json()
+    request_id = resp.headers["x-request-id"]
+    member_dump = next(o for o in body["output"] if o["type"] == "reasoning")
+    text = member_dump["summary"][0]["text"]
+    assert f"Progress: http://test/v1/progress/{request_id}?token=secret-token" in text
+    assert text.index("Progress:") < text.index("Model:")
+
+
+async def test_show_work_inline_includes_progress_link_streaming():
+    async with _authed_client(FakeLLM()) as client:
+        resp = await client.post(
+            "/v1/responses",
+            json={"model": "e", "input": "hi", "stream": True},
+            headers={"authorization": "Bearer secret-token"},
+        )
+    request_id = resp.headers["x-request-id"]
+    events = _events(resp.text)
+    reasoning_text = "".join(
+        d["delta"] for k, d in events if k == "response.reasoning_summary_text.delta"
+    )
+    assert f"Progress: http://test/v1/progress/{request_id}?token=secret-token" in reasoning_text
+
+
 async def test_mcp_tool_forwarded_when_synth_supports_it():
     fake = FakeLLM()
     catalog = resolve_catalog(Config.model_validate(yaml.safe_load(_MCP_CONFIG)))

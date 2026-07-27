@@ -116,6 +116,60 @@ async def test_show_work_inline_renders_think_block():
     assert "synthesized answer" in content
 
 
+async def test_show_work_inline_includes_progress_link_in_think_block():
+    # A plain link/EventSource can't carry an Authorization header, so the progress link (and
+    # the token it carries) needs to be somewhere the user actually sees it — the think block,
+    # since lobe-chat has no UI for surfacing an arbitrary response header.
+    settings = Settings(_env_file=None, MOM_API_TOKEN="secret-token")
+    catalog = _catalog(auth="bearer", show_work="inline")
+    async with _client(_container(catalog=catalog, settings=settings)) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "e", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"authorization": "Bearer secret-token"},
+        )
+    content = resp.json()["choices"][0]["message"]["content"]
+    request_id = resp.headers["x-request-id"]
+    assert f"Progress: http://test/v1/progress/{request_id}?token=secret-token" in content
+    # the progress line precedes the member dump, inside the think block
+    assert content.index("Progress:") < content.index("Model:")
+
+
+async def test_show_work_inline_streaming_includes_progress_link():
+    settings = Settings(_env_file=None, MOM_API_TOKEN="secret-token")
+    catalog = _catalog(auth="bearer", show_work="inline")
+    async with _client(_container(catalog=catalog, settings=settings)) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "e",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+            headers={"authorization": "Bearer secret-token"},
+        )
+    request_id = resp.headers["x-request-id"]
+    text = "".join(
+        p["choices"][0]["delta"].get("content", "")
+        for p in _sse_payloads(resp.text)
+        if p.get("choices") and p["choices"][0].get("delta")
+    )
+    assert f"Progress: http://test/v1/progress/{request_id}?token=secret-token" in text
+
+
+async def test_show_work_off_has_no_progress_link():
+    settings = Settings(_env_file=None, MOM_API_TOKEN="secret-token")
+    catalog = _catalog(auth="bearer", show_work="off")
+    async with _client(_container(catalog=catalog, settings=settings)) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "e", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"authorization": "Bearer secret-token"},
+        )
+    content = resp.json()["choices"][0]["message"]["content"] or ""
+    assert "Progress:" not in content
+
+
 async def test_unknown_model_is_404():
     async with _client(_container()) as client:
         resp = await client.post(

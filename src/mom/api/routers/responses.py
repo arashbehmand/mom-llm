@@ -8,7 +8,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from mom.api.auth import require_api_key
 from mom.api.deps import ContainerDep
 from mom.api.encoders.responses import build_response, encode_sse
-from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id, response_headers
+from mom.api.reqid import (
+    PROGRESS_URL_HEADER,
+    REQUEST_ID_HEADER,
+    resolve_request_id,
+    response_headers,
+)
 from mom.api.schemas.responses import ResponsesRequest
 from mom.engine.pipeline import PipelineDeps, collect, run_ensemble
 from mom.engine.plan import resolve_plan
@@ -46,6 +51,7 @@ async def responses(
             model=ir.model,
             created=created,
             show_work=plan.show_work,
+            progress_url=headers[PROGRESS_URL_HEADER],
         )
         return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
     result = await collect(run_ensemble(plan, deps))
@@ -56,6 +62,7 @@ async def responses(
             model=ir.model,
             created=created,
             show_work=plan.show_work,
+            progress_url=headers[PROGRESS_URL_HEADER],
         ),
         headers=headers,
     )

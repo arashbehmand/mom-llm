@@ -8,7 +8,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from mom.api.auth import require_api_key
 from mom.api.deps import ContainerDep
 from mom.api.encoders.chat import ChatFrame, build_completion, encode_sse, resolve_stream_profile
-from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id, response_headers
+from mom.api.reqid import (
+    PROGRESS_URL_HEADER,
+    REQUEST_ID_HEADER,
+    resolve_request_id,
+    response_headers,
+)
 from mom.api.schemas.openai_chat import ChatCompletionRequest
 from mom.api.sse import with_heartbeat
 from mom.api.translate import chat_request_to_ir
@@ -69,11 +74,14 @@ async def chat_completions(
             show_work=plan.show_work,
             include_usage=ir.include_usage,
             stream_profile=profile,
+            progress_url=headers[PROGRESS_URL_HEADER],
         )
         heartbeat = container.catalog.config.server.stream_heartbeat
         if heartbeat is not None:  # keepalive comments so a slow fan-out doesn't idle-timeout
             stream = with_heartbeat(stream, heartbeat.total_seconds())
         return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
     result = await collect(run_ensemble(plan, deps))
-    response = build_completion(result, frame, show_work=plan.show_work)
+    response = build_completion(
+        result, frame, show_work=plan.show_work, progress_url=headers[PROGRESS_URL_HEADER]
+    )
     return JSONResponse(response.model_dump(), headers=headers)

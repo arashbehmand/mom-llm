@@ -63,11 +63,14 @@ def _member_line(outcome: ModelOutcome) -> str:
     return f"Model: {html.escape(outcome.model)}\nContent: {html.escape(body)}\n---\n"
 
 
-def render_think_block(outcomes: tuple[ModelOutcome, ...]) -> str:
+def render_think_block(
+    outcomes: tuple[ModelOutcome, ...], *, progress_url: str | None = None
+) -> str:
     if not outcomes:
         return ""
+    header = f"Progress: {progress_url}\n\n" if progress_url else ""
     lines = "".join(_member_line(o) for o in outcomes)
-    return f"<think>\n{lines}</think>\n\n"
+    return f"<think>\n{header}{lines}</think>\n\n"
 
 
 def _chunk(frame: ChatFrame, delta: dict[str, Any], finish_reason: str | None) -> bytes:
@@ -110,6 +113,7 @@ async def encode_sse(
     show_work: str,
     include_usage: bool,
     stream_profile: str = "compat",
+    progress_url: str | None = None,
 ) -> AsyncIterator[bytes]:
     """Fold the event stream into an OpenAI SSE byte stream.
 
@@ -139,6 +143,8 @@ async def encode_sse(
             if not think_open:
                 think_open = True
                 yield _chunk(frame, {"content": "<think>\n"}, None)
+                if progress_url:
+                    yield _chunk(frame, {"content": f"Progress: {progress_url}\n\n"}, None)
             yield _chunk(frame, {"content": _member_line(event.outcome)}, None)
         elif isinstance(event, SynthesisStarted):
             if think_open:
@@ -204,12 +210,12 @@ async def encode_sse(
 
 
 def build_completion(
-    result: EnsembleResult, frame: ChatFrame, *, show_work: str
+    result: EnsembleResult, frame: ChatFrame, *, show_work: str, progress_url: str | None = None
 ) -> ChatCompletionResponse:
     """Build a non-streaming Chat Completions response from a collected result."""
     content = result.text
     if show_work == "inline":
-        content = render_think_block(result.outcomes) + content
+        content = render_think_block(result.outcomes, progress_url=progress_url) + content
     usage = result.usage
     message = ChatMessageOut(
         content=content or None,

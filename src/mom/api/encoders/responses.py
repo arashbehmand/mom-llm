@@ -55,12 +55,19 @@ def _response_obj(
 
 
 def build_response(
-    result: EnsembleResult, *, response_id: str, model: str, created: int, show_work: str = "off"
+    result: EnsembleResult,
+    *,
+    response_id: str,
+    model: str,
+    created: int,
+    show_work: str = "off",
+    progress_url: str | None = None,
 ) -> dict[str, Any]:
     """Non-streaming Responses object."""
     output: list[dict[str, Any]] = []
     if show_work == "inline" and result.outcomes:
-        member_text = "".join(_member_line(o) for o in result.outcomes)
+        header = f"Progress: {progress_url}\n\n" if progress_url else ""
+        member_text = header + "".join(_member_line(o) for o in result.outcomes)
         output.append(
             {
                 "type": "reasoning",
@@ -117,6 +124,7 @@ async def encode_sse(
     model: str,
     created: int,
     show_work: str = "off",
+    progress_url: str | None = None,
 ) -> AsyncIterator[bytes]:
     """Fold the event stream into a Responses SSE byte stream."""
     seq = 0
@@ -266,8 +274,14 @@ async def encode_sse(
         return chunks
 
     usage: dict[str, int] | None = None
+    member_dump_started = False
     async for event in events:
         if isinstance(event, MemberCompleted) and show_work == "inline":
+            if not member_dump_started:
+                member_dump_started = True
+                if progress_url:
+                    for chunk in reasoning_delta(f"Progress: {progress_url}\n\n"):
+                        yield chunk
             for chunk in reasoning_delta(_member_line(event.outcome)):
                 yield chunk
         elif isinstance(event, SynthesisStarted):
