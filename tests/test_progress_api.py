@@ -265,6 +265,37 @@ async def test_chat_completions_carries_progress_url_header():
     assert url.endswith(f"/v1/progress/{resp.headers['x-request-id']}")
 
 
+async def test_progress_url_prefers_configured_public_url():
+    config = dedent("""
+        version: 2
+        server: { auth: none, public_url: "https://mom.example.com" }
+        llms:
+          a: { model: openai/a }
+          b: { model: openai/b }
+        ensembles:
+          e:
+            members: [{ llm: a }, { llm: b }]
+            synthesizer: { llm: a, prompt: p }
+        prompts:
+          p: "synthesize"
+    """)
+    container = Container(
+        settings=Settings(_env_file=None),
+        catalog=resolve_catalog(Config.model_validate(yaml.safe_load(config))),
+        client=FakeLLM(),
+        clock=ManualClock(),
+        ids=SequentialIds(),
+        bus=InMemoryEventBus(),
+    )
+    async with _asgi(container) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "e", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    url = resp.headers["x-mom-progress-url"]
+    assert url == f"https://mom.example.com/v1/progress/{resp.headers['x-request-id']}"
+
+
 async def test_progress_url_header_carries_token_when_auth_enabled():
     bus = InMemoryEventBus()
     async with _asgi(_authed_container(bus)) as client:

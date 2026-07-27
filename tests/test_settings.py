@@ -36,3 +36,9 @@ def test_legacy_redis_and_config_aliases(monkeypatch: pytest.MonkeyPatch):
     settings = Settings(_env_file=None)
     assert settings.redis_url == "redis://localhost:6379"
     assert str(settings.config_file) == "/etc/mom/config.yaml"
+
+
+def test_config_overlay_from_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MOM_CONFIG_OVERLAY", "/etc/mom/local.yaml")
+    settings = Settings(_env_file=None)
+    assert str(settings.config_overlay) == "/etc/mom/local.yaml"

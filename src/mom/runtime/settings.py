@@ -40,6 +40,13 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("MOM_CONFIG", "MOM_CONFIG_PATH"),
     )
+    # Deep-merged over config_file (e.g. server.public_url, or any deployment-local value that
+    # shouldn't sit in the tracked config) — the same layering `mom config validate --overlay`
+    # already offered, now also available to `mom serve`.
+    config_overlay: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MOM_CONFIG_OVERLAY"),
+    )
     data_dir: Path | None = None  # None -> platform default at resolution time
 
     # --- optional services ---

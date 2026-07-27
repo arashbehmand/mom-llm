@@ -88,7 +88,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
     """Load config, open stores, wire adapters. Returns the container and an async cleanup."""
     if settings.config_file is None:
         raise RuntimeError("MOM_CONFIG must point to a config file to serve")
-    catalog = load_config(settings.config_file)
+    catalog = load_config(settings.config_file, overlay=settings.config_overlay)
     clock = SystemClock()
     data_dir = resolve_data_dir(settings, catalog)
 

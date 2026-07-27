@@ -36,8 +36,15 @@ def progress_url(http_request: Request, request_id: str, container: Container) -
 
     Carries the API token as a query param when auth is enabled: a plain link that a browser
     opens directly (navigation, ``EventSource``) can't attach an ``Authorization`` header.
+
+    Prefers ``server.public_url`` over the request's own ``Host`` when configured: behind a
+    reverse proxy the request typically arrives over an internal network (its ``base_url`` is an
+    internal-only hostname), so without an explicit public URL the generated link would be
+    unreachable from outside that network.
     """
-    url = f"{http_request.base_url}v1/progress/{request_id}"
+    public_url = container.catalog.config.server.public_url
+    base = f"{public_url.rstrip('/')}/" if public_url else str(http_request.base_url)
+    url = f"{base}v1/progress/{request_id}"
     token = container.settings.api_token
     if container.catalog.config.server.auth != "none" and token is not None:
         url = f"{url}?token={quote(token.get_secret_value())}"
