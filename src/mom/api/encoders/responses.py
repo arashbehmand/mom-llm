@@ -2,6 +2,10 @@
 
 Stateless Open Responses subset: one message item for the answer, a function_call item per tool
 call, a single centralized ``sequence_number`` counter, and both ``event:`` and ``data:`` lines.
+
+``show_work: inline`` surfaces member perspectives as a reasoning item (this surface's native
+"thinking" convention — no ``<think>`` tags, unlike the Chat Completions encoder), closed off
+before any genuine synthesizer reasoning opens its own reasoning item.
 """
 
 from __future__ import annotations
@@ -13,12 +17,14 @@ from typing import Any
 from mom.domain.events import (
     AnswerDelta,
     Completed,
+    MemberCompleted,
     PipelineFailed,
     StreamEvent,
+    SynthesisStarted,
     ToolCallDelta,
     ToolCallStarted,
 )
-from mom.domain.results import EnsembleResult
+from mom.domain.results import EnsembleResult, ModelOutcome
 
 
 def _text_part(text: str) -> dict[str, Any]:
@@ -27,6 +33,11 @@ def _text_part(text: str) -> dict[str, Any]:
 
 def _summary_part(text: str) -> dict[str, Any]:
     return {"type": "summary_text", "text": text}
+
+
+def _member_line(outcome: ModelOutcome) -> str:
+    body = outcome.content if outcome.ok else (outcome.error or outcome.status)
+    return f"Model: {outcome.model}\nContent: {body}\n---\n"
 
 
 def _response_obj(
@@ -44,10 +55,19 @@ def _response_obj(
 
 
 def build_response(
-    result: EnsembleResult, *, response_id: str, model: str, created: int
+    result: EnsembleResult, *, response_id: str, model: str, created: int, show_work: str = "off"
 ) -> dict[str, Any]:
     """Non-streaming Responses object."""
     output: list[dict[str, Any]] = []
+    if show_work == "inline" and result.outcomes:
+        member_text = "".join(_member_line(o) for o in result.outcomes)
+        output.append(
+            {
+                "type": "reasoning",
+                "id": f"{response_id}-rs-members",
+                "summary": [{"type": "summary_text", "text": member_text}],
+            }
+        )
     if result.reasoning:  # a reasoning item precedes the answer message, mirroring the stream
         output.append(
             {
@@ -91,7 +111,12 @@ def build_response(
 
 
 async def encode_sse(
-    events: AsyncIterator[StreamEvent], *, response_id: str, model: str, created: int
+    events: AsyncIterator[StreamEvent],
+    *,
+    response_id: str,
+    model: str,
+    created: int,
+    show_work: str = "off",
 ) -> AsyncIterator[bytes]:
     """Fold the event stream into a Responses SSE byte stream."""
     seq = 0
@@ -198,41 +223,61 @@ async def encode_sse(
         tools.clear()
         return chunks
 
-    usage: dict[str, int] | None = None
-    async for event in events:
-        if isinstance(event, AnswerDelta):
-            if event.reasoning:
-                if reasoning is None:
-                    index = next_index
-                    next_index += 1
-                    item_id = f"{response_id}-rs{index}"
-                    reasoning = (index, item_id)
-                    yield evt(
-                        "response.output_item.added",
-                        {
-                            "output_index": index,
-                            "item": {"type": "reasoning", "id": item_id, "summary": []},
-                        },
-                    )
-                    yield evt(
-                        "response.reasoning_summary_part.added",
-                        {
-                            "item_id": item_id,
-                            "output_index": index,
-                            "summary_index": 0,
-                            "part": _summary_part(""),
-                        },
-                    )
-                reasoning_buf.append(event.reasoning)
-                yield evt(
-                    "response.reasoning_summary_text.delta",
+    def reasoning_delta(delta: str) -> list[bytes]:
+        nonlocal reasoning, next_index
+        chunks: list[bytes] = []
+        if reasoning is None:
+            index = next_index
+            next_index += 1
+            item_id = f"{response_id}-rs{index}"
+            reasoning = (index, item_id)
+            chunks.append(
+                evt(
+                    "response.output_item.added",
                     {
-                        "item_id": reasoning[1],
-                        "output_index": reasoning[0],
-                        "summary_index": 0,
-                        "delta": event.reasoning,
+                        "output_index": index,
+                        "item": {"type": "reasoning", "id": item_id, "summary": []},
                     },
                 )
+            )
+            chunks.append(
+                evt(
+                    "response.reasoning_summary_part.added",
+                    {
+                        "item_id": item_id,
+                        "output_index": index,
+                        "summary_index": 0,
+                        "part": _summary_part(""),
+                    },
+                )
+            )
+        reasoning_buf.append(delta)
+        chunks.append(
+            evt(
+                "response.reasoning_summary_text.delta",
+                {
+                    "item_id": reasoning[1],
+                    "output_index": reasoning[0],
+                    "summary_index": 0,
+                    "delta": delta,
+                },
+            )
+        )
+        return chunks
+
+    usage: dict[str, int] | None = None
+    async for event in events:
+        if isinstance(event, MemberCompleted) and show_work == "inline":
+            for chunk in reasoning_delta(_member_line(event.outcome)):
+                yield chunk
+        elif isinstance(event, SynthesisStarted):
+            # Member-dump reasoning ends here; genuine synthesizer reasoning opens its own item.
+            for chunk in close_reasoning():
+                yield chunk
+        elif isinstance(event, AnswerDelta):
+            if event.reasoning:
+                for chunk in reasoning_delta(event.reasoning):
+                    yield chunk
             if event.content:
                 for chunk in close_reasoning():  # the reasoning summary precedes the answer text
                     yield chunk

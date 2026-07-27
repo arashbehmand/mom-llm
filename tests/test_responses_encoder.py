@@ -4,25 +4,29 @@ from __future__ import annotations
 
 import json
 
-from mom.api.encoders.responses import encode_sse
+from mom.api.encoders.responses import build_response, encode_sse
 from mom.domain.events import (
     AnswerDelta,
     Completed,
+    MemberCompleted,
     PipelineFailed,
     StreamEvent,
+    SynthesisStarted,
     ToolCallDelta,
     ToolCallStarted,
 )
-from mom.domain.results import Usage
+from mom.domain.results import EnsembleResult, ModelOutcome, Usage
 
 
-async def _collect(events: list[StreamEvent]) -> list[dict]:
+async def _collect(events: list[StreamEvent], *, show_work: str = "off") -> list[dict]:
     async def gen():
         for event in events:
             yield event
 
     payloads: list[dict] = []
-    async for block in encode_sse(gen(), response_id="resp-1", model="e", created=1):
+    async for block in encode_sse(
+        gen(), response_id="resp-1", model="e", created=1, show_work=show_work
+    ):
         payloads.extend(
             json.loads(line[len("data: ") :])
             for line in block.decode().splitlines()
@@ -101,6 +105,107 @@ async def test_reasoning_only_response_still_emits_a_reasoning_item():
     output = _of_type(payloads, "response.completed")[0]["response"]["output"]
     assert [o["type"] for o in output] == ["reasoning"]
     assert output[0]["summary"][0]["text"] == "hmm"
+
+
+def _outcome(model: str, content: str) -> ModelOutcome:
+    return ModelOutcome(identity=model, llm=model, model=model, status="ok", content=content)
+
+
+async def test_show_work_off_ignores_member_completed():
+    payloads = await _collect(
+        [
+            MemberCompleted(outcome=_outcome("a", "perspective A")),
+            AnswerDelta(content="answer"),
+            Completed(
+                finish_reason="stop",
+                usage=Usage(prompt_tokens=1, completion_tokens=1),
+                total_cost_usd=0.0,
+            ),
+        ],
+        show_work="off",
+    )
+    assert not _of_type(payloads, "response.reasoning_summary_text.delta")
+    output = _of_type(payloads, "response.completed")[0]["response"]["output"]
+    assert [o["type"] for o in output] == ["message"]
+
+
+async def test_show_work_inline_surfaces_member_dump_as_its_own_reasoning_item():
+    payloads = await _collect(
+        [
+            MemberCompleted(outcome=_outcome("a", "perspective A")),
+            MemberCompleted(outcome=_outcome("b", "perspective B")),
+            SynthesisStarted(llm="syn", model="syn/model"),
+            AnswerDelta(reasoning="genuine synth thinking"),
+            AnswerDelta(content="answer"),
+            Completed(
+                finish_reason="stop",
+                usage=Usage(prompt_tokens=1, completion_tokens=1),
+                total_cost_usd=0.0,
+            ),
+        ],
+        show_work="inline",
+    )
+    output = _of_type(payloads, "response.completed")[0]["response"]["output"]
+    # member-dump reasoning, genuine synth reasoning, then the message — three distinct items.
+    assert [o["type"] for o in output] == ["reasoning", "reasoning", "message"]
+    member_text = output[0]["summary"][0]["text"]
+    assert "Model: a" in member_text
+    assert "perspective A" in member_text
+    assert "Model: b" in member_text
+    assert "perspective B" in member_text
+    assert output[1]["summary"][0]["text"] == "genuine synth thinking"
+    assert output[0]["id"] != output[1]["id"]
+
+
+async def test_show_work_inline_with_no_genuine_reasoning_still_shows_member_dump():
+    payloads = await _collect(
+        [
+            MemberCompleted(outcome=_outcome("a", "perspective A")),
+            SynthesisStarted(llm="syn", model="syn/model"),
+            AnswerDelta(content="answer"),
+            Completed(
+                finish_reason="stop",
+                usage=Usage(prompt_tokens=1, completion_tokens=1),
+                total_cost_usd=0.0,
+            ),
+        ],
+        show_work="inline",
+    )
+    output = _of_type(payloads, "response.completed")[0]["response"]["output"]
+    assert [o["type"] for o in output] == ["reasoning", "message"]
+    assert "perspective A" in output[0]["summary"][0]["text"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Non-streaming build_response
+# ---------------------------------------------------------------------------------------------
+def test_build_response_show_work_inline_adds_member_dump_reasoning_item():
+    result = EnsembleResult(
+        text="final answer",
+        outcomes=(_outcome("a", "perspective A"), _outcome("b", "perspective B")),
+        usage=Usage(prompt_tokens=1, completion_tokens=1),
+        total_cost_usd=0.0,
+        finish_reason="stop",
+        reasoning="genuine synth thinking",
+    )
+    obj = build_response(result, response_id="resp-1", model="e", created=1, show_work="inline")
+    assert [o["type"] for o in obj["output"]] == ["reasoning", "reasoning", "message"]
+    member_text = obj["output"][0]["summary"][0]["text"]
+    assert "perspective A" in member_text
+    assert "perspective B" in member_text
+    assert obj["output"][1]["summary"][0]["text"] == "genuine synth thinking"
+
+
+def test_build_response_show_work_off_has_no_member_dump():
+    result = EnsembleResult(
+        text="final answer",
+        outcomes=(_outcome("a", "perspective A"),),
+        usage=Usage(prompt_tokens=1, completion_tokens=1),
+        total_cost_usd=0.0,
+        finish_reason="stop",
+    )
+    obj = build_response(result, response_id="resp-1", model="e", created=1, show_work="off")
+    assert [o["type"] for o in obj["output"]] == ["message"]
 
 
 async def test_pipeline_failed_finalizes_open_tool_items_and_carries_no_dangler():

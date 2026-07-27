@@ -41,11 +41,21 @@ async def responses(
     created = int(container.clock.now())
     if req.stream:
         stream = encode_sse(
-            run_ensemble(plan, deps), response_id=response_id, model=ir.model, created=created
+            run_ensemble(plan, deps),
+            response_id=response_id,
+            model=ir.model,
+            created=created,
+            show_work=plan.show_work,
         )
         return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
     result = await collect(run_ensemble(plan, deps))
     return JSONResponse(
-        build_response(result, response_id=response_id, model=ir.model, created=created),
+        build_response(
+            result,
+            response_id=response_id,
+            model=ir.model,
+            created=created,
+            show_work=plan.show_work,
+        ),
         headers=headers,
     )
