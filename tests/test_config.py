@@ -123,6 +123,84 @@ def test_cyclic_extends_is_rejected():
         )
 
 
+# ---- variants: an effort-family expands into `<parent>-<suffix>` siblings --------------------
+
+
+def test_variants_expand_into_sibling_llms():
+    catalog = _resolve(
+        """
+        version: 2
+        llms:
+          base:
+            model: openai/gpt-x
+            variants:
+              m: { params: { reasoning_effort: medium } }
+              p: { api: responses, params: { reasoning: { effort: max } } }
+        ensembles:
+          e:
+            members: [base, base-m, base-p]
+            synthesizer: { llm: base }
+        """
+    )
+    assert catalog.llms["base-m"].model == "openai/gpt-x"  # inherited
+    assert catalog.llms["base-m"].params == {"reasoning_effort": "medium"}
+    assert catalog.llms["base-p"].api == "responses"  # per-variant override
+    assert catalog.llms["base-p"].params == {"reasoning": {"effort": "max"}}
+    assert catalog.llms["base"].params == {}  # the parent itself is untouched
+
+
+def test_variant_does_not_inherit_capability_fields():
+    # A variant of a search-capable model must NOT silently gain web search — only params (and
+    # explicit overrides) propagate. Otherwise every effort variant of an online model would
+    # accidentally become search-capable too.
+    catalog = _resolve(
+        """
+        version: 2
+        llms:
+          base:
+            model: openrouter/x/y
+            search: { extra_body: { plugins: [{ id: web }] } }
+            variants:
+              l: { params: { reasoning: { effort: low } } }
+        ensembles:
+          e: { members: [base, base-l], synthesizer: { llm: base } }
+        """
+    )
+    assert catalog.llms["base"].search is not None
+    assert catalog.llms["base-l"].search is None
+
+
+def test_variant_name_collision_is_rejected():
+    with pytest.raises(ConfigError, match="collides"):
+        _resolve(
+            """
+            version: 2
+            llms:
+              base: { model: x/y, variants: { m: { params: {} } } }
+              base-m: { model: x/other }
+            ensembles:
+              e: { members: [base], synthesizer: { llm: base } }
+            """
+        )
+
+
+def test_bare_string_members_are_shorthand_for_llm_mapping():
+    catalog = _resolve(
+        """
+        version: 2
+        llms:
+          a: { model: x/a }
+          b: { model: x/b }
+        ensembles:
+          e:
+            members: [a, { llm: b, effort: pass }]
+            synthesizer: { llm: a }
+        """
+    )
+    members = {m.identity: m for m in catalog.ensembles["e"].members}
+    assert set(members) == {"a", "b"}
+
+
 # ---- validation errors -----------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("yaml_text", "match"),

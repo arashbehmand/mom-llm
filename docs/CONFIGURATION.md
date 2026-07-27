@@ -283,8 +283,49 @@ llms:
     # model + pricing inherited unchanged
 ```
 
-Chains are resolved with cycle and missing-target detection. Use `extends` to define a family
-of variants (different sampling, different reasoning) from one base without repetition.
+Chains are resolved with cycle and missing-target detection. Reach for `extends` to reuse a model
+for a one-off, differently-shaped purpose (a different `api`, a bespoke `params` shape) — for an
+*effort family* of one base at several fixed levels, prefer `variants:` below; it's less
+repetitive for that specific, very common case.
+
+### `variants` — a compact effort family, nested
+
+`variants:` is sugar over `extends` for the common case: one base model, several fixed-effort
+siblings. Each key becomes its own llm named `<parent>-<key>`, inheriting the parent's `model` /
+`api` / `api_key_env` / `proxy_url_env` unless overridden, with `params` deep-merged the same way
+`extends` merges them:
+
+```yaml
+llms:
+  sol:
+    model: openai/gpt-5.6-sol
+    variants:
+      l: { params: { reasoning_effort: low } }
+      m: { params: { reasoning_effort: medium } }
+      h: { params: { reasoning_effort: high } }
+      p: { api: responses, params: { reasoning: { effort: max, mode: pro } } }   # can override api too
+```
+
+This resolves exactly as if you had written `sol-l: {extends: sol, params: {...}}`,
+`sol-m: {...}`, `sol-h: {...}`, `sol-p: {extends: sol, api: responses, params: {...}}` — one block
+instead of four, and the model string appears once. Two things worth knowing:
+
+- **Capability fields never propagate to a variant.** `search`, `pricing`, `capabilities`,
+  `max_input_tokens`, `timeout`, and `cache_ttl` are deliberately excluded from what a variant can
+  inherit — only generation-shaping fields do. A model that's both search-capable *and* has effort
+  variants (see `k3` in a real config) keeps `search:` on its own bare identity; the variants stay
+  plain. Set one of those fields explicitly on a variant in the rare case you actually want it.
+- A variant name colliding with an existing top-level llm name is a config error at load time.
+
+`members:` list items also accept a bare string as shorthand for `{llm: <name>}` — useful for a
+kitchen-sink ensemble that lists many llms with no per-member effort override:
+
+```yaml
+ensembles:
+  everything:
+    members: [sol, sol-l, sol-m, sol-h, sol-p]   # same as [{llm: sol}, {llm: sol-l}, ...]
+    synthesizer: { llm: sol }
+```
 
 ---
 
