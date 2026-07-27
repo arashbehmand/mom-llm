@@ -26,340 +26,144 @@ observability:
   langfuse:
     enabled: true
 llms:
+  # Effort-tier families: one base per model, variants `extends` it and override only what
+  # changes (usually just `params`). This is the whole point of `extends` — a model string never
+  # repeats.
   oai56t:
     model: openai/gpt-5.6-terra
-  oai56t-l:
-    model: openai/gpt-5.6-terra
-    params:
-      reasoning_effort: low
-  oai56t-m:
-    model: openai/gpt-5.6-terra
-    params:
-      reasoning_effort: medium
-  oai56t-h:
-    model: openai/gpt-5.6-terra
-    params:
-      reasoning_effort: high
+  oai56t-l: { extends: oai56t, params: { reasoning_effort: low } }
+  oai56t-m: { extends: oai56t, params: { reasoning_effort: medium } }
+  oai56t-h: { extends: oai56t, params: { reasoning_effort: high } }
+
   oai56s:
     model: openai/gpt-5.6-sol
-  oai56s-n:
-    model: openai/gpt-5.6-sol
-    params:
-      reasoning_effort: none
-  oai56s-l:
-    model: openai/gpt-5.6-sol
-    params:
-      reasoning_effort: low
-  oai56s-m:
-    model: openai/gpt-5.6-sol
-    params:
-      reasoning_effort: medium
-  oai56s-h:
-    model: openai/gpt-5.6-sol
-    params:
-      reasoning_effort: high
-  oai56s-xh:
-    model: openai/gpt-5.6-sol
-    params:
-      reasoning_effort: xhigh
-  oai56s-p:
-    model: openai/gpt-5.6-sol
+  oai56s-n:  { extends: oai56s, params: { reasoning_effort: none } }
+  oai56s-l:  { extends: oai56s, params: { reasoning_effort: low } }
+  oai56s-m:  { extends: oai56s, params: { reasoning_effort: medium } }
+  oai56s-h:  { extends: oai56s, params: { reasoning_effort: high } }
+  oai56s-xh: { extends: oai56s, params: { reasoning_effort: xhigh } }
+  # api: responses variants of the same model — extends still collapses the model string.
+  oai56s-p: { extends: oai56s, api: responses, params: { reasoning: { effort: max, mode: pro } } }
+  rsynth:   { extends: oai56s, api: responses, params: { reasoning: { effort: low } } }
+  oai-dr:   # deep-research: forced browsing tool + medium reasoning (see the drmom ensemble)
+    extends: oai56s
     api: responses
     params:
-      reasoning:
-        effort: max
-        mode: pro
-  oai56l:
-    model: openai/gpt-5.6-luna
+      tools: [{ type: web_search_preview }]
+      reasoning: { effort: medium }
+
+  oai56l: { model: openai/gpt-5.6-luna }
+
   oai53cdx:
     model: openai/gpt-5.3-codex
-  oai53cdx-m:
-    model: openai/gpt-5.3-codex
-    params:
-      reasoning_effort: medium
-  oai53cdx-h:
-    model: openai/gpt-5.3-codex
-    params:
-      reasoning_effort: high
+  oai53cdx-m: { extends: oai53cdx, params: { reasoning_effort: medium } }
+  oai53cdx-h: { extends: oai53cdx, params: { reasoning_effort: high } }
+
   g36f:
     model: gemini/gemini-3.6-flash
-  g36f-mi:
-    model: gemini/gemini-3.6-flash
-    params:
-      reasoning_effort: minimal
-  g36f-l:
-    model: gemini/gemini-3.6-flash
-    params:
-      reasoning_effort: low
-  g36f-m:
-    model: gemini/gemini-3.6-flash
-    params:
-      reasoning_effort: medium
-  g36f-h:
-    model: gemini/gemini-3.6-flash
-    params:
-      reasoning_effort: high
+  g36f-mi: { extends: g36f, params: { reasoning_effort: minimal } }
+  g36f-l:  { extends: g36f, params: { reasoning_effort: low } }
+  g36f-m:  { extends: g36f, params: { reasoning_effort: medium } }
+  g36f-h:  { extends: g36f, params: { reasoning_effort: high } }
+
   g31p:
     model: gemini/gemini-3.1-pro-preview
-  g31p-l:
-    model: gemini/gemini-3.1-pro-preview
+  g31p-l: { extends: g31p, params: { reasoning_effort: low } }
+  g31p-h: { extends: g31p, params: { reasoning_effort: high } }
+  gem-dr: # deep-research: Google Search grounding + high reasoning (see the drmom ensemble)
+    extends: g31p
     params:
-      reasoning_effort: low
-  g31p-h:
-    model: gemini/gemini-3.1-pro-preview
-    params:
+      web_search_options: { search_context_size: high }
       reasoning_effort: high
+
   g35fl:
     model: gemini/gemini-3.5-flash-lite
-  g35fl-mi:
-    model: gemini/gemini-3.5-flash-lite
-    params:
-      reasoning_effort: minimal
-  g35fl-l:
-    model: gemini/gemini-3.5-flash-lite
-    params:
-      reasoning_effort: low
-  g35fl-m:
-    model: gemini/gemini-3.5-flash-lite
-    params:
-      reasoning_effort: medium
-  g35fl-h:
-    model: gemini/gemini-3.5-flash-lite
-    params:
-      reasoning_effort: high
+  g35fl-mi: { extends: g35fl, params: { reasoning_effort: minimal } }
+  g35fl-l:  { extends: g35fl, params: { reasoning_effort: low } }
+  g35fl-m:  { extends: g35fl, params: { reasoning_effort: medium } }
+  g35fl-h:  { extends: g35fl, params: { reasoning_effort: high } }
+
   cl5st:
     model: anthropic/claude-sonnet-5
-  cl5st-l:
-    model: anthropic/claude-sonnet-5
-    params:
-      reasoning_effort: low
-      thinking:
-        type: adaptive
-  cl5st-m:
-    model: anthropic/claude-sonnet-5
-    params:
-      reasoning_effort: medium
-      thinking:
-        type: adaptive
-  cl5st-h:
-    model: anthropic/claude-sonnet-5
-    params:
-      reasoning_effort: high
-      thinking:
-        type: adaptive
+  cl5st-l: { extends: cl5st, params: { reasoning_effort: low, thinking: { type: adaptive } } }
+  cl5st-m: { extends: cl5st, params: { reasoning_effort: medium, thinking: { type: adaptive } } }
+  cl5st-h: { extends: cl5st, params: { reasoning_effort: high, thinking: { type: adaptive } } }
+
   cl45hk:
     model: anthropic/claude-haiku-4-5-20251001
-  cl45hk-m:
-    model: anthropic/claude-haiku-4-5-20251001
-    params:
-      thinking:
-        type: enabled
-        budget_tokens: 4096
+  cl45hk-m: { extends: cl45hk, params: { thinking: { type: enabled, budget_tokens: 4096 } } }
+
   cl48op:
     model: anthropic/claude-opus-4-8
-  cl48op-l:
-    model: anthropic/claude-opus-4-8
-    params:
-      reasoning_effort: low
-      thinking:
-        type: adaptive
-  cl48op-m:
-    model: anthropic/claude-opus-4-8
-    params:
-      reasoning_effort: medium
-      thinking:
-        type: adaptive
-  cl48op-h:
-    model: anthropic/claude-opus-4-8
-    params:
-      reasoning_effort: high
-      thinking:
-        type: adaptive
-  cl48op-am:
-    model: anthropic/claude-opus-4-8
-    params:
-      reasoning_effort: max
-      thinking:
-        type: adaptive
+  cl48op-l:  { extends: cl48op, params: { reasoning_effort: low, thinking: { type: adaptive } } }
+  cl48op-m:  { extends: cl48op, params: { reasoning_effort: medium, thinking: { type: adaptive } } }
+  cl48op-h:  { extends: cl48op, params: { reasoning_effort: high, thinking: { type: adaptive } } }
+  cl48op-am: { extends: cl48op, params: { reasoning_effort: max, thinking: { type: adaptive } } }
+
   cl5f:
     model: anthropic/claude-fable-5
-  cl5f-l:
-    model: anthropic/claude-fable-5
-    params:
-      reasoning_effort: low
-      thinking:
-        type: adaptive
-  cl5f-m:
-    model: anthropic/claude-fable-5
-    params:
-      reasoning_effort: medium
-      thinking:
-        type: adaptive
-  cl5f-h:
-    model: anthropic/claude-fable-5
-    params:
-      reasoning_effort: high
-      thinking:
-        type: adaptive
-  cl5f-am:
-    model: anthropic/claude-fable-5
-    params:
-      reasoning_effort: max
-      thinking:
-        type: adaptive
-  grok420ma:
-    model: xai/grok-4.20-multi-agent
-    api: responses
+  cl5f-l:  { extends: cl5f, params: { reasoning_effort: low, thinking: { type: adaptive } } }
+  cl5f-m:  { extends: cl5f, params: { reasoning_effort: medium, thinking: { type: adaptive } } }
+  cl5f-h:  { extends: cl5f, params: { reasoning_effort: high, thinking: { type: adaptive } } }
+  cl5f-am: { extends: cl5f, params: { reasoning_effort: max, thinking: { type: adaptive } } }
+
+  grok420ma: { model: xai/grok-4.20-multi-agent, api: responses }
   grok45:
     model: xai/grok-4.5
-  grok45-l:
-    model: xai/grok-4.5
-    params:
-      reasoning_effort: low
-  grok45-m:
-    model: xai/grok-4.5
-    params:
-      reasoning_effort: medium
-  grok45-h:
-    model: xai/grok-4.5
-    params:
-      reasoning_effort: high
-  grokbuild:
-    model: openrouter/x-ai/grok-build-0.1
-  dsv4:
-    model: openrouter/deepseek/deepseek-v4-pro
-  dsv4-f:
-    model: openrouter/deepseek/deepseek-v4-flash
-  codestral:
-    model: mistral/codestral-2508
-  qwn37max:
-    model: openrouter/qwen/qwen3.7-max
+  grok45-l: { extends: grok45, params: { reasoning_effort: low } }
+  grok45-m: { extends: grok45, params: { reasoning_effort: medium } }
+  grok45-h: { extends: grok45, params: { reasoning_effort: high } }
+
+  grokbuild: { model: openrouter/x-ai/grok-build-0.1 }
+  dsv4:      { model: openrouter/deepseek/deepseek-v4-pro }
+  dsv4-f:    { model: openrouter/deepseek/deepseek-v4-flash }
+  codestral: { model: mistral/codestral-2508 }
+  qwn37max:  { model: openrouter/qwen/qwen3.7-max }
+
+  # k3-base is a template only — no ensemble references it directly. It exists so k3's `search:`
+  # block (below) doesn't leak into the effort variants via extends (they'd otherwise inherit it).
+  k3-base: { model: openrouter/moonshotai/kimi-k3 }
   k3:
-    model: openrouter/moonshotai/kimi-k3
+    extends: k3-base
     search:                                # request-triggered online: OpenRouter web plugin,
       extra_body:                          # merged ONLY when the client asks for web_search
         plugins:
           - id: web
-  k3-l:
-    model: openrouter/moonshotai/kimi-k3
-    params:
-      reasoning:
-        effort: low
-  k3-h:
-    model: openrouter/moonshotai/kimi-k3
-    params:
-      reasoning:
-        effort: high
-  k3-am:
-    model: openrouter/moonshotai/kimi-k3
-    params:
-      reasoning:
-        effort: max
-  k27code:
-    model: openrouter/moonshotai/kimi-k2.7-code
-  muse11:
+  k3-l:  { extends: k3-base, params: { reasoning: { effort: low } } }
+  k3-h:  { extends: k3-base, params: { reasoning: { effort: high } } }
+  k3-am: { extends: k3-base, params: { reasoning: { effort: max } } }
+
+  k27code: { model: openrouter/moonshotai/kimi-k2.7-code }
+
+  muse11: # proxy_url_env is identical across every variant, so it lives once, on the base.
     model: openrouter/meta/muse-spark-1.1
     proxy_url_env: MUSE_SPARK_PROXY_URL
-  muse11-mi:
-    model: openrouter/meta/muse-spark-1.1
-    proxy_url_env: MUSE_SPARK_PROXY_URL
-    params:
-      reasoning:
-        effort: minimal
-  muse11-l:
-    model: openrouter/meta/muse-spark-1.1
-    proxy_url_env: MUSE_SPARK_PROXY_URL
-    params:
-      reasoning:
-        effort: low
-  muse11-m:
-    model: openrouter/meta/muse-spark-1.1
-    proxy_url_env: MUSE_SPARK_PROXY_URL
-    params:
-      reasoning:
-        effort: medium
-  muse11-h:
-    model: openrouter/meta/muse-spark-1.1
-    proxy_url_env: MUSE_SPARK_PROXY_URL
-    params:
-      reasoning:
-        effort: high
-  muse11-xh:
-    model: openrouter/meta/muse-spark-1.1
-    proxy_url_env: MUSE_SPARK_PROXY_URL
-    params:
-      reasoning:
-        effort: xhigh
+  muse11-mi: { extends: muse11, params: { reasoning: { effort: minimal } } }
+  muse11-l:  { extends: muse11, params: { reasoning: { effort: low } } }
+  muse11-m:  { extends: muse11, params: { reasoning: { effort: medium } } }
+  muse11-h:  { extends: muse11, params: { reasoning: { effort: high } } }
+  muse11-xh: { extends: muse11, params: { reasoning: { effort: xhigh } } }
+
   ink:
     model: openrouter/thinkingmachines/inkling
-  ink-n:
-    model: openrouter/thinkingmachines/inkling
-    params:
-      reasoning:
-        effort: none
-  ink-mi:
-    model: openrouter/thinkingmachines/inkling
-    params:
-      reasoning:
-        effort: minimal
-  ink-l:
-    model: openrouter/thinkingmachines/inkling
-    params:
-      reasoning:
-        effort: low
-  ink-m:
-    model: openrouter/thinkingmachines/inkling
-    params:
-      reasoning:
-        effort: medium
-  ink-h:
-    model: openrouter/thinkingmachines/inkling
-    params:
-      reasoning:
-        effort: high
-  ink-am:
-    model: openrouter/thinkingmachines/inkling
-    params:
-      reasoning:
-        effort: max
-  nem3u:
-    model: openrouter/nvidia/nemotron-3-ultra-550b-a55b
-    params:
-      reasoning:
-        enabled: true
-  glm52:
-    model: openrouter/z-ai/glm-5.2
-  ernie45t:
-    model: openrouter/baidu/ernie-4.5-300b-a47b
-  m3:
-    model: openrouter/minimax/minimax-m3
-  mimo25:
-    model: openrouter/xiaomi/mimo-v2.5-pro:nitro
-  rsynth:
-    model: openai/gpt-5.6-sol
-    api: responses
-    params:
-      reasoning:
-        effort: low
+  ink-n:  { extends: ink, params: { reasoning: { effort: none } } }
+  ink-mi: { extends: ink, params: { reasoning: { effort: minimal } } }
+  ink-l:  { extends: ink, params: { reasoning: { effort: low } } }
+  ink-m:  { extends: ink, params: { reasoning: { effort: medium } } }
+  ink-h:  { extends: ink, params: { reasoning: { effort: high } } }
+  ink-am: { extends: ink, params: { reasoning: { effort: max } } }
+
+  nem3u:    { model: openrouter/nvidia/nemotron-3-ultra-550b-a55b, params: { reasoning: { enabled: true } } }
+  glm52:    { model: openrouter/z-ai/glm-5.2 }
+  ernie45t: { model: openrouter/baidu/ernie-4.5-300b-a47b }
+  m3:       { model: openrouter/minimax/minimax-m3 }
+  mimo25:   { model: openrouter/xiaomi/mimo-v2.5-pro:nitro }
+
   # Perplexity Sonar: inherently online — no offline variant, so no `search:` block / request
   # toggle applies (they always search). Available for ad-hoc use, e.g. via mom-debug.
   plx-snrp:  { model: openrouter/perplexity/sonar-pro-search }
   plx-snrrp: { model: openrouter/perplexity/sonar-reasoning-pro }
   plx-dr:    { model: openrouter/perplexity/sonar-deep-research }
-  # Deep-research models (force-on): the browse tool + reasoning are baked in, so they always
-  # research. Perplexity above is a dedicated model; these are regular models forced into research
-  # via the OpenAI Responses web_search tool / Google grounding. Used by the drmom ensemble.
-  oai-dr:
-    model: openai/gpt-5.6-sol
-    api: responses                              # deep research runs over the Responses API
-    params:
-      tools: [{ type: web_search_preview }]     # the browse tool the model researches with
-      reasoning: { effort: medium }
-  gem-dr:
-    model: gemini/gemini-3.1-pro-preview
-    params:
-      web_search_options: { search_context_size: high }   # Google Search grounding
-      reasoning_effort: high
   # grok-dr: BLOCKED — xAI retired live_search (-> Agent Tools API), but litellm doesn't yet accept
   #   the new web_search tool for xai (tools[0].type must be function|live_search). Re-enable when
   #   litellm ships it:  grok-dr: { model: xai/grok-4.5, params: { tools: [{ type: web_search }] } }
