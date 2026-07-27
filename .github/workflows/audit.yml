@@ -15,5 +15,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.32"
+      # --no-emit-project: exclude the local editable project itself; pip-audit requires hashes
+      # and cannot hash a local path, and the project has no CVEs to audit anyway.
       - name: Audit locked dependencies
-        run: uv export --no-dev --format requirements-txt | uvx pip-audit -r /dev/stdin
+        run: uv export --no-dev --no-emit-project --format requirements-txt | uvx pip-audit -r /dev/stdin

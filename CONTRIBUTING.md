@@ -82,7 +82,7 @@ Look for issues labeled:
 
 5. **Set Up Configuration**
    ```bash
-   cp config.yaml_template config.yaml
+   cp config.example.yaml config.yaml
    # Edit config.yaml to define your test LLMs
    ```
 
@@ -225,7 +225,7 @@ feat: Add per-model pricing configuration
 
 - Add pricing field to LLMDefinition
 - Implement cost override logic in metrics
-- Update config.yaml_template with examples
+- Update config.example.yaml with examples
 - Add tests for pricing calculations
 ```
 
@@ -245,7 +245,7 @@ Types:
 1. **Update Documentation**
    - Update README if adding features
    - Add docstrings to new functions
-   - Update config.yaml_template if needed
+   - Update config.example.yaml if needed
 
 2. **Add Tests**
    - Write unit tests for new functions
