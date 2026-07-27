@@ -56,7 +56,9 @@ llms:
     # are merged in for THIS member (others in the ensemble answer without search). Presence of
     # the block (even `{}`) is the capability signal — like reasoning effort, but for search.
     search: { web_search_options: { search_context_size: high } }
-  qwen:       { model: openrouter/qwen/qwen-3.6-max }
+  qwen:                                              # OpenRouter web search, request-triggered:
+    model: openrouter/qwen/qwen-3.6-max              # the web plugin is merged only when the
+    search: { extra_body: { plugins: [{ id: web }] } }   # client sends web_search (no ":online" model)
   flash:      { model: gemini/gemini-3.6-flash }
   # A per-LLM outbound proxy, unchanged concept from v1:
   muse:
