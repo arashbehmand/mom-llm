@@ -150,6 +150,27 @@ _PAGE = """<!doctype html>
   let ensembleShown = false;
   let total = 0;
   let filled = 0;
+  let fanoutStartMs = null;
+  let ticker = null;
+  let slotByIdentity = {{}};  // identity -> still-pending card element
+
+  function formatElapsed(ms) {{
+    const s = Math.floor(ms / 1000);
+    return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  }}
+
+  function tick() {{
+    if (fanoutStartMs === null) return;
+    const elapsed = formatElapsed(Date.now() - fanoutStartMs);
+    for (const identity in slotByIdentity) {{
+      const timer = slotByIdentity[identity].querySelector('.timer');
+      if (timer) timer.textContent = 'waiting\\u2026 ' + elapsed;
+    }}
+  }}
+
+  function stopTicker() {{
+    if (ticker !== null) {{ clearInterval(ticker); ticker = null; }}
+  }}
 
   const ESCAPES = {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}};
   function escapeHtml(s) {{
@@ -169,23 +190,30 @@ _PAGE = """<!doctype html>
     return html;
   }}
 
-  function makePendingCards(n) {{
-    total = n;
+  function makePendingCards(memberList) {{
+    total = memberList.length;
+    filled = 0;
+    slotByIdentity = {{}};
     members.innerHTML = '';
-    for (let i = 0; i < n; i++) {{
+    memberList.forEach(([identity, model]) => {{
       const div = document.createElement('div');
       div.className = 'card';
-      div.id = 'slot-' + i;
-      div.innerHTML = cardHead('pending', 'waiting\\u2026');
+      div.innerHTML = cardHead('pending', identity, model) +
+        '<div class="meta timer">waiting\\u2026</div>';
       members.appendChild(div);
-    }}
-    memberCount.textContent = '(0/' + n + ')';
+      slotByIdentity[identity] = div;
+    }});
+    memberCount.textContent = '(0/' + total + ')';
   }}
 
-  function fillNextCard(data) {{
-    let slot = document.getElementById('slot-' + filled);
-    if (!slot) {{
-      // no fanout_started (or more members than announced) — grow the grid defensively.
+  function fillCard(data) {{
+    const identity = data.member;
+    let slot = identity ? slotByIdentity[identity] : null;
+    if (slot) {{
+      delete slotByIdentity[identity];
+    }} else {{
+      // Unknown identity (older server with no `members` list, or a mismatch) — append
+      // defensively instead of dropping the update.
       slot = document.createElement('div');
       slot.className = 'card';
       members.appendChild(slot);
@@ -224,17 +252,24 @@ _PAGE = """<!doctype html>
       showEnsemble(data);
       if (kind === 'fanout_started') {{
         status.textContent = 'running';
-        makePendingCards(data.members_total || 0);
+        makePendingCards(Array.isArray(data.members) ? data.members : []);
+        fanoutStartMs = Date.now();
+        stopTicker();
+        ticker = setInterval(tick, 1000);
+        tick();
       }} else if (kind === 'member_completed') {{
-        fillNextCard(data);
+        fillCard(data);
       }} else if (kind === 'synthesis_started') {{
+        stopTicker();
         fillSynth('pending', data.model || data.member || 'synthesizing\\u2026', null);
       }} else if (kind === 'completed') {{
+        stopTicker();
         status.textContent = 'completed';
         status.className = 'badge ok';
         fillSynth('ok', data.status || 'completed', null, data.preview, false);
         es.close();
       }} else if (kind === 'failed') {{
+        stopTicker();
         status.textContent = 'failed';
         status.className = 'badge err';
         if (data.detail) {{

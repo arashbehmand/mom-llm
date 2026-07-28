@@ -58,6 +58,21 @@ def test_json_round_trip_preserves_all_fields():
     assert ProgressEvent.from_json(event.to_json()) == event
 
 
+def test_json_round_trip_preserves_the_members_list():
+    # fanout_started's (identity, model) pairs — a nested tuple, so JSON's list-of-lists has to
+    # come back as a tuple of 2-tuples, not stay a list of lists (which wouldn't equal the
+    # original and would break a naive `==` against a re-published event).
+    event = ProgressEvent(
+        kind="fanout_started",
+        ensemble="e",
+        members_total=2,
+        members=(("a", "openai/a"), ("b", "openai/b")),
+    )
+    round_tripped = ProgressEvent.from_json(event.to_json())
+    assert round_tripped == event
+    assert round_tripped.members == (("a", "openai/a"), ("b", "openai/b"))
+
+
 @pytest.mark.parametrize(
     ("kind", "terminal"),
     [

@@ -119,9 +119,9 @@ client = OpenAI(
 
 # Chat Completions
 resp = client.chat.completions.create(
-    model="bmom",                         # ensemble name
+    model="bmom",  # ensemble name
     messages=[{"role": "user", "content": "Compare two sorting algorithms."}],
-    reasoning_effort="high",              # snapped to the ensemble's nearest tier
+    reasoning_effort="high",  # snapped to the ensemble's nearest tier
     stream=True,
 )
 for chunk in resp:
@@ -140,12 +140,12 @@ print(r.output_text)
 from anthropic import Anthropic
 
 client = Anthropic(
-    base_url="http://localhost:8000",     # NO /v1 — the SDK adds /v1/messages
+    base_url="http://localhost:8000",  # NO /v1 — the SDK adds /v1/messages
     api_key="<your MoM token>",
 )
 
 msg = client.messages.create(
-    model="mom-code",                     # ensemble name
+    model="mom-code",  # ensemble name
     max_tokens=1024,
     messages=[{"role": "user", "content": "Refactor this function for clarity."}],
 )

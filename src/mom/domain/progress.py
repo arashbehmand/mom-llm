@@ -37,6 +37,7 @@ _OPTIONAL_FIELDS: tuple[str, ...] = (
     "status",
     "detail",
     "members_total",
+    "members",
     "completed",
     "duration_ms",
     "preview",
@@ -54,6 +55,9 @@ class ProgressEvent:
     status: str | None = None  # member outcome status, or finish_reason on completion
     detail: str | None = None  # human-readable message (failures)
     members_total: int | None = None  # members fanned out (fanout_started / member_completed)
+    # (identity, model) for every fanned-out member, known upfront (fanout_started only) — lets an
+    # observer label a still-pending member instead of showing a bare "waiting" placeholder.
+    members: tuple[tuple[str, str], ...] | None = None
     completed: int | None = None  # members completed so far (member_completed)
     duration_ms: float | None = None
     preview: str | None = None  # truncated glimpse of the actual output (see PREVIEW_CHARS)
@@ -77,6 +81,7 @@ class ProgressEvent:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProgressEvent:
+        members = data.get("members")
         return cls(
             kind=data["kind"],
             ensemble=data.get("ensemble", ""),
@@ -85,6 +90,7 @@ class ProgressEvent:
             status=data.get("status"),
             detail=data.get("detail"),
             members_total=data.get("members_total"),
+            members=tuple((m, mo) for m, mo in members) if members else None,
             completed=data.get("completed"),
             duration_ms=data.get("duration_ms"),
             preview=data.get("preview"),

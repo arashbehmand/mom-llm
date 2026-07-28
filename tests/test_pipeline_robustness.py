@@ -119,6 +119,48 @@ async def test_tool_call_id_never_literal_none():
     assert minted.startswith("call")
 
 
+class _OneMemberHangsClient:
+    async def complete(self, spec: CallSpec) -> Completion:
+        if spec.llm_name == "slow":
+            await asyncio.sleep(2.0)  # far longer than the fanout deadline below
+        return Completion(
+            content=f"reply from {spec.llm_name}",
+            reasoning=None,
+            finish_reason="stop",
+            usage=Usage(),
+        )
+
+    async def stream(self, spec: CallSpec) -> Any:
+        yield CompletionChunk(content="synthesized", finish_reason="stop", usage=Usage())
+
+
+async def test_fanout_deadline_stops_waiting_on_a_stuck_member():
+    # Live bug 2026-07-28: emom's 11 other members finished in 6s-151s, but `ink` hung for 12+
+    # minutes with nothing forcing the panel to move on (no fanout.deadline was configured, so
+    # the loop waits for literally every member, however long that takes, up to its own 20m call
+    # timeout). A deadline lets a healthy quorum synthesize without waiting out a straggler.
+    catalog = _catalog(
+        """
+        version: 2
+        defaults:
+          fanout: { deadline: 30ms }
+        llms:
+          fast: { model: openai/fast }
+          slow: { model: openai/slow }
+        ensembles:
+          e:
+            members: [fast, slow]
+            synthesizer: { llm: fast }
+        """
+    )
+    ir = ChatRequestIR(model="e", messages=(MessageIR(role="user", content="hi"),))
+    plan = resolve_plan(catalog, ir)
+    deps = PipelineDeps(client=_OneMemberHangsClient(), clock=ManualClock())
+
+    result = await asyncio.wait_for(collect(run_ensemble(plan, deps)), timeout=1.0)
+    assert result.text == "synthesized"  # synthesis proceeded without the stuck member
+
+
 class _FlakyStore:
     def __init__(self) -> None:
         self.calls = 0

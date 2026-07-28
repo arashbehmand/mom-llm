@@ -123,6 +123,9 @@ async def test_pipeline_publishes_full_progress_sequence():
         "completed",
     ]
     assert events[0].members_total == 2
+    # (identity, model) known upfront, before any member call finishes — lets a progress
+    # observer label a still-pending member instead of a bare "waiting" placeholder.
+    assert events[0].members == (("a", "openai/a"), ("b", "openai/b"))
     first_member = events[1]
     assert first_member.member in {"a", "b"}
     assert first_member.status == "ok"

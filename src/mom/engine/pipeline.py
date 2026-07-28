@@ -351,7 +351,10 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             _publish(
                 deps,
                 ProgressEvent(
-                    kind="fanout_started", ensemble=plan.ensemble, members_total=members_total
+                    kind="fanout_started",
+                    ensemble=plan.ensemble,
+                    members_total=members_total,
+                    members=tuple((m.identity, m.spec.model) for m in plan.members),
                 ),
             )
             async for event in _fan_out(deps, plan, turn_type):

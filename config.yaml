@@ -20,6 +20,13 @@ defaults:
     # On client disconnect, let in-flight members finish and cache in the background instead of
     # cancelling them — so retrying the same turn hits cache and goes straight to the synthesizer.
     detach_on_disconnect: true
+    # Cap the whole fan-out's wall-clock time so one stuck/slow member can't hold the entire
+    # ensemble hostage up to its full per-call timeout (20m default) — hit live 2026-07-28: emom's
+    # other 11 members all finished within 6s-151s, but `ink` hung well past 12 minutes with
+    # nothing forcing the panel to move on. A straggler past this deadline still gets to finish
+    # in the background (detach_on_disconnect, above) and cache its answer for next time — it's
+    # just no longer blocking THIS response.
+    deadline: 6m
 cache:
   enabled: true
 observability:
