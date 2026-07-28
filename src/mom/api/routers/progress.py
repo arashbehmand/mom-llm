@@ -62,67 +62,190 @@ _PAGE = """<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mom &middot; progress &middot; {request_id}</title>
 <style>
-  body {{ font: 14px/1.5 ui-monospace, monospace; max-width: 40rem; margin: 2rem auto;
-         padding: 0 1rem; color: #1a1a1a; background: #fff; }}
-  @media (prefers-color-scheme: dark) {{ body {{ color: #ddd; background: #111; }} }}
-  h1 {{ font-size: 1rem; font-weight: 600; }}
-  #status {{ display: inline-block; padding: .15rem .5rem; border-radius: .3rem;
-            background: #eee; }}
-  @media (prefers-color-scheme: dark) {{ #status {{ background: #333; }} }}
-  ol {{ list-style: none; margin: 1rem 0 0; padding: 0; }}
-  li {{ padding: .3rem 0; border-top: 1px solid #eee; }}
-  @media (prefers-color-scheme: dark) {{ li {{ border-color: #333; }} }}
-  .detail {{ opacity: .65; }}
+  :root {{
+    --bg: #fff; --fg: #1a1a1a; --muted: #6b6b6b; --border: #e2e2e2; --card: #f7f7f8;
+    --pending: #9ca3af; --ok: #16a34a; --err: #dc2626; --err-bg: #fef2f2; --err-fg: #7f1d1d;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{
+      --bg: #0d0d0e; --fg: #e6e6e6; --muted: #9a9a9a; --border: #2b2b2d; --card: #18181a;
+      --pending: #6b7280; --ok: #4ade80; --err: #f87171; --err-bg: #2a1414; --err-fg: #fca5a5;
+    }}
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font: 14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    max-width: 64rem; margin: 0 auto; padding: 1.5rem 1rem 4rem;
+    color: var(--fg); background: var(--bg);
+  }}
+  h1 {{ font-size: 1.05rem; font-weight: 600; margin: 0 0 .15rem; }}
+  h2 {{ font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+       color: var(--muted); margin: 1.75rem 0 .6rem; }}
+  code {{ font: inherit; }}
+  .sub {{ color: var(--muted); font-size: .8rem; margin-bottom: .75rem; word-break: break-all; }}
+  .badge {{
+    display: inline-block; padding: .2rem .6rem; border-radius: 1rem; font-size: .75rem;
+    font-weight: 600; background: var(--card); border: 1px solid var(--border);
+  }}
+  .badge.ok {{ color: var(--ok); border-color: var(--ok); }}
+  .badge.err {{ color: var(--err); border-color: var(--err); }}
+  .error-banner {{
+    margin-top: 1rem; padding: .75rem 1rem; border-radius: .5rem; background: var(--err-bg);
+    color: var(--err-fg); border: 1px solid var(--err); white-space: pre-wrap;
+    word-break: break-word;
+  }}
+  .grid {{
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: .75rem;
+  }}
+  .card {{
+    border: 1px solid var(--border); border-radius: .5rem; padding: .7rem .8rem;
+    background: var(--card);
+  }}
+  .card-head {{ display: flex; align-items: center; gap: .45rem; min-width: 0; }}
+  .dot {{
+    flex: none; width: .55rem; height: .55rem; border-radius: 50%; background: var(--pending);
+  }}
+  .dot.pending {{ animation: pulse 1.3s ease-in-out infinite; }}
+  .dot.ok {{ background: var(--ok); }}
+  .dot.err {{ background: var(--err); }}
+  @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: .35; }} }}
+  .name {{ font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .meta {{ color: var(--muted); font-size: .75rem; margin-top: .15rem; }}
+  .preview {{
+    margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--border);
+    font-size: .8rem; white-space: pre-wrap; word-break: break-word;
+    max-height: 12rem; overflow-y: auto; color: var(--fg);
+  }}
+  .preview.err {{ color: var(--err-fg); }}
+  .placeholder {{ color: var(--muted); }}
 </style>
 </head>
 <body>
 <h1>progress &middot; <code>{request_id}</code></h1>
-<p id="status">connecting&hellip;</p>
-<ol id="log"></ol>
+<div class="sub" id="ensemble"></div>
+<span id="status" class="badge pending">connecting&hellip;</span>
+<div id="error-banner"></div>
+
+<h2>Members <span id="member-count"></span></h2>
+<div id="members" class="grid"></div>
+
+<h2>Synthesis</h2>
+<div id="synth" class="card">
+  <div class="card-head">
+    <span class="dot pending"></span>
+    <span class="name placeholder">waiting for fan-out&hellip;</span>
+  </div>
+</div>
+
 <script>
-  const log = document.getElementById('log');
-  const status = document.getElementById('status');
-  const LABELS = {{
-    fanout_started: 'fan-out started',
-    member_completed: 'member completed',
-    synthesis_started: 'synthesis started',
-    completed: 'completed',
-    failed: 'failed',
-  }};
-  function line(kind, data) {{
-    const li = document.createElement('li');
-    const parts = [LABELS[kind] || kind];
-    if (data.member) parts.push(data.member);
-    if (data.model) parts.push('(' + data.model + ')');
-    if (data.status) parts.push('&mdash; ' + data.status);
-    if (typeof data.completed === 'number' && typeof data.members_total === 'number') {{
-      parts.push('[' + data.completed + '/' + data.members_total + ']');
-    }}
-    li.textContent = parts.join(' ');
-    if (data.detail) {{
-      const d = document.createElement('div');
-      d.className = 'detail';
-      d.textContent = data.detail;
-      li.appendChild(d);
-    }}
-    log.appendChild(li);
+  const $ = (id) => document.getElementById(id);
+  const status = $('status');
+  const errorBanner = $('error-banner');
+  const members = $('members');
+  const memberCount = $('member-count');
+  const synth = $('synth');
+  let ensembleShown = false;
+  let total = 0;
+  let filled = 0;
+
+  const ESCAPES = {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}};
+  function escapeHtml(s) {{
+    return s.replace(/[&<>"']/g, (c) => ESCAPES[c]);
   }}
+
+  function showEnsemble(data) {{
+    if (ensembleShown || !data.ensemble) return;
+    ensembleShown = true;
+    $('ensemble').textContent = data.ensemble;
+  }}
+
+  function cardHead(dotClass, name, meta) {{
+    let html = '<div class="card-head"><span class="dot ' + dotClass + '"></span>' +
+      '<span class="name">' + escapeHtml(name) + '</span></div>';
+    if (meta) html += '<div class="meta">' + escapeHtml(meta) + '</div>';
+    return html;
+  }}
+
+  function makePendingCards(n) {{
+    total = n;
+    members.innerHTML = '';
+    for (let i = 0; i < n; i++) {{
+      const div = document.createElement('div');
+      div.className = 'card';
+      div.id = 'slot-' + i;
+      div.innerHTML = cardHead('pending', 'waiting\\u2026');
+      members.appendChild(div);
+    }}
+    memberCount.textContent = '(0/' + n + ')';
+  }}
+
+  function fillNextCard(data) {{
+    let slot = document.getElementById('slot-' + filled);
+    if (!slot) {{
+      // no fanout_started (or more members than announced) — grow the grid defensively.
+      slot = document.createElement('div');
+      slot.className = 'card';
+      members.appendChild(slot);
+    }}
+    filled += 1;
+    const ok = data.status === 'ok';
+    const meta = (data.model || '') + (typeof data.duration_ms === 'number'
+      ? '  \\u00b7  ' + Math.round(data.duration_ms) + 'ms' : '');
+    slot.className = 'card';
+    slot.innerHTML = cardHead(ok ? 'ok' : 'err', data.member || '?', meta);
+    if (data.preview) {{
+      const p = document.createElement('div');
+      p.className = 'preview' + (ok ? '' : ' err');
+      p.textContent = data.preview;
+      slot.appendChild(p);
+    }}
+    const shownTotal = typeof data.members_total === 'number' ? data.members_total : total;
+    memberCount.textContent = '(' + filled + '/' + shownTotal + ')';
+  }}
+
+  function fillSynth(dotClass, name, meta, preview, previewErr) {{
+    synth.innerHTML = cardHead(dotClass, name, meta);
+    if (preview) {{
+      const p = document.createElement('div');
+      p.className = 'preview' + (previewErr ? ' err' : '');
+      p.textContent = preview;
+      synth.appendChild(p);
+    }}
+  }}
+
   const es = new EventSource(location.href);
-  for (const kind of Object.keys(LABELS)) {{
+  const KINDS = ['fanout_started', 'member_completed', 'synthesis_started', 'completed', 'failed'];
+  for (const kind of KINDS) {{
     es.addEventListener(kind, (e) => {{
       const data = JSON.parse(e.data);
-      line(kind, data);
-      if (kind === 'fanout_started') status.textContent = 'running';
-      if (kind === 'completed' || kind === 'failed') {{
-        status.textContent = kind;
+      showEnsemble(data);
+      if (kind === 'fanout_started') {{
+        status.textContent = 'running';
+        makePendingCards(data.members_total || 0);
+      }} else if (kind === 'member_completed') {{
+        fillNextCard(data);
+      }} else if (kind === 'synthesis_started') {{
+        fillSynth('pending', data.model || data.member || 'synthesizing\\u2026', null);
+      }} else if (kind === 'completed') {{
+        status.textContent = 'completed';
+        status.className = 'badge ok';
+        fillSynth('ok', data.status || 'completed', null, data.preview, false);
+        es.close();
+      }} else if (kind === 'failed') {{
+        status.textContent = 'failed';
+        status.className = 'badge err';
+        if (data.detail) {{
+          errorBanner.innerHTML = '<div class="error-banner">' + escapeHtml(data.detail) + '</div>';
+        }}
         es.close();
       }}
     }});
   }}
   es.onerror = () => {{
-    if (es.readyState === EventSource.CLOSED && status.textContent === 'connecting&hellip;') {{
+    if (es.readyState === EventSource.CLOSED && status.textContent === 'connecting\\u2026') {{
       status.textContent = 'no live progress for this request (already finished, or unknown id)';
     }}
   }};

@@ -127,8 +127,44 @@ async def test_pipeline_publishes_full_progress_sequence():
     assert first_member.member in {"a", "b"}
     assert first_member.status == "ok"
     assert first_member.completed == 1
+    # the actual output, not just its status
+    assert first_member.preview == f"reply from {first_member.member}"
     assert events[2].completed == 2
     assert events[-1].status == "stop"  # finish_reason carried on completion
+    assert events[-1].preview == "synthesized answer"  # the actual final answer, not just "stop"
+
+
+async def test_member_failure_preview_carries_the_error_not_content():
+    bus = InMemoryEventBus()
+    deps = PipelineDeps(
+        client=FakeLLM(fail=frozenset({"a"})), clock=ManualClock(), bus=bus, request_id="req-fail"
+    )
+    await collect(run_ensemble(_plan(), deps))
+
+    events = [event async for event in bus.subscribe("req-fail")]
+    failed_member = next(e for e in events if e.kind == "member_completed" and e.member == "a")
+    assert failed_member.status != "ok"
+    assert failed_member.preview  # some error text, not empty
+    assert "a failed" in failed_member.preview
+
+
+async def test_long_preview_is_truncated():
+    from mom.domain.progress import PREVIEW_CHARS
+
+    bus = InMemoryEventBus()
+    long_reply = "x" * (PREVIEW_CHARS * 2)
+    deps = PipelineDeps(
+        client=FakeLLM(replies={"a": long_reply, "b": "short"}),
+        clock=ManualClock(),
+        bus=bus,
+        request_id="req-long",
+    )
+    await collect(run_ensemble(_plan(), deps))
+
+    events = [event async for event in bus.subscribe("req-long")]
+    member_a = next(e for e in events if e.kind == "member_completed" and e.member == "a")
+    assert len(member_a.preview) == PREVIEW_CHARS + 1  # + the truncation ellipsis
+    assert member_a.preview.endswith("…")
 
 
 async def test_pipeline_publishes_failed_when_synthesis_errors():

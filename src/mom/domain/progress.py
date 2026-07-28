@@ -3,8 +3,9 @@
 These are deliberately distinct from the engine's rich ``StreamEvent`` union. A progress event is
 a coarse milestone — fan-out started, each member completed, synthesis started, completed/failed —
 meant to be published on the :class:`~mom.domain.ports.EventBus` and streamed to a
-``GET /v1/progress/{id}`` observer. It carries only small, scalar fields so a Redis-backed bus can
-ship it across processes as one JSON line.
+``GET /v1/progress/{id}`` observer. It carries only small, bounded fields (``preview`` is
+truncated at publish time — see ``PREVIEW_CHARS``) so a Redis-backed bus can ship it across
+processes as one JSON line.
 """
 
 from __future__ import annotations
@@ -25,6 +26,10 @@ ProgressKind = Literal[
 # The two milestones after which no further events arrive for a request; a subscriber closes.
 _TERMINAL_KINDS: frozenset[str] = frozenset({"completed", "failed"})
 
+# `preview` is truncated to this many characters before publishing (see engine/pipeline.py) — a
+# glimpse of the actual output, not the full text, to keep each event a small JSON line.
+PREVIEW_CHARS = 280
+
 # Optional fields, in wire order. Kept as a constant so serialization stays declarative.
 _OPTIONAL_FIELDS: tuple[str, ...] = (
     "member",
@@ -34,6 +39,7 @@ _OPTIONAL_FIELDS: tuple[str, ...] = (
     "members_total",
     "completed",
     "duration_ms",
+    "preview",
 )
 
 
@@ -50,6 +56,7 @@ class ProgressEvent:
     members_total: int | None = None  # members fanned out (fanout_started / member_completed)
     completed: int | None = None  # members completed so far (member_completed)
     duration_ms: float | None = None
+    preview: str | None = None  # truncated glimpse of the actual output (see PREVIEW_CHARS)
 
     @property
     def terminal(self) -> bool:
@@ -80,6 +87,7 @@ class ProgressEvent:
             members_total=data.get("members_total"),
             completed=data.get("completed"),
             duration_ms=data.get("duration_ms"),
+            preview=data.get("preview"),
         )
 
     @classmethod

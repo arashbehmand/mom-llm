@@ -38,7 +38,7 @@ from mom.domain.ports import (
     ToolCallCustody,
     Tracer,
 )
-from mom.domain.progress import ProgressEvent
+from mom.domain.progress import PREVIEW_CHARS, ProgressEvent
 from mom.domain.prompt_caching import inject_anthropic_cache
 from mom.domain.results import EnsembleResult, ModelOutcome, OutcomeStatus, Usage
 from mom.domain.synthesis import all_failed_message, build_synthesis_messages
@@ -77,6 +77,15 @@ def _publish(deps: PipelineDeps, event: ProgressEvent) -> None:
         deps.bus.publish(deps.request_id, event)
     except Exception:
         logger.debug("progress publish failed", exc_info=True)
+
+
+def _preview(text: str) -> str | None:
+    """A bounded glimpse of an output for the progress feed — see ``PREVIEW_CHARS``."""
+    if not text:
+        return None
+    if len(text) <= PREVIEW_CHARS:
+        return text
+    return text[:PREVIEW_CHARS] + "…"
 
 
 def _record_member(
@@ -361,6 +370,9 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                             duration_ms=outcome.duration_ms,
                             members_total=members_total,
                             completed=len(outcomes),
+                            preview=_preview(
+                                outcome.content if outcome.ok else outcome.error or ""
+                            ),
                         ),
                     )
                     if deps.tracer is not None:
@@ -481,7 +493,15 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         for outcome in outcomes:
             total_usage = total_usage + outcome.usage
         total_cost = sum(o.cost_usd for o in outcomes) + synth_cost
-        _publish(deps, ProgressEvent(kind="completed", ensemble=plan.ensemble, status=finish))
+        _publish(
+            deps,
+            ProgressEvent(
+                kind="completed",
+                ensemble=plan.ensemble,
+                status=finish,
+                preview=_preview("".join(synth_text)),
+            ),
+        )
         yield Completed(finish_reason=finish, usage=total_usage, total_cost_usd=total_cost)
     except MomError as exc:
         _publish(
