@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..auth import verify_bearer_token
-from ..config import load_config
+from ..config import ModelConfig, load_config
 from ..events import MoMEvent
 from .models import (
     ChatMessage,
@@ -33,6 +33,48 @@ from .models import (
 
 config = load_config()
 openai_router = APIRouter(prefix="/v1", tags=["OpenAI"])
+
+# Defaults for Codex-compatible ModelInfo entries served on
+# GET /v1/models?client_version=<v>. MoM does not track real context windows
+# in config, so a generous default matching large flagship models is used;
+# operators should keep conversations within their backing LLMs' real limits.
+_CODEX_DEFAULT_CONTEXT_WINDOW = 200000
+_CODEX_TRUNCATION_LIMIT = 8192
+
+
+def _build_codex_model_entry(m_config: ModelConfig) -> dict[str, Any]:
+    """Build one Codex ``ModelInfo`` entry for the model picker.
+
+    Mirrors the subset of fields Codex's ``codex_models_manager`` requires to
+    deserialize the response and populate the picker. All required fields are
+    present; selected optional fields (e.g. context_window) are included with
+    safe defaults, and the rest are omitted so Codex fills its serde defaults.
+    Schema: codex-rs/protocol/src/openai_models.rs :: ModelInfo.
+    """
+    return {
+        "slug": m_config.name,
+        "display_name": m_config.name,
+        "description": None,
+        "supported_reasoning_levels": [],
+        "shell_type": "default",
+        "visibility": "list",
+        "supported_in_api": True,
+        "priority": 50,
+        "availability_nux": None,
+        "upgrade": None,
+        "base_instructions": "",
+        "support_verbosity": False,
+        "default_verbosity": None,
+        "apply_patch_tool_type": "freeform",
+        "truncation_policy": {
+            "mode": "tokens",
+            "limit": _CODEX_TRUNCATION_LIMIT,
+        },
+        "supports_parallel_tool_calls": True,
+        "context_window": _CODEX_DEFAULT_CONTEXT_WINDOW,
+        "max_context_window": _CODEX_DEFAULT_CONTEXT_WINDOW,
+        "experimental_supported_tools": [],
+    }
 
 
 def _build_progress_url(request: Request) -> str | None:
@@ -61,8 +103,13 @@ async def _publish_progress_event(request: Request, event_type: str, data: dict[
 
 
 @openai_router.get("/models")
-async def get_openai_models(request: Request):
+async def get_openai_models(request: Request, client_version: str | None = None):
     verify_bearer_token(request)
+    # Codex CLI's model-picker calls GET /v1/models?client_version=<v> and expects
+    # a {"models": [...]} body (ModelInfo entries) rather than the OpenAI list
+    # shape. Presence of the param switches the response; absent -> OpenAI shape.
+    if client_version is not None:
+        return {"models": [_build_codex_model_entry(m_config) for m_config in config.models]}
     data = []
     for m_config in config.models:
         data.append(

@@ -52,6 +52,89 @@ class TestOpenAIEndpoints:
 
         assert response.status_code == 401
 
+    def test_get_models_codex_client_version(self, test_client, auth_headers):
+        """GET /v1/models?client_version=<v> returns Codex {"models":[...]} shape."""
+        response = test_client.get("/v1/models?client_version=0.1.0", headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "models" in data
+        assert isinstance(data["models"], list)
+        assert len(data["models"]) > 0
+        assert "object" not in data
+        assert "data" not in data
+        # One entry per configured MoM model.
+        from mom_service.config import load_config
+
+        assert len(data["models"]) == len(load_config().models)
+        # Codex ModelInfo required fields are present per entry.
+        required = {
+            "slug",
+            "display_name",
+            "description",
+            "supported_reasoning_levels",
+            "shell_type",
+            "visibility",
+            "supported_in_api",
+            "priority",
+            "availability_nux",
+            "upgrade",
+            "base_instructions",
+            "support_verbosity",
+            "default_verbosity",
+            "apply_patch_tool_type",
+            "truncation_policy",
+            "supports_parallel_tool_calls",
+            "experimental_supported_tools",
+        }
+        seen_slugs = []
+        for entry in data["models"]:
+            assert required.issubset(entry.keys())
+            # slug and display_name both derive from the MoM model name.
+            assert entry["slug"] == entry["display_name"]
+            assert entry["slug"]
+            assert entry["visibility"] == "list"
+            assert entry["supported_in_api"] is True
+            assert entry["shell_type"] == "default"
+            assert entry["apply_patch_tool_type"] == "freeform"
+            assert entry["supports_parallel_tool_calls"] is True
+            assert entry["truncation_policy"]["mode"] == "tokens"
+            assert entry["truncation_policy"]["limit"] == 8192
+            assert entry["context_window"] == 200000
+            assert entry["max_context_window"] == 200000
+            seen_slugs.append(entry["slug"])
+        # Every model exposes a unique slug.
+        assert len(seen_slugs) == len(set(seen_slugs))
+
+    def test_get_models_codex_client_version_empty_value(self, test_client, auth_headers):
+        """Presence (not value) of client_version triggers Codex shape."""
+        response = test_client.get("/v1/models?client_version=", headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "models" in data
+        assert isinstance(data["models"], list)
+        assert "data" not in data
+
+    def test_get_models_codex_client_version_unauthorized(self, test_client):
+        """Codex path still enforces Bearer auth."""
+        response = test_client.get("/v1/models?client_version=0.1.0")
+
+        assert response.status_code == 401
+        assert "error" in response.json()
+
+    def test_get_models_without_client_version_returns_openai_shape(
+        self, test_client, auth_headers
+    ):
+        """Backward compat: no client_version -> OpenAI {"object":"list","data":[...]}."""
+        response = test_client.get("/v1/models", headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "list"
+        assert isinstance(data["data"], list)
+        assert "models" not in data
+
     @patch("mom_service.main.get_mom_model_config")
     @patch("mom_service.main._process_mom_chat_request")
     def test_chat_completions_non_streaming(
