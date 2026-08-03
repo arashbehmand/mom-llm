@@ -81,6 +81,57 @@ curl http://localhost:8000/v1/models \
   -H "Authorization: Bearer your-secret-bearer-token"
 ```
 
+#### Codex CLI Compatibility
+
+The Codex CLI model-picker calls `GET /v1/models?client_version=<v>` and expects a
+`{"models": [...]}` body (Codex `ModelInfo` entries) instead of the OpenAI list
+shape. When the `client_version` query parameter is present, the endpoint returns:
+
+```json
+{
+  "models": [
+    {
+      "slug": "mom",
+      "display_name": "mom",
+      "description": null,
+      "supported_reasoning_levels": [],
+      "shell_type": "default",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 50,
+      "availability_nux": null,
+      "upgrade": null,
+      "base_instructions": "",
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": "freeform",
+      "truncation_policy": {"mode": "tokens", "limit": 8192},
+      "supports_parallel_tool_calls": true,
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "experimental_supported_tools": []
+    }
+  ]
+}
+```
+
+> **Note:** `context_window` and `max_context_window` are set to a generous default
+> (200000) because MoM does not track the real context windows of backing LLMs in
+> config. If your backing models have smaller context windows, keep conversations
+> within their real limits to avoid oversized-prompt failures downstream.
+
+One entry is returned per configured MoM model.
+
+When `client_version` is absent, the standard OpenAI `{"object":"list","data":[...]}`
+shape is returned, so the OpenAI SDK and other OpenAI-compatible clients continue
+to work unchanged.
+
+**Example:**
+```bash
+curl "http://localhost:8000/v1/models?client_version=0.1.0" \
+  -H "Authorization: Bearer your-secret-bearer-token"
+```
+
 ### Chat Completions
 
 Send chat completion requests to your MoM models.

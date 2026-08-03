@@ -349,7 +349,7 @@ The MoM service exposes OpenAI-compatible chat endpoints and health checks. The 
 ### Quick API Overview
 
 **Core Endpoints:**
-- `GET /v1/models` - List available MoM models
+- `GET /v1/models` - List available MoM models (also serves Codex CLI's `{"models":[...]}` shape when called with `?client_version=`)
 - `POST /v1/chat/completions` - Chat completions (streaming and non-streaming)
 - `GET /health` - Health check
 - `GET http://localhost:8001/progress/{request_id}` - Live request progress page
