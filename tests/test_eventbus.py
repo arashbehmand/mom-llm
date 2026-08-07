@@ -159,6 +159,35 @@ async def test_ttl_eviction_closes_a_live_subscriber():
     assert await asyncio.wait_for(task, timeout=1.0) == ["fanout_started"]
 
 
+async def test_publish_to_a_stale_channel_revives_it_instead_of_evicting_it():
+    """Regression: `publish` used to sweep BEFORE touching, so a channel whose OWN `expires_at`
+    had already lapsed (a long gap between two of the same request's events — e.g. a slow
+    synthesis call) destroyed its own history and sentinel-closed its own live subscriber the
+    instant it tried to publish again, one line before touching would have kept it alive."""
+    now = {"t": 1000.0}
+    bus = InMemoryEventBus(ttl_seconds=10.0, now=lambda: now["t"])
+    task = asyncio.create_task(_drain(bus, "r"))
+    await _spin_until(lambda: "r" in bus._channels)
+    bus.publish("r", _ev("fanout_started"))
+    now["t"] = 1100.0  # advance well past the TTL with no further activity
+    bus.publish("r", _ev("completed"))  # this request's OWN publish, not an unrelated channel's
+    # The subscriber that was live the whole time gets BOTH events, not a close sentinel.
+    assert await asyncio.wait_for(task, timeout=1.0) == ["fanout_started", "completed"]
+
+
+async def test_subscribe_to_a_stale_channel_replays_its_history_instead_of_losing_it():
+    """Same bug, the subscribe-side mirror: a late subscriber must not evict — and thereby lose
+    the replay history of — the very channel it came to read."""
+    now = {"t": 1000.0}
+    bus = InMemoryEventBus(ttl_seconds=10.0, now=lambda: now["t"])
+    bus.publish("r", _ev("fanout_started"))
+    now["t"] = 1100.0  # advance well past the TTL before anyone subscribes
+    task = asyncio.create_task(_drain(bus, "r"))
+    await _spin_until(lambda: "r" in bus._channels and bus._channels["r"].subscribers)
+    bus.publish("r", _ev("completed"))
+    assert await asyncio.wait_for(task, timeout=1.0) == ["fanout_started", "completed"]
+
+
 async def test_aclose_closes_all_subscribers():
     bus = InMemoryEventBus()
     task = asyncio.create_task(_drain(bus, "r"))

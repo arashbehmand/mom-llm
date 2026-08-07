@@ -12,7 +12,7 @@ from mom.api.deps import ContainerDep
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 
-GroupBy = Literal["member", "turn_type", "day"]
+GroupBy = Literal["member", "turn_type", "day", "ensemble", "status"]
 
 
 @router.get("/metrics/usage")

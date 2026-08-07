@@ -213,6 +213,8 @@ async def test_progress_endpoint_replays_published_events():
 
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
+    assert resp.headers["cache-control"] == "no-cache"
+    assert resp.headers["x-accel-buffering"] == "no"
     frames = _parse_sse(resp.text)
     assert [f["event"] for f in frames] == [
         "fanout_started",

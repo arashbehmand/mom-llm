@@ -20,10 +20,12 @@ import pytest
 from mom.adapters.litellm_client import (
     LiteLLMClient,
     _call_params,
+    _call_with_retries,
     _chat_messages_to_responses_input,
     _chat_tool_choice_to_responses,
     _chat_tools_to_responses,
     _responses_params,
+    _retry_after_seconds,
     _tool_call_dict,
     _tool_call_fragment,
     _usage,
@@ -456,3 +458,194 @@ async def test_stream_wraps_errors_raised_mid_iteration(
 
     with pytest.raises(UpstreamError, match="member-a stream failed"):
         await _drain(LiteLLMClient(), _spec())
+
+
+# --------------------------------------------------------------------------------------------
+# _call_with_retries / retry wiring: mom owns retries now — litellm's own `num_retries` is never
+# used (see the adapter module's docstring for why: zero backoff for most error classes, and it
+# silently discards a fully-exhausted retry's own failure in favor of re-raising the FIRST
+# attempt's exception).
+# --------------------------------------------------------------------------------------------
+
+
+class _StatusError(Exception):
+    """A bare exception carrying just a ``status_code`` — enough for ``_classify``'s status-code
+    fallback path. The real ``litellm.exceptions`` submodule isn't reachable through the faked
+    bare ``litellm`` module these tests install (no ``__path__`` for submodule resolution), so
+    classification exercises exactly the fallback a non-litellm-wrapped failure (e.g. a raw httpx
+    error from the proxy path) would hit in production too.
+    """
+
+    def __init__(self, status_code: int, message: str = "boom") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _retryable_error(message: str = "rate limited") -> _StatusError:
+    return _StatusError(429, message)  # -> "rate_limit", IS in _RETRYABLE_KINDS
+
+
+def _non_retryable_error(message: str = "bad request") -> _StatusError:
+    return _StatusError(400, message)  # -> "bad_request", NOT in _RETRYABLE_KINDS
+
+
+async def test_call_with_retries_retries_then_succeeds() -> None:
+    calls: list[int] = []
+
+    async def make_call() -> str:
+        calls.append(1)
+        if len(calls) < 3:
+            raise _retryable_error()
+        return "ok"
+
+    result, attempts = await _call_with_retries(
+        make_call, spec=_spec(retries=3, retry_backoff_seconds=0.001), verb="call"
+    )
+    assert result == "ok"
+    assert attempts == 3
+    assert len(calls) == 3
+
+
+async def test_call_with_retries_exhausts_and_raises_the_last_error() -> None:
+    calls: list[int] = []
+
+    async def make_call() -> str:
+        calls.append(1)
+        raise _retryable_error(f"failure #{len(calls)}")
+
+    with pytest.raises(UpstreamError) as excinfo:
+        await _call_with_retries(
+            make_call, spec=_spec(retries=2, retry_backoff_seconds=0.001), verb="call"
+        )
+    # 1 initial + 2 retries = 3 attempts; the raised error is the LAST one, not the first —
+    # litellm's own wrapper would have silently discarded this and re-raised failure #1 instead.
+    assert len(calls) == 3
+    assert "failure #3" in str(excinfo.value.__cause__)
+    assert excinfo.value.attempts == 3
+
+
+async def test_call_with_retries_never_retries_a_non_retryable_kind() -> None:
+    calls: list[int] = []
+
+    async def make_call() -> str:
+        calls.append(1)
+        raise _non_retryable_error()
+
+    with pytest.raises(UpstreamError):
+        await _call_with_retries(
+            make_call, spec=_spec(retries=5, retry_backoff_seconds=0.001), verb="call"
+        )
+    assert len(calls) == 1  # a bad_request fails identically every time — retrying is pure waste
+
+
+async def test_call_with_retries_default_zero_retries_means_one_attempt() -> None:
+    calls: list[int] = []
+
+    async def make_call() -> str:
+        calls.append(1)
+        raise _retryable_error()
+
+    with pytest.raises(UpstreamError):
+        await _call_with_retries(make_call, spec=_spec(), verb="call")  # retries=0 by default
+    assert len(calls) == 1
+
+
+async def test_complete_retries_a_retryable_error_then_succeeds(
+    litellm_module: ModuleType,
+) -> None:
+    calls: list[int] = []
+
+    async def acompletion(**_: Any) -> NS:
+        calls.append(1)
+        if len(calls) < 3:
+            raise _retryable_error(f"attempt {len(calls)}")
+        return _response(content="ok")
+
+    litellm_module.acompletion = acompletion  # type: ignore[attr-defined]
+
+    result = await LiteLLMClient().complete(_spec(retries=3, retry_backoff_seconds=0.001))
+    assert result.content == "ok"
+    assert result.attempts == 3
+    assert len(calls) == 3
+
+
+async def test_complete_never_retries_a_non_retryable_kind(litellm_module: ModuleType) -> None:
+    calls: list[int] = []
+
+    async def acompletion(**_: Any) -> NS:
+        calls.append(1)
+        raise _non_retryable_error()
+
+    litellm_module.acompletion = acompletion  # type: ignore[attr-defined]
+
+    with pytest.raises(UpstreamError):
+        await LiteLLMClient().complete(_spec(retries=5, retry_backoff_seconds=0.001))
+    assert len(calls) == 1
+
+
+async def test_stream_retries_connection_establishment_then_succeeds(
+    litellm_module: ModuleType,
+) -> None:
+    calls: list[int] = []
+    parts = [_chunk(content="hi"), _chunk(finish_reason="stop", usage=_usage_obj())]
+
+    async def acompletion(**_: Any) -> AsyncIterator[NS]:
+        calls.append(1)
+        if len(calls) < 2:
+            raise _retryable_error()
+        return _aiter(parts)
+
+    litellm_module.acompletion = acompletion  # type: ignore[attr-defined]
+
+    chunks = await _drain(LiteLLMClient(), _spec(retries=2, retry_backoff_seconds=0.001))
+    assert len(calls) == 2
+    assert chunks[0].attempts == 2  # stamped on the FIRST yielded chunk only
+    assert all(c.attempts is None for c in chunks[1:])
+
+
+async def test_stream_never_retries_a_mid_stream_failure(litellm_module: ModuleType) -> None:
+    """Once content has been yielded, a failure can't be un-sent — retrying would duplicate or
+    corrupt the client-visible answer. mom's retry loop only ever covers connection
+    establishment (the initial ``await litellm.acompletion(stream=True, ...)``), never the
+    ``async for`` iteration that follows."""
+    calls: list[int] = []
+
+    async def acompletion(**_: Any) -> AsyncIterator[NS]:
+        calls.append(1)
+        return _aiter([_chunk(content="partial")], raise_at_end=_retryable_error("dropped"))
+
+    litellm_module.acompletion = acompletion  # type: ignore[attr-defined]
+
+    with pytest.raises(UpstreamError, match="member-a stream failed"):
+        await _drain(LiteLLMClient(), _spec(retries=3, retry_backoff_seconds=0.001))
+    assert len(calls) == 1  # the mid-stream failure was NOT retried, despite being a retryable kind
+
+
+# --------------------------------------------------------------------------------------------
+# _retry_after_seconds: a provider's Retry-After header, preferred over blind backoff.
+# --------------------------------------------------------------------------------------------
+
+
+def test_retry_after_seconds_reads_a_sane_header() -> None:
+    exc = NS(response=NS(headers={"retry-after": "2.5"}))
+    assert _retry_after_seconds(exc) == 2.5
+
+
+def test_retry_after_seconds_caps_a_huge_header() -> None:
+    exc = NS(response=NS(headers={"retry-after": "9999"}))
+    assert _retry_after_seconds(exc, cap=30.0) == 30.0
+
+
+def test_retry_after_seconds_none_when_absent() -> None:
+    assert _retry_after_seconds(NS(response=None)) is None
+    assert _retry_after_seconds(RuntimeError("x")) is None
+
+
+def test_retry_after_seconds_none_when_malformed() -> None:
+    exc = NS(response=NS(headers={"retry-after": "not-a-number"}))
+    assert _retry_after_seconds(exc) is None
+
+
+def test_retry_after_seconds_ignores_negative_values() -> None:
+    exc = NS(response=NS(headers={"retry-after": "-5"}))
+    assert _retry_after_seconds(exc) is None

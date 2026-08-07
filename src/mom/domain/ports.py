@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from mom.domain.errors import ErrorKind
 from mom.domain.progress import ProgressEvent
 from mom.domain.results import Usage
 
@@ -26,6 +27,10 @@ class CallSpec:
     proxy_url_env: str | None = None
     key_env_candidates: tuple[str, ...] = ()
     retries: int = 0
+    # Base delay for the adapter's own exponential-backoff retry loop (backoff * 2**(n-1)); the
+    # adapter never delegates retries to litellm (see litellm_client.py's module docstring for
+    # why). None -> the adapter's own default.
+    retry_backoff_seconds: float | None = None
     timeout_seconds: float | None = None
 
 
@@ -40,6 +45,7 @@ class Completion:
     tool_calls: tuple[dict[str, Any], ...] = ()
     cached: bool = False
     cost_usd: float | None = None  # provider cost from the adapter's cost map (None if unknown)
+    attempts: int = 1  # how many upstream attempts it took (mom's own retry loop, not litellm's)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +58,10 @@ class CompletionChunk:
     usage: Usage | None = None
     tool_call: dict[str, Any] | None = None
     cost_usd: float | None = None
+    # How many upstream connection attempts it took to establish this stream (mom's own retry
+    # loop only ever retries stream ESTABLISHMENT, never resumes mid-stream — see
+    # litellm_client.py). Set on the first chunk only; None on every chunk after (no re-count).
+    attempts: int | None = None
 
 
 class LLMClient(Protocol):
@@ -86,6 +96,16 @@ class Tracer(Protocol):
         duration_ms: float,
         cached: bool = False,
         error: str | None = None,
+        # Added for honest cost/error telemetry (Phase 3 of the v2 remediation): status lets a
+        # trace distinguish 'empty'/'timeout'/'aborted' from a hard error; cost_usd, when given,
+        # is mom's own computed cost — the ONE source of truth a backend should trust over its own
+        # (often wrong/missing) pricing map; error_kind/finish_reason are mom's safe vocabulary,
+        # never raw provider text.
+        status: str | None = None,
+        cost_usd: float | None = None,
+        error_kind: ErrorKind | None = None,
+        error_detail: str | None = None,
+        finish_reason: str | None = None,
     ) -> None:
         """Record one LLM call as an observation (grouped by request_id). Fire-and-forget."""
         ...

@@ -7,17 +7,11 @@ ordering is deterministic (config/member order), unlike v1's completion-order â€
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from mom.domain.request import ImagePart, MessageIR, TextPart
 from mom.domain.results import ModelOutcome
 from mom.domain.tooling import summarize_member_tool_calls
-
-
-_CONCLUDING_INSTRUCTION_RE = re.compile(
-    r"<<CONCLUDING-INSTRUCTION>>(.*?)<</CONCLUDING-INSTRUCTION>>", re.DOTALL
-)
 
 
 def message_to_dict(message: MessageIR) -> dict[str, Any]:
@@ -57,31 +51,20 @@ def messages_to_dicts(messages: tuple[MessageIR, ...]) -> list[dict[str, Any]]:
     return [message_to_dict(m) for m in messages]
 
 
-def extract_concluding_instruction(
-    messages: tuple[MessageIR, ...],
-) -> tuple[tuple[MessageIR, ...], str | None]:
-    """Pull a ``<<CONCLUDING-INSTRUCTION>>...<</...>>`` block out of the last user message.
+def append_instruction(
+    messages: list[dict[str, Any]], instruction: str | None
+) -> list[dict[str, Any]]:
+    """Append the ``<<SYSTEM>>``/``<<CONCLUDING-INSTRUCTION>>`` instruction as the final message,
+    if any (a no-op otherwise).
 
-    Returns the messages with the block stripped and the extracted instruction (or None).
+    Shared by the normal synthesis path (the tail of :func:`build_synthesis_messages`) and the
+    passthrough/relay ``skip_fanout`` path â€” which, before this, silently dropped the instruction
+    entirely: it was stripped from the client message during plan resolution but never
+    re-attached anywhere on that path.
     """
-    if not messages:
-        return messages, None
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if message.role != "user" or not isinstance(message.content, str):
-            continue
-        match = _CONCLUDING_INSTRUCTION_RE.search(message.content)
-        if not match:
-            return messages, None
-        instruction = match.group(1).strip()
-        stripped = _CONCLUDING_INSTRUCTION_RE.sub("", message.content).strip()
-        new_messages = (
-            *messages[:index],
-            MessageIR(role=message.role, content=stripped, name=message.name),
-            *messages[index + 1 :],
-        )
-        return new_messages, instruction or None
-    return messages, None
+    if not instruction:
+        return messages
+    return [*messages, {"role": "user", "content": instruction}]
 
 
 def build_synthesis_messages(
@@ -110,9 +93,7 @@ def build_synthesis_messages(
         messages.append({"role": "user", "content": tool_note})
     if prompt:
         messages.append({"role": "user", "content": prompt})
-    if instruction:
-        messages.append({"role": "user", "content": instruction})
-    return messages
+    return append_instruction(messages, instruction)
 
 
 def all_failed_message(outcomes: list[ModelOutcome]) -> list[dict[str, Any]]:

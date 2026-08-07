@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from mom.api.auth import require_api_key
 from mom.api.deps import ContainerDep
@@ -15,6 +15,7 @@ from mom.api.reqid import (
     response_headers,
 )
 from mom.api.schemas.responses import ResponsesRequest
+from mom.api.sse import sse_response
 from mom.engine.pipeline import PipelineDeps, collect, run_ensemble
 from mom.engine.plan import resolve_plan
 
@@ -53,7 +54,9 @@ async def responses(
             show_work=plan.show_work,
             progress_url=headers[PROGRESS_URL_HEADER],
         )
-        return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
+        heartbeat = container.catalog.config.server.stream_heartbeat
+        heartbeat_seconds = heartbeat.total_seconds() if heartbeat is not None else None
+        return sse_response(stream, headers=headers, heartbeat_seconds=heartbeat_seconds)
     result = await collect(run_ensemble(plan, deps))
     return JSONResponse(
         build_response(

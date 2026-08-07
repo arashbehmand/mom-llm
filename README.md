@@ -167,18 +167,49 @@ Content: [that member's answer]
 `show_work: native` routes it through the provider's reasoning channel instead; `off` (the default)
 hides it.
 
-### Concluding instruction — steer the synthesis, not the panel
+### `<<SYSTEM>>` — steer synthesis, or exempt specific members, for one turn
 
-Wrap a directive in `<<CONCLUDING-INSTRUCTION>>…<</CONCLUDING-INSTRUCTION>>` anywhere in your
-message. MoM **strips it from what the fan-out members see** and hands it **only to the concluding
-model**, so you can steer the final synthesis without biasing the panel that feeds it:
+Wrap directives in `<<SYSTEM>>…<</SYSTEM>>` in the **last** message of your turn. MoM **strips the
+block from what the fan-out members see**; a plain-text body becomes an instruction handed **only
+to the concluding model**, so you can steer the final synthesis without biasing the panel that
+feeds it:
 
 ```
 Summarize the trade-offs of WAL mode in SQLite.
-<<CONCLUDING-INSTRUCTION>>Answer as a terse bullet list, no preamble.<</CONCLUDING-INSTRUCTION>>
+<<SYSTEM>>Answer as a terse bullet list, no preamble.<</SYSTEM>>
 ```
 
-The members answer the plain question; the synthesizer additionally obeys the instruction.
+A few leading `key: value` lines are read as **directives** before the instruction text starts —
+consumed from the top for as long as the key is recognized; the first line that isn't shaped like
+`key: value` ends the directive header and everything from there on is the instruction, verbatim:
+
+```
+Compare these two approaches.
+<<SYSTEM>>
+exclude: k3, glm52
+only: oai56s, cl48op
+show_work: off
+synth: cl48op
+Weigh whichever response cites real sources most heavily.
+<</SYSTEM>>
+```
+
+| Directive | Effect |
+|---|---|
+| `exclude: a, b` | drop these member identities from this turn's panel |
+| `only: a, b` | run *just* these member identities (combine with `exclude` to remove some of those) |
+| `show_work: off\|inline\|native` | override the ensemble's configured `show_work` for this turn |
+| `synth: llm-name` | run synthesis on a different configured `llm` for this turn |
+
+Identities are the `as:`/`llm` names shown in the think block and the progress dashboard. An
+unknown identity, an exclusion that empties the panel below the ensemble's quorum, or an unknown
+`synth:` target all fail with a clean 400 **before** any fan-out spend — a typo silently doing
+nothing (and firing the panel anyway) is exactly what this is built to avoid. If your instruction
+text genuinely needs to start with something shaped like `Word: …`, either leave a blank line
+before it or prefix it with the `instruction:` directive, which ends the header explicitly.
+
+The older `<<CONCLUDING-INSTRUCTION>>…<</CONCLUDING-INSTRUCTION>>` marker still works exactly as
+before (instruction-only, no directive header) — `<<SYSTEM>>` is just the generalized form.
 
 ### Web search
 

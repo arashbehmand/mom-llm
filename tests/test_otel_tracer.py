@@ -83,6 +83,59 @@ def test_missing_model_falls_back_to_unknown_system():
     assert "gen_ai.request.model" not in attrs
 
 
+def test_cost_usd_recorded_as_gen_ai_usage_cost():
+    tracer, exporter = _tracer_with_exporter()
+    _observe(tracer, cost_usd=0.0123)
+    (span,) = exporter.get_finished_spans()
+    assert dict(span.attributes or {})["gen_ai.usage.cost"] == 0.0123
+
+
+def test_cost_usd_omitted_when_not_given():
+    tracer, exporter = _tracer_with_exporter()
+    _observe(tracer)
+    (span,) = exporter.get_finished_spans()
+    assert "gen_ai.usage.cost" not in dict(span.attributes or {})
+
+
+def test_status_and_finish_reason_recorded_as_mom_attributes():
+    tracer, exporter = _tracer_with_exporter()
+    _observe(tracer, status="empty", finish_reason="length")
+    (span,) = exporter.get_finished_spans()
+    attrs = dict(span.attributes or {})
+    assert attrs["mom.status"] == "empty"
+    assert attrs["mom.finish_reason"] == "length"
+
+
+def test_error_adds_exception_event_with_kind_and_scrubbed_detail():
+    tracer, exporter = _tracer_with_exporter()
+    _observe(
+        tracer,
+        error="call failed",
+        error_kind="rate_limit",
+        error_detail="429 from provider, retry-after 2s",
+    )
+    (span,) = exporter.get_finished_spans()
+    (event,) = span.events
+    assert event.name == "exception"
+    assert event.attributes["exception.type"] == "rate_limit"
+    assert event.attributes["exception.message"] == "429 from provider, retry-after 2s"
+
+
+def test_error_without_kind_defaults_exception_type_to_unknown():
+    tracer, exporter = _tracer_with_exporter()
+    _observe(tracer, error="call failed")
+    (span,) = exporter.get_finished_spans()
+    (event,) = span.events
+    assert event.attributes["exception.type"] == "unknown"
+
+
+def test_no_error_means_no_exception_event():
+    tracer, exporter = _tracer_with_exporter()
+    _observe(tracer)
+    (span,) = exporter.get_finished_spans()
+    assert span.events == ()
+
+
 def test_observe_never_raises_from_a_broken_tracer():
     class _Boom:
         def start_span(self, **_: Any) -> Any:

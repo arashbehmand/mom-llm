@@ -25,6 +25,7 @@ llms:
   fast:  { model: openai/fast }
   deep:  { model: openai/deep, timeout: 90s }
   synth: { model: openai/synth }
+  synth2: { model: openai/synth2 }
   seeker:
     model: openai/seeker
     params: { tools: [{ type: web_search_preview }] }
@@ -36,9 +37,20 @@ ensembles:
     members:
       - { llm: fast, effort: { low: "off", high: high } }
       - { llm: deep, effort: pass }
+      - { llm: seeker, as: extra, effort: { low: skip, high: high } }
     synthesizer: { llm: synth, prompt: p, effort: { low: low, high: xhigh } }
   search_ens:
     members: [{ llm: seeker }]
+    synthesizer: { llm: synth, prompt: p }
+  filtered:
+    members:
+      - { llm: fast }
+      - { llm: deep, as: deep2 }
+      - { llm: seeker }
+    synthesizer: { llm: synth, prompt: p }
+  passthru:
+    strategy: passthrough
+    members: [fast]
     synthesizer: { llm: synth, prompt: p }
 prompts:
   p: "synthesize"
@@ -121,3 +133,108 @@ def test_tools_and_parallel_tool_calls_forwarded_to_synthesizer():
     assert plan.synth.params["tool_choice"] == "auto"
     assert isinstance(plan.synth.params["tools"], list)
     assert plan.synth.params["tools"][0]["function"]["name"] == "lookup"
+
+
+# -------------------------------------------------------------------------------------------
+# <<SYSTEM>> directives, end to end through resolve_plan.
+# -------------------------------------------------------------------------------------------
+
+
+def _ir_with_block(block: str, *, model: str = "filtered", **overrides) -> ChatRequestIR:
+    return _ir(model=model, messages=(MessageIR(role="user", content=f"hi {block}"),), **overrides)
+
+
+def test_exclude_removes_the_member_and_strips_the_block_from_client_messages():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>exclude: deep2<</SYSTEM>>"))
+    identities = {m.identity for m in plan.members}
+    assert identities == {"fast", "seeker"}
+    assert "SYSTEM" not in plan.client_messages[0]["content"]
+    assert plan.client_messages[0]["content"] == "hi"
+
+
+def test_exclude_by_as_alias_identity_works():
+    # "deep2" is the `as:` alias; the underlying llm name "deep" is not itself a valid identity
+    # to exclude on this ensemble (two members share the llm — see the next test).
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>exclude: deep2<</SYSTEM>>"))
+    assert "deep2" not in {m.identity for m in plan.members}
+
+
+def test_exclude_unknown_identity_raises_400_listing_the_roster():
+    with pytest.raises(InvalidRequestError, match="fast, seeker") as excinfo:
+        resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>exclude: nonexistent<</SYSTEM>>"))
+    assert "nonexistent" in str(excinfo.value)
+
+
+def test_only_restricts_the_panel_to_named_members():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>only: fast<</SYSTEM>>"))
+    assert {m.identity for m in plan.members} == {"fast"}
+
+
+def test_exclude_a_tier_skipped_member_is_a_harmless_no_op():
+    # "extra" (effort: skip at the low/default tier) is validated against the FULL roster
+    # (ensemble.members), not members_at(tier) — so excluding it must not 400 as "unknown member"
+    # even though it's already absent from the low-tier panel for an unrelated (static) reason.
+    plan = resolve_plan(
+        _catalog(), _ir_with_block("<<SYSTEM>>exclude: extra<</SYSTEM>>", model="tiered")
+    )
+    assert {m.identity for m in plan.members} == {"fast", "deep"}
+
+
+def test_quorum_below_min_results_after_exclude_is_a_pre_flight_400():
+    text = dedent(CONFIG) + "\ndefaults:\n  fanout: { min_results: 3 }\n"
+    config = resolve_catalog(Config.model_validate(yaml.safe_load(text)))
+    block = "<<SYSTEM>>exclude: deep2<</SYSTEM>>"
+    with pytest.raises(InvalidRequestError, match="min_results"):
+        resolve_plan(config, _ir_with_block(block, model="filtered"))
+
+
+def test_exclude_all_members_is_a_400():
+    with pytest.raises(InvalidRequestError):
+        resolve_plan(
+            _catalog(), _ir_with_block("<<SYSTEM>>exclude: fast, deep2, seeker<</SYSTEM>>")
+        )
+
+
+def test_directives_on_a_tiered_ensemble_dont_affect_normal_requests():
+    # No directive present -> zero behavior change (the fast-path in _select_members).
+    plan = resolve_plan(_catalog(), _ir(model="tiered"))
+    assert {m.identity for m in plan.members} == {"fast", "deep"}
+
+
+def test_exclude_on_a_passthrough_ensemble_is_a_400():
+    block = "<<SYSTEM>>exclude: fast<</SYSTEM>>"
+    with pytest.raises(InvalidRequestError, match="passthrough"):
+        resolve_plan(_catalog(), _ir_with_block(block, model="passthru"))
+
+
+def test_show_work_directive_overrides_the_ensemble_default():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>show_work: inline<</SYSTEM>>"))
+    assert plan.show_work == "inline"
+
+
+def test_invalid_show_work_directive_is_a_400():
+    with pytest.raises(InvalidRequestError, match="show_work"):
+        resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>show_work: verbose<</SYSTEM>>"))
+
+
+def test_synth_directive_retargets_the_synthesizer():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>synth: synth2<</SYSTEM>>"))
+    assert plan.synth.llm_name == "synth2"
+    assert plan.synth.model == "openai/synth2"
+
+
+def test_unknown_synth_directive_is_a_400():
+    with pytest.raises(InvalidRequestError, match="synth"):
+        resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>synth: nonexistent<</SYSTEM>>"))
+
+
+def test_instruction_alone_threads_through_unaffected_by_directives():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>Answer tersely.<</SYSTEM>>"))
+    assert plan.instruction == "Answer tersely."
+    assert {m.identity for m in plan.members} == {"fast", "deep2", "seeker"}
+
+
+def test_legacy_marker_still_works_end_to_end():
+    block = "<<CONCLUDING-INSTRUCTION>>Reply in Farsi.<</CONCLUDING-INSTRUCTION>>"
+    plan = resolve_plan(_catalog(), _ir_with_block(block))
+    assert plan.instruction == "Reply in Farsi."

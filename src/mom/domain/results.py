@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from mom.domain.errors import ErrorKind
+
 
 OutcomeStatus = Literal["ok", "empty", "error", "timeout", "skipped", "aborted"]
 
@@ -55,6 +57,14 @@ class ModelOutcome:
     # A member's *proposed* tool calls (advisory). The synthesizer owns the client-visible call by
     # default; `vote`/`first` strategies promote a member proposal directly. OpenAI wire shape.
     tool_calls: tuple[dict[str, Any], ...] = ()
+    # Operator-facing only (metrics, tracing, logs) — never part of ``error``, the client-visible
+    # field. ``finish_reason`` is set whenever a ``Completion`` came back (``ok``/``empty``, e.g.
+    # "stop"/"length"/"tool_calls" — a "length" empty explains itself); ``error_kind``/
+    # ``error_detail`` are set only when ``status`` is ``error``/``timeout``.
+    finish_reason: str | None = None
+    error_kind: ErrorKind | None = None
+    error_detail: str | None = None
+    attempts: int = 1  # how many upstream attempts mom's own retry loop made for this member
 
     @property
     def ok(self) -> bool:

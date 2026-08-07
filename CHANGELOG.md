@@ -8,6 +8,29 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- **In-flight request coalescing** (`server.dedupe`, off by default): a chat completions request
+  identical to one already running attaches to that run instead of starting a second fan-out +
+  synthesis, streaming the same answer from token zero; the coalesced response carries
+  `X-MoM-Coalesced: 1` and reports the original request's id. In-flight only — a run is dropped
+  from consideration the instant it completes, so a deliberate regenerate afterward always starts
+  fresh. `POST /v1/chat/completions` only for now.
+- **SSE keepalive + anti-buffering on every streaming surface**: `server.stream_heartbeat` is now
+  wired into `/v1/responses` and `/v1/messages` (previously chat completions only, so a slow
+  member on those two surfaces streamed silently and could trip a client's idle timeout), and
+  every SSE response now sets `Cache-Control: no-cache` / `X-Accel-Buffering: no` so an
+  intermediary can't buffer the stream (and its heartbeats) away entirely.
+- **`<<SYSTEM>>` directive block**, generalizing the old `<<CONCLUDING-INSTRUCTION>>` marker (which
+  keeps working unchanged as an alias): an optional header of `exclude:`/`only:` (per-turn member
+  selection), `show_work:`, and `synth:` (retarget the synthesizer), followed by the instruction
+  text verbatim. Also fixes the legacy marker being silently dead on any multipart message (e.g.
+  every Claude Code / image-bearing request), where it previously leaked its own raw markup into
+  the panel instead of being stripped.
+- **`mom metrics usage`** CLI (`--days`, `--ensemble`, `--by day|member|ensemble|status`): calls,
+  billable calls, cache hit rate, cost, and a per-status breakdown (including previously-invisible
+  `empty` and `timeout` outcomes) straight from the metrics store.
+- Metrics schema v2: `finish_reason`, `error_kind`, `error_detail`, and `attempts` on every call
+  row; `status` now records the full outcome (`ok`/`empty`/`timeout`/`error`/`detached`/`aborted`)
+  instead of collapsing everything non-`ok` into one opaque `error`.
 - **Tool-calling depth** (#14), building on the synthesizer-owned tool loop:
   - **Candidate envelope** — a member's proposed `tool_calls` are captured on its `ModelOutcome`
     (a tool-only proposal now counts as a real answer) and summarized to the synthesizer as
@@ -24,6 +47,48 @@ All notable changes to this project are documented in this file. The format is b
   - Responses `type: mcp` tool blocks are **forwarded** to a synthesizer whose provider supports
     remote MCP (else the clean 400 is kept), and streamed Anthropic thinking blocks now carry an
     opaque `signature_delta`.
+
+### Fixed
+
+- **Provider failures were invisible.** A member call's real error was silently discarded on the
+  hot path that actually matters — `UpstreamError` is a `MomError`, so the one branch that *did*
+  log never ran for it — leaving operators with zero signal on real fan-out failures. Errors are
+  now classified into a stable `ErrorKind` and a scrubbed, log/metrics/trace-only `error_detail`
+  (API keys, bearer tokens, and query strings/paths are stripped before it's ever persisted),
+  logged at the point of failure, and threaded through to Langfuse/OTel.
+- **A whole failure mode was mislabelled.** A member that returned no content and no tool call
+  (`status: "empty"`) was collapsed into the same opaque `error` bucket as a hard failure —
+  indistinguishable in the metrics store even though it still billed tokens for nothing. Now
+  recorded as its own status, with its own visual state on the progress dashboard.
+- **mom was silently retrying worse than not retrying at all.** litellm's built-in retry wrapper
+  (still enabled, invisibly) gave zero backoff for most error classes, retried non-retryable
+  errors (auth, bad request, context-length overflow) just as hard as transient ones, and — on a
+  retry that also failed — discarded that failure and re-raised the *first* attempt's error,
+  hiding what actually went wrong. Retries are now entirely mom's own: only classified-transient
+  errors, exponential backoff honoring a provider's `Retry-After`, the *last* attempt's error
+  surfaced, and an honest `attempts` count recorded end to end (including previously-unrecorded
+  failed synthesis calls).
+- **The progress dashboard could show "1 pending" forever.** A member that finished in the same
+  scheduling round as a client disconnect could be dropped with no event and no metric at all — a
+  narrower window than "between the deadline and the next check," specifically the suspension
+  point at `yield` itself. Fan-out accounting now treats "not yet reported to the consumer" as the
+  single source of truth, so a member handed to the same-request cleanup path is always either
+  reported or explicitly detached/cancelled, never silently lost.
+- **The progress link stayed invisible for the length of the first fan-out call.** The
+  `show_work: inline` think-block preamble (which carries the progress URL) opened only on the
+  first completed member — now it opens as soon as fan-out starts, so the link is in the first
+  streamed bytes regardless of how long any member takes.
+- A dashboard watching a `vote`/`first` tool-call turn hung open forever (no terminal progress
+  event was ever published on that path); a `passthrough`/relay turn showed a blank page
+  indistinguishable from a stuck request (nothing was published at all).
+- The progress event bus could evict and sentinel-close a request's own still-live channel the
+  moment it tried to publish to itself again after a long gap (e.g. a slow synthesizer call) — the
+  sweep ran before the touch that would have kept the channel alive. Same bug on the subscribe
+  side, where a late subscriber could evict the very history it came to replay.
+- Synthesis candidates were ordered by fan-out *completion* time, making a synthesizer's answer
+  non-deterministic run to run for identical inputs; now ordered by ensemble config order.
+- A `<<SYSTEM>>`/`<<CONCLUDING-INSTRUCTION>>` instruction was silently dropped on every
+  passthrough and tool-continuation (relay) turn instead of reaching the model.
 
 ## [2.0.0] - 2026-07-26
 

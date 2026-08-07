@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
 
 from mom import __version__
@@ -78,8 +78,17 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     install_error_handlers(app)
 
     @app.get("/health", tags=["ops"])
-    async def health() -> dict[str, str]:
-        return {"status": "ok", "version": __version__}
+    async def health(request: Request) -> dict[str, object]:
+        body: dict[str, object] = {"status": "ok", "version": __version__}
+        # `getattr` all the way down (not a MetricsSink.dropped protocol member — most
+        # implementations, e.g. a test fake, don't have one) so a missing container/metrics/
+        # attribute just omits the field rather than 500ing the health check.
+        running_container = getattr(request.app.state, "container", None)
+        metrics = getattr(running_container, "metrics", None)
+        dropped = getattr(metrics, "dropped", None)
+        if dropped is not None:
+            body["metrics_dropped"] = dropped
+        return body
 
     app.include_router(chat_router, prefix="/v1")
     app.include_router(models_router, prefix="/v1")

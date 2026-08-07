@@ -9,11 +9,14 @@ import pytest
 from mom.adapters.litellm_client import (
     LiteLLMTokenEstimator,
     _call_params,
+    _classify,
     _fallback_token_estimate,
     _proxy_client,
     _resolve_api_key,
     _responses_event_to_chunk,
     _responses_to_completion,
+    _scrub,
+    _upstream_error,
     _usage,
 )
 from mom.domain.errors import UpstreamError
@@ -30,11 +33,10 @@ def _spec(*, model: str = "openai/x", **kw: object) -> CallSpec:
     )
 
 
-def test_call_params_forwards_api_key_and_retries(monkeypatch: pytest.MonkeyPatch):
+def test_call_params_forwards_api_key_and_timeout(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("MY_KEY", "sk-abc")
     params = _call_params(_spec(key_env_candidates=("MY_KEY",), retries=3, timeout_seconds=12.0))
     assert params["api_key"] == "sk-abc"
-    assert params["num_retries"] == 3
     assert params["timeout"] == 12.0
     assert params["model"] == "openai/x"
 
@@ -50,8 +52,13 @@ def test_no_api_key_when_none_set(monkeypatch: pytest.MonkeyPatch):
     assert "api_key" not in _call_params(_spec(key_env_candidates=("ABSENT_KEY",)))
 
 
-def test_no_retries_key_when_zero():
-    assert "num_retries" not in _call_params(_spec())
+def test_num_retries_is_always_zero_mom_owns_retries_now():
+    """litellm's own `num_retries` retry wrapper is never used (see the module docstring on why:
+    zero backoff for most error classes, and it silently discards the last failure in favor of
+    re-raising the first). `spec.retries` still drives mom's own `_call_with_retries` loop
+    instead."""
+    assert _call_params(_spec())["num_retries"] == 0
+    assert _call_params(_spec(retries=3))["num_retries"] == 0
 
 
 def test_proxy_none_when_unconfigured():
@@ -333,3 +340,127 @@ def test_token_estimator_falls_back_when_tokenizer_unavailable(monkeypatch: pyte
     # Falls back to the chars/4 heuristic instead of propagating the tokenizer failure.
     count = estimator.count(model="gpt-4", messages=[{"role": "user", "content": "x" * 40}])
     assert count == 10
+
+
+# ------------------------------------------------------------------------------------------------
+# _classify / _scrub / _upstream_error — Phase 1 of the v2 remediation: turn opaque provider
+# failures into a mom-owned, client-safe ErrorKind plus a scrubbed operator-facing detail.
+# ------------------------------------------------------------------------------------------------
+
+
+def test_classify_litellm_exception_types():
+    import httpx
+    import litellm.exceptions as le
+
+    response = httpx.Response(403, request=httpx.Request("GET", "http://x"))
+    cases = [
+        (le.Timeout(message="t", model="m", llm_provider="openai"), "timeout"),
+        (le.RateLimitError(message="r", llm_provider="openai", model="m"), "rate_limit"),
+        (le.AuthenticationError(message="a", llm_provider="openai", model="m"), "auth"),
+        (
+            le.PermissionDeniedError(
+                message="p", llm_provider="openai", model="m", response=response
+            ),
+            "auth",
+        ),
+        (
+            le.ContextWindowExceededError(message="c", model="m", llm_provider="openai"),
+            "context_length",
+        ),
+        (
+            le.ContentPolicyViolationError(message="c", model="m", llm_provider="openai"),
+            "content_filter",
+        ),
+        (le.APIConnectionError(message="c", llm_provider="openai", model="m"), "connection"),
+        (le.InternalServerError(message="i", model="m", llm_provider="openai"), "server_error"),
+        (
+            le.ServiceUnavailableError(message="s", model="m", llm_provider="openai"),
+            "server_error",
+        ),
+        (le.BadRequestError(message="b", model="m", llm_provider="openai"), "bad_request"),
+    ]
+    for exc, expected in cases:
+        assert _classify(exc) == expected, exc.__class__.__name__
+
+
+def test_classify_falls_back_to_status_code_when_not_a_litellm_exception():
+    class _RawHttpError(Exception):
+        def __init__(self, status_code: int) -> None:
+            super().__init__("boom")
+            self.status_code = status_code
+
+    assert _classify(_RawHttpError(401)) == "auth"
+    assert _classify(_RawHttpError(429)) == "rate_limit"
+    assert _classify(_RawHttpError(408)) == "timeout"
+    assert _classify(_RawHttpError(400)) == "bad_request"
+    assert _classify(_RawHttpError(503)) == "server_error"
+
+
+class _ConnectionResetLikeError(Exception):
+    pass
+
+
+class _TimeoutLikeError(Exception):
+    pass
+
+
+def test_classify_falls_back_to_class_name_when_no_status_code():
+    assert _classify(_ConnectionResetLikeError("x")) == "connection"
+    assert _classify(_TimeoutLikeError("x")) == "timeout"
+
+
+def test_classify_unknown_defaults_to_unknown():
+    assert _classify(ValueError("some bug")) == "unknown"
+
+
+def test_scrub_redacts_openai_style_secret_key():
+    assert "sk-abc123def456" not in _scrub("failed with key=sk-abc123def456")
+
+
+def test_scrub_redacts_google_style_secret_key():
+    assert "AIzaSyD1234567890" not in _scrub("key AIzaSyD1234567890 rejected")
+
+
+def test_scrub_redacts_bearer_header():
+    scrubbed = _scrub("Authorization: Bearer sk-live-abcdefghijklmnop")
+    assert "abcdefghijklmnop" not in scrubbed
+
+
+def test_scrub_strips_query_string_but_keeps_the_url():
+    scrubbed = _scrub("GET https://api.example.com/v1/x?api_key=abc123&foo=bar failed")
+    assert "https://api.example.com/v1/x" in scrubbed
+    assert "abc123" not in scrubbed
+
+
+def test_scrub_collapses_long_absolute_paths():
+    scrubbed = _scrub("open failed: /home/deploy/secrets/prod/credentials.json")
+    assert "credentials.json" not in scrubbed
+
+
+def test_scrub_truncates():
+    assert len(_scrub("x" * 1000, max_chars=50)) == 50
+
+
+def test_upstream_error_safe_message_never_contains_the_raw_cause():
+    spec = _spec()
+    exc = ValueError("SECRET provider detail: key=sk-abc123def456")
+    err = _upstream_error(spec, exc, "call")
+    assert err.safe_message == "x call failed"
+    assert "SECRET" not in err.safe_message
+    assert err.kind == "unknown"  # ValueError isn't classified as anything specific
+    assert "sk-abc123def456" not in (err.detail or "")
+
+
+def test_upstream_error_classifies_and_scrubs_the_detail():
+    import litellm.exceptions as le
+
+    spec = _spec()
+    exc = le.RateLimitError(
+        message="rate limited, key=sk-abc123def456", llm_provider="x", model="m"
+    )
+    err = _upstream_error(spec, exc, "stream")
+    assert err.safe_message == "x stream failed"
+    assert err.kind == "rate_limit"
+    assert err.detail is not None
+    assert "sk-abc123def456" not in err.detail
+    assert "rate limited" in err.detail  # non-secret context is preserved, not wiped wholesale

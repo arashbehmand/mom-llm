@@ -6,6 +6,7 @@ deterministic ``ManualClock`` / ``SequentialIds`` without reimplementing the por
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping
 
 from mom.domain.errors import UpstreamError
@@ -56,7 +57,9 @@ class FakeLLM:
 
     ``replies`` maps an llm identity to its non-streaming content (fan-out); ``fail`` is a set of
     identities whose ``complete`` raises. ``synth_chunks`` are streamed by ``stream`` (the
-    synthesizer), followed by a terminal usage/finish chunk.
+    synthesizer), followed by a terminal usage/finish chunk. ``delays`` maps an identity to seconds
+    to ``asyncio.sleep`` before ``complete`` returns/raises — for scripting a straggler in
+    fan-out-deadline/detach tests without hand-rolling a one-off client.
     """
 
     def __init__(
@@ -68,6 +71,7 @@ class FakeLLM:
         finish_reason: str = "stop",
         tool_calls: tuple[dict[str, str], ...] = (),
         member_tool_calls: Mapping[str, tuple[Mapping[str, str], ...]] | None = None,
+        delays: Mapping[str, float] | None = None,
     ) -> None:
         self._replies = dict(replies or {})
         self._synth_chunks = synth_chunks
@@ -76,11 +80,15 @@ class FakeLLM:
         self._tool_calls = tool_calls
         # identity -> tool calls a fan-out member *proposes* (advisory; drives vote/first/envelope).
         self._member_tool_calls = dict(member_tool_calls or {})
+        self._delays = dict(delays or {})
         self.completions: list[CallSpec] = []
         self.streams: list[CallSpec] = []
 
     async def complete(self, spec: CallSpec) -> Completion:
         self.completions.append(spec)
+        delay = self._delays.get(spec.llm_name)
+        if delay:
+            await asyncio.sleep(delay)
         if spec.llm_name in self._fail:
             raise UpstreamError(f"{spec.llm_name} failed")
         proposed = self._member_tool_calls.get(spec.llm_name, ())

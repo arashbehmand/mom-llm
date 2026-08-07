@@ -20,6 +20,7 @@ from mom.domain.ports import (
     ToolCallCustody,
     Tracer,
 )
+from mom.engine.coalesce import CoalesceRegistry
 from mom.runtime.settings import Settings
 
 
@@ -39,3 +40,5 @@ class Container:
     # Process-local custody of provider-native tool-call ids behind minted client ids.
     custody: ToolCallCustody | None = None
     bus: EventBus | None = None
+    # In-flight request coalescing (`server.dedupe`); None when disabled.
+    coalesce: CoalesceRegistry | None = None

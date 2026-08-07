@@ -272,6 +272,19 @@ so opening the stream a moment after the call still replays the events already e
 Backed by an in-memory bus by default; set `MOM_REDIS_URL` to fan progress across worker processes
 via Redis (`pip install 'mom-llm[redis]'`).
 
+### In-flight request coalescing (`server.dedupe`)
+
+When enabled (off by default — see [`CONFIGURATION.md`](CONFIGURATION.md#server)), a chat
+completions request identical to one already in flight attaches to that run instead of starting a
+second one: both callers get the same answer, streamed from token zero, for the cost of one
+fan-out and one synthesis. A coalesced response's `X-Request-Id` (and therefore the progress link
+built from it) is the **original** request's id, not the second caller's own — that's the only
+channel with anything published on it — and it carries an additional `X-MoM-Coalesced: 1` response
+header so a client (or an operator reading logs) can tell the two apart. Coalescing is in-flight
+only: a run is dropped from consideration the instant it completes, so an intentional identical
+regenerate sent afterward always starts a fresh one. Currently wired into
+`POST /v1/chat/completions` only.
+
 ## `GET /health`
 
 Unauthenticated liveness probe. Returns `{"status": "ok", "version": "<v>"}`.

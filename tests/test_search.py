@@ -5,13 +5,14 @@ from __future__ import annotations
 from textwrap import dedent
 
 import httpx
+import structlog
 import yaml
 
 from mom.api.app import create_app
 from mom.api.deps import Container
 from mom.config.resolve import resolve_catalog
 from mom.config.schema import Config
-from mom.domain.request import ChatRequestIR, ImagePart, MessageIR
+from mom.domain.request import ChatRequestIR, ImagePart, MessageIR, ToolSpec
 from mom.engine.plan import resolve_plan
 from mom.runtime.settings import Settings
 from mom.testing import FakeLLM, ManualClock, SequentialIds
@@ -68,6 +69,69 @@ def test_image_request_filters_non_vision_members():
     plan = resolve_plan(catalog, ir)
     ids = {m.identity for m in plan.members}
     assert ids == {"online"}  # novis (vision: false) dropped
+
+
+def test_warns_when_web_search_and_tools_combine_on_a_search_capable_llm():
+    """Gemini/Vertex AI can't combine its search-grounding tool with function tools in one call —
+    litellm silently drops the search tool with only its own internal warning, invisible to mom.
+    This is the paper trail: the synthesizer (`online`, search-capable) also gets `ir.tools` wired
+    in ensemble `s`'s default arbitrate mode, so the conflict is on the synth params."""
+    catalog = _catalog()
+    ir = ChatRequestIR(
+        model="s",
+        messages=(MessageIR(role="user", content="latest news?"),),
+        web_search=True,
+        tools=(ToolSpec(name="lookup"),),
+    )
+    with structlog.testing.capture_logs() as logs:
+        resolve_plan(catalog, ir)
+    warnings = [
+        log
+        for log in logs
+        if log["log_level"] == "warning" and "search tool" in log.get("event", "")
+    ]
+    assert len(warnings) == 1
+    assert warnings[0]["llm"] == "online"
+
+
+def test_no_conflict_warning_for_web_search_alone():
+    catalog = _catalog()
+    ir = ChatRequestIR(
+        model="s", messages=(MessageIR(role="user", content="latest news?"),), web_search=True
+    )
+    with structlog.testing.capture_logs() as logs:
+        resolve_plan(catalog, ir)
+    assert not any("search tool" in log.get("event", "") for log in logs)
+
+
+def test_no_conflict_warning_for_tools_alone():
+    catalog = _catalog()
+    ir = ChatRequestIR(
+        model="s",
+        messages=(MessageIR(role="user", content="hi"),),
+        tools=(ToolSpec(name="lookup"),),
+    )
+    with structlog.testing.capture_logs() as logs:
+        resolve_plan(catalog, ir)
+    assert not any("search tool" in log.get("event", "") for log in logs)
+
+
+def test_no_conflict_warning_on_a_non_search_llm():
+    catalog = _catalog()
+    # ensemble "s" pairs `online` (search) with `offline` (no search) — the non-search member
+    # never has `web_search_options` in its params at all, so no conflict is possible for it.
+    ir = ChatRequestIR(
+        model="s",
+        messages=(MessageIR(role="user", content="hi"),),
+        web_search=True,
+        tools=(ToolSpec(name="lookup"),),
+    )
+    with structlog.testing.capture_logs() as logs:
+        resolve_plan(catalog, ir)
+    offline_warnings = [
+        log for log in logs if log.get("llm") == "offline" and "search tool" in log.get("event", "")
+    ]
+    assert offline_warnings == []
 
 
 async def test_web_search_via_chat_api():

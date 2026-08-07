@@ -7,10 +7,16 @@ clean HTTP errors instead of mid-stream surprises after fan-out money is spent.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from mom.config.resolve import ResolvedCatalog, ResolvedEnsemble, ResolvedLlm
+from mom.config.resolve import (
+    ResolvedCatalog,
+    ResolvedEnsemble,
+    ResolvedLlm,
+    ResolvedMember,
+    ResolvedSynthesizer,
+)
 from mom.config.types import (
     EFFORT_OFF,
     EFFORT_PASSTHROUGH,
@@ -20,11 +26,12 @@ from mom.config.types import (
     parse_effort_level,
 )
 from mom.domain.cost import Pricing
+from mom.domain.directives import SystemDirectives, extract_system_block
 from mom.domain.errors import InvalidRequestError, UnknownModelError
 from mom.domain.ports import CallSpec
 from mom.domain.prompt_caching import is_anthropic_family, openai_prompt_cache_key
 from mom.domain.request import ChatRequestIR, Sampling
-from mom.domain.synthesis import extract_concluding_instruction, messages_to_dicts
+from mom.domain.synthesis import messages_to_dicts
 from mom.domain.tooling import (
     classify_turn,
     member_tool_summary,
@@ -32,7 +39,10 @@ from mom.domain.tooling import (
     tool_choice_to_wire,
     tools_to_wire,
 )
+from mom.runtime.logging import get_logger
 
+
+logger = get_logger("mom.engine")
 
 SkipReason = Literal["passthrough", "tool_continuation"]
 
@@ -52,6 +62,7 @@ class SynthPlan:
     proxy_url_env: str | None
     key_env_candidates: tuple[str, ...]
     retries: int
+    retry_backoff_seconds: float
     params: dict[str, object]
     prompt: str | None
     timeout_seconds: float
@@ -187,6 +198,25 @@ def _apply_search(
     return out
 
 
+def _warn_search_tools_conflict(
+    llm: ResolvedLlm, params: Mapping[str, object], identity: str
+) -> None:
+    """Gemini/Vertex AI cannot combine its search-grounding tool with user-defined function tools
+    in one call — when both are present, litellm/the provider silently drops the search tool
+    (observed live: a "Dropping search tools" warning from litellm's Vertex AI adapter that never
+    reaches mom's own logs or the client). A request with ``web_search: true`` and ``tools`` set
+    against a Gemini member/synthesizer looks identical to a healthy one; this at least gives the
+    operator a paper trail for "why didn't it search."
+    """
+    if params.get("web_search_options") is not None and params.get("tools"):
+        logger.warning(
+            "web_search + function tools combined on a Gemini-family model; the provider is "
+            "likely to silently drop the search tool",
+            llm=identity,
+            model=llm.model,
+        )
+
+
 def _apply_sampling(params: dict[str, object], sampling: Sampling) -> None:
     """Apply the client's generation controls to the synthesizer (its client-visible output).
 
@@ -206,86 +236,62 @@ def _apply_sampling(params: dict[str, object], sampling: Sampling) -> None:
         params["seed"] = sampling.seed
 
 
-def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
-    """Resolve a chat request against the catalog into a ready-to-run plan."""
-    ensemble = catalog.ensembles.get(ir.model)
-    if ensemble is None:
-        raise UnknownModelError(f"unknown model {ir.model!r}")
+def _select_members(
+    ensemble: ResolvedEnsemble,
+    tier: EffortLevel | None,
+    directives: SystemDirectives | None,
+    *,
+    min_results: int,
+) -> tuple[ResolvedMember, ...]:
+    """Members participating at ``tier``, filtered by any ``<<SYSTEM>>`` ``only:``/``exclude:``.
 
-    messages, instruction = extract_concluding_instruction(ir.messages)
-    client_messages = messages_to_dicts(messages)
-    tier = _resolve_tier(ensemble, ir.effort)
-    retries = catalog.config.defaults.call.retries
-    fanout = catalog.config.defaults.fanout
+    Names are validated against the FULL roster (``ensemble.members``), not ``members_at(tier)``
+    — so "unknown member" never depends on which effort tier happened to be requested; a name
+    that's merely tier-skipped (``effort: skip``) is a harmless no-op, not an error. An exclusion
+    that would leave the panel below the ensemble's own quorum is a pre-flight 400 (before any
+    fan-out spend), not a mid-stream ``QuorumNotMet`` 502 arriving after the client already has a
+    200 response and SSE headers.
+    """
+    tiered = ensemble.members_at(tier)
+    if directives is None or (not directives.exclude and not directives.only):
+        return tiered
 
-    is_relay = ensemble.tools_continuation == "relay" and classify_turn(messages) == "relay"
-    skip_fanout = ensemble.strategy == "passthrough" or is_relay
-    skip_reason: SkipReason | None = None
-    if ensemble.strategy == "passthrough":
-        skip_reason = "passthrough"
-    elif is_relay:
-        skip_reason = "tool_continuation"
-
-    # vote/first make members the deciders: they get the real tool schemas so they can propose
-    # structured calls. In arbitrate mode members stay advisory — a schema-free summary only (they
-    # cannot invoke tools; the synthesizer owns the client-visible call).
-    members_propose = ensemble.tool_strategy in ("vote", "first")
-    member_messages = client_messages
-    if (
-        ir.tools
-        and ensemble.member_tool_context == "summary"
-        and not skip_fanout
-        and not members_propose
-    ):
-        member_messages = [
-            *client_messages,
-            {"role": "system", "content": member_tool_summary(ir.tools)},
-        ]
-
-    members: list[PlannedMember] = []
-    if not skip_fanout:
-        estimated_input_tokens = _estimate_input_tokens(member_messages)
-        for member in ensemble.members_at(tier):
-            llm = catalog.llms[member.llm]
-            # Image requests propagate only to vision-capable members (others drop out).
-            if ir.has_images and not _vision_ok(llm):
-                continue
-            # Per-llm input budget: a member whose estimated input exceeds its max_input_tokens
-            # either drops out of the panel (on_input_overflow: skip, the default) or fails the
-            # whole request (reject) — resolved pre-flight so 'reject' is a clean 400 before spend.
-            if llm.max_input_tokens is not None and estimated_input_tokens > llm.max_input_tokens:
-                if ensemble.on_input_overflow == "reject":
-                    raise InvalidRequestError(
-                        f"input (~{estimated_input_tokens} tokens) exceeds "
-                        f"max_input_tokens={llm.max_input_tokens} for llm {member.llm!r}"
-                    )
-                continue
-            params = _member_params(llm, dict(member.effort_by_tier), tier, ir.effort)
-            params = _apply_search(params, llm, ir.web_search)
-            if members_propose and ir.tools:
-                params["tools"] = tools_to_wire(ir.tools)
-                params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)
-                if ir.parallel_tool_calls is not None:
-                    params["parallel_tool_calls"] = ir.parallel_tool_calls
-            members.append(
-                PlannedMember(
-                    identity=member.identity,
-                    spec=CallSpec(
-                        llm_name=member.identity,
-                        model=llm.model,
-                        messages=member_messages,
-                        params=params,
-                        api=llm.api,
-                        proxy_url_env=llm.proxy_url_env,
-                        key_env_candidates=llm.key_env_candidates,
-                        retries=retries,
-                        timeout_seconds=_timeout_seconds(catalog, llm),
-                    ),
-                    pricing=_pricing_of(llm),
-                )
+    roster = {m.identity: m for m in ensemble.members}
+    for name in (*directives.only, *directives.exclude):
+        if name not in roster:
+            raise InvalidRequestError(
+                f"unknown member {name!r} in <<SYSTEM>> directive; ensemble {ensemble.name!r} "
+                f"members: {', '.join(sorted(roster))}"
             )
 
-    syn = ensemble.synthesizer
+    selected = tiered
+    if directives.only:
+        only_set = set(directives.only)
+        selected = tuple(m for m in selected if m.identity in only_set)
+    if directives.exclude:
+        exclude_set = set(directives.exclude)
+        selected = tuple(m for m in selected if m.identity not in exclude_set)
+
+    if len(selected) < max(min_results, 1):
+        raise InvalidRequestError(
+            f"<<SYSTEM>> directive leaves {len(selected)} member(s) for ensemble "
+            f"{ensemble.name!r}, below its min_results={min_results}"
+        )
+    return selected
+
+
+def _resolve_synth(
+    catalog: ResolvedCatalog,
+    syn: ResolvedSynthesizer,
+    tier: EffortLevel | None,
+    ir: ChatRequestIR,
+    client_messages: list[dict[str, object]],
+    *,
+    retries: int,
+    retry_backoff_seconds: float,
+) -> SynthPlan:
+    """Resolve one synthesizer config (``ensemble.synthesizer``, or a ``<<SYSTEM>> synth:``
+    override of it — same shape, different ``llm``) into a ``SynthPlan``."""
     syn_llm = catalog.llms[syn.llm]
     synth_params = _member_params(syn_llm, dict(syn.effort_by_tier), tier, ir.effort)
     synth_params = _apply_search(synth_params, syn_llm, ir.web_search)
@@ -309,6 +315,7 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         synth_params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)
         if ir.parallel_tool_calls is not None:
             synth_params["parallel_tool_calls"] = ir.parallel_tool_calls
+    _warn_search_tools_conflict(syn_llm, synth_params, syn.llm)
     # Provider prompt caching: Anthropic reads cache_control breakpoints (injected at stream time
     # in the pipeline); OpenAI/xAI just need a stable prompt_cache_key for prefix-cache affinity.
     pcache = catalog.config.defaults.provider_cache
@@ -319,18 +326,145 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     elif provider in {"openai", "azure", "xai"} and pcache.openai.prompt_cache_key == "auto":
         synth_params["prompt_cache_key"] = openai_prompt_cache_key(client_messages)
     prompt_name = syn.search_prompt if (ir.web_search and syn.search_prompt) else syn.prompt
-    synth = SynthPlan(
+    return SynthPlan(
         llm_name=syn.llm,
         model=syn_llm.model,
         api=syn_llm.api,
         proxy_url_env=syn_llm.proxy_url_env,
         key_env_candidates=syn_llm.key_env_candidates,
         retries=retries,
+        retry_backoff_seconds=retry_backoff_seconds,
         params=synth_params,
         prompt=catalog.config.prompts.get(prompt_name) if prompt_name else None,
         timeout_seconds=_timeout_seconds(catalog, syn_llm),
         pricing=_pricing_of(syn_llm),
         anthropic_cache_ttl=anthropic_cache_ttl,
+    )
+
+
+def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
+    """Resolve a chat request against the catalog into a ready-to-run plan."""
+    ensemble = catalog.ensembles.get(ir.model)
+    if ensemble is None:
+        raise UnknownModelError(f"unknown model {ir.model!r}")
+
+    messages, directives = extract_system_block(ir.messages)
+    instruction = directives.instruction if directives is not None else None
+    client_messages = messages_to_dicts(messages)
+    tier = _resolve_tier(ensemble, ir.effort)
+    retries = catalog.config.defaults.call.retries
+    retry_backoff_seconds = catalog.config.defaults.call.retry_backoff.total_seconds()
+    fanout = catalog.config.defaults.fanout
+
+    is_relay = ensemble.tools_continuation == "relay" and classify_turn(messages) == "relay"
+    skip_fanout = ensemble.strategy == "passthrough" or is_relay
+    skip_reason: SkipReason | None = None
+    if ensemble.strategy == "passthrough":
+        skip_reason = "passthrough"
+    elif is_relay:
+        skip_reason = "tool_continuation"
+
+    if (
+        directives is not None
+        and (directives.exclude or directives.only)
+        and ensemble.strategy == "passthrough"
+    ):
+        # A static property of the ensemble, so an error here is informative rather than a
+        # confusing silent no-op — unlike a relay turn (below), which stays quiet because erroring
+        # mid-tool-loop would break a continuation the client has no way to amend.
+        raise InvalidRequestError(
+            f"exclude:/only: directives have no effect on ensemble {ir.model!r} "
+            "(strategy: passthrough fans out to at most one member already)"
+        )
+
+    show_work = ensemble.show_work
+    if directives is not None and directives.show_work is not None:
+        if directives.show_work not in ("off", "inline", "native"):
+            raise InvalidRequestError(
+                f"invalid <<SYSTEM>> show_work: {directives.show_work!r} "
+                "(expected off, inline, or native)"
+            )
+        show_work = directives.show_work
+
+    # vote/first make members the deciders: they get the real tool schemas so they can propose
+    # structured calls. In arbitrate mode members stay advisory — a schema-free summary only (they
+    # cannot invoke tools; the synthesizer owns the client-visible call).
+    members_propose = ensemble.tool_strategy in ("vote", "first")
+    member_messages = client_messages
+    if (
+        ir.tools
+        and ensemble.member_tool_context == "summary"
+        and not skip_fanout
+        and not members_propose
+    ):
+        member_messages = [
+            *client_messages,
+            {"role": "system", "content": member_tool_summary(ir.tools)},
+        ]
+
+    members: list[PlannedMember] = []
+    if not skip_fanout:
+        estimated_input_tokens = _estimate_input_tokens(member_messages)
+        # A relay turn ignores exclude:/only: (see above) — members_at(tier) unfiltered by
+        # directives in that case; _select_members no-ops when there's nothing to filter by.
+        selected = _select_members(
+            ensemble, tier, None if is_relay else directives, min_results=fanout.min_results
+        )
+        for member in selected:
+            llm = catalog.llms[member.llm]
+            # Image requests propagate only to vision-capable members (others drop out).
+            if ir.has_images and not _vision_ok(llm):
+                continue
+            # Per-llm input budget: a member whose estimated input exceeds its max_input_tokens
+            # either drops out of the panel (on_input_overflow: skip, the default) or fails the
+            # whole request (reject) — resolved pre-flight so 'reject' is a clean 400 before spend.
+            if llm.max_input_tokens is not None and estimated_input_tokens > llm.max_input_tokens:
+                if ensemble.on_input_overflow == "reject":
+                    raise InvalidRequestError(
+                        f"input (~{estimated_input_tokens} tokens) exceeds "
+                        f"max_input_tokens={llm.max_input_tokens} for llm {member.llm!r}"
+                    )
+                continue
+            params = _member_params(llm, dict(member.effort_by_tier), tier, ir.effort)
+            params = _apply_search(params, llm, ir.web_search)
+            if members_propose and ir.tools:
+                params["tools"] = tools_to_wire(ir.tools)
+                params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)
+                if ir.parallel_tool_calls is not None:
+                    params["parallel_tool_calls"] = ir.parallel_tool_calls
+            _warn_search_tools_conflict(llm, params, member.identity)
+            members.append(
+                PlannedMember(
+                    identity=member.identity,
+                    spec=CallSpec(
+                        llm_name=member.identity,
+                        model=llm.model,
+                        messages=member_messages,
+                        params=params,
+                        api=llm.api,
+                        proxy_url_env=llm.proxy_url_env,
+                        key_env_candidates=llm.key_env_candidates,
+                        retries=retries,
+                        retry_backoff_seconds=retry_backoff_seconds,
+                        timeout_seconds=_timeout_seconds(catalog, llm),
+                    ),
+                    pricing=_pricing_of(llm),
+                )
+            )
+
+    syn = ensemble.synthesizer
+    if directives is not None and directives.synth is not None:
+        if directives.synth not in catalog.llms:
+            raise InvalidRequestError(f"unknown llm {directives.synth!r} in <<SYSTEM>> synth:")
+        syn = replace(syn, llm=directives.synth)
+    synth = _resolve_synth(
+        catalog,
+        syn,
+        tier,
+        ir,
+        client_messages,
+        retries=retries,
+        retry_backoff_seconds=retry_backoff_seconds,
     )
 
     return ExecutionPlan(
@@ -341,7 +475,7 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         stream_profile=ensemble.stream_profile,
         skip_fanout=skip_fanout,
         skip_reason=skip_reason,
-        show_work=ensemble.show_work,
+        show_work=show_work,
         tier=tier,
         client_messages=client_messages,
         members=tuple(members),

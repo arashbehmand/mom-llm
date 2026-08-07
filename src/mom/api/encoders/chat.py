@@ -25,6 +25,7 @@ from mom.api.schemas.openai_chat import (
 from mom.domain.events import (
     AnswerDelta,
     Completed,
+    FanoutStarted,
     MemberCompleted,
     PipelineFailed,
     StreamEvent,
@@ -135,16 +136,33 @@ async def encode_sse(
         role_sent = True
         return _chunk(frame, {"role": "assistant", "content": ""}, None)
 
+    def open_think() -> list[bytes]:
+        """The `<think>` + `Progress:` preamble, once. Idempotent — safe to call from every event
+        that might be the first thing seen (previously this only ran on the first
+        ``MemberCompleted``, so the progress link stayed invisible until the first fan-out member
+        finished, which can be minutes; ``FanoutStarted`` fires immediately instead)."""
+        nonlocal think_open
+        if think_open:
+            return []
+        think_open = True
+        chunks = [_chunk(frame, {"content": "<think>\n"}, None)]
+        if progress_url:
+            chunks.append(_chunk(frame, {"content": f"Progress: {progress_url}\n\n"}, None))
+        return chunks
+
     async for event in events:
-        if isinstance(event, MemberCompleted) and show_work == "inline":
+        if isinstance(event, FanoutStarted) and show_work == "inline":
             first = open_role()
             if first:
                 yield first
-            if not think_open:
-                think_open = True
-                yield _chunk(frame, {"content": "<think>\n"}, None)
-                if progress_url:
-                    yield _chunk(frame, {"content": f"Progress: {progress_url}\n\n"}, None)
+            for chunk in open_think():
+                yield chunk
+        elif isinstance(event, MemberCompleted) and show_work == "inline":
+            first = open_role()
+            if first:
+                yield first
+            for chunk in open_think():  # fallback opener if FanoutStarted never arrived
+                yield chunk
             yield _chunk(frame, {"content": _member_line(event.outcome)}, None)
         elif isinstance(event, SynthesisStarted):
             if think_open:
@@ -200,11 +218,20 @@ async def encode_sse(
             yield b"data: [DONE]\n\n"
             return
         elif isinstance(event, PipelineFailed):
+            # Close a `<think>` block opened by an early FanoutStarted/MemberCompleted before a
+            # failure (e.g. a quorum miss after the deadline) cuts the fan-out short — previously
+            # a pre-existing gap here, now user-visible now that think can open well before any
+            # answer content.
+            if think_open:
+                yield _chunk(frame, {"content": "</think>\n\n"}, None)
+                think_open = False
             error = {"message": event.message, "type": "upstream_error", "code": event.code}
             yield f"data: {json.dumps({'error': error})}\n\n".encode()
             yield b"data: [DONE]\n\n"
             return
     # Stream ended without a terminal event — synthesize one.
+    if think_open:
+        yield _chunk(frame, {"content": "</think>\n\n"}, None)
     yield _chunk(frame, {}, "stop")
     yield b"data: [DONE]\n\n"
 

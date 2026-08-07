@@ -46,6 +46,22 @@ class CorsConfig(_Model):
         return self
 
 
+class DedupeConfig(_Model):
+    """In-flight request coalescing: a duplicate concurrent turn attaches to the one live run
+    instead of starting a second fan-out + synthesis. Off by default — this is new, live-traffic-
+    facing concurrency machinery; enable once validated against real load.
+    """
+
+    enabled: bool = False
+    # How long a run keeps going with zero attached subscribers before it's cancelled outright.
+    # Covers the gap between a follower disconnecting and either a new one attaching or the
+    # leader's own client reconnecting — not a cache TTL, just "is anyone still waiting."
+    orphan_grace: Duration = timedelta(seconds=90)
+    # Backstop against one pathologically large run buffering an unbounded amount of history for
+    # a slow/absent subscriber; past this, the run keeps going but stops accepting new attachers.
+    max_buffer: ByteSize = 8 * 1024 * 1024  # 8 MiB
+
+
 class ServerConfig(_Model):
     auth: Literal["bearer", "none"] = "bearer"
     public_url: str | None = None
@@ -53,6 +69,7 @@ class ServerConfig(_Model):
     # Emit an SSE keepalive comment (`: ...`) on the response stream whenever it goes idle this
     # long, so a slow fan-out doesn't trip a client's idle read-timeout. null = off.
     stream_heartbeat: Duration | None = None
+    dedupe: DedupeConfig = Field(default_factory=DedupeConfig)
 
 
 class CallDefaults(_Model):

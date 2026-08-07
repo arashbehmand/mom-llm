@@ -20,6 +20,7 @@ from mom.adapters.observability import (
 from mom.config.loader import load_config
 from mom.config.resolve import ResolvedCatalog
 from mom.domain.ports import EventBus, LLMClient, Tracer
+from mom.engine.coalesce import CoalesceRegistry
 from mom.runtime.clock import SystemClock, UuidIds
 from mom.runtime.container import Container
 from mom.runtime.custody import InMemoryToolCallCustody
@@ -63,7 +64,30 @@ def build_tracer(catalog: ResolvedCatalog) -> Tracer:
     return CompositeTracer(tracers)
 
 
-def build_bus(settings: Settings) -> tuple[EventBus, Callable[[], Awaitable[None]]]:
+def _bus_ttl_seconds(catalog: ResolvedCatalog) -> float:
+    """The in-memory bus's history/idle TTL: long enough to outlive the longest silent gap in a
+    request's lifecycle.
+
+    That gap is NOT the fan-out deadline (bounded, typically minutes) — it's
+    ``synthesis_started -> completed``, during which nothing is published and which is bounded only
+    by the synthesizer's call timeout (20m by default; a per-llm override can be longer still). A
+    fixed default (previously a flat 300s) could be — and in production, with a 10m-deadline/20m-
+    timeout config, was — shorter than a single slow call, silently evicting the channel and, by
+    the bus's own lazy-sweep design, sentinel-closing any subscriber still watching mid-request.
+    """
+    defaults = catalog.config.defaults
+    longest_timeout = defaults.call.timeout.total_seconds()
+    for llm in catalog.llms.values():
+        if llm.timeout is not None:
+            longest_timeout = max(longest_timeout, llm.timeout.total_seconds())
+    if defaults.fanout.deadline is not None:
+        longest_timeout = max(longest_timeout, defaults.fanout.deadline.total_seconds())
+    return longest_timeout + 300.0  # a generous replay window for a late-joining subscriber
+
+
+def build_bus(
+    settings: Settings, catalog: ResolvedCatalog
+) -> tuple[EventBus, Callable[[], Awaitable[None]]]:
     """Build the progress event bus (Redis when ``redis_url`` is set, else in-memory)."""
     if settings.redis_url:
         try:
@@ -72,8 +96,20 @@ def build_bus(settings: Settings) -> tuple[EventBus, Callable[[], Awaitable[None
             logger.warning("redis event bus init failed; using in-memory", exc_info=True)
         else:
             return redis_bus, redis_bus.aclose
-    memory_bus = InMemoryEventBus()
+    memory_bus = InMemoryEventBus(ttl_seconds=_bus_ttl_seconds(catalog))
     return memory_bus, memory_bus.aclose
+
+
+def build_coalesce(catalog: ResolvedCatalog) -> CoalesceRegistry | None:
+    """Build the in-flight request coalescing registry, or ``None`` when ``server.dedupe`` is
+    off (the default) — a disabled feature must cost nothing and change nothing."""
+    dedupe = catalog.config.server.dedupe
+    if not dedupe.enabled:
+        return None
+    return CoalesceRegistry(
+        orphan_grace_seconds=dedupe.orphan_grace.total_seconds(),
+        max_buffer_chars=dedupe.max_buffer,
+    )
 
 
 def resolve_data_dir(settings: Settings, catalog: ResolvedCatalog) -> Path:
@@ -110,8 +146,10 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
     closers.append(metrics_store.close)
 
     tracer = build_tracer(catalog)
-    bus, bus_close = build_bus(settings)
+    bus, bus_close = build_bus(settings, catalog)
     closers.append(bus_close)
+
+    coalesce = build_coalesce(catalog)
 
     container = Container(
         settings=settings,
@@ -125,6 +163,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
         token_estimator=LiteLLMTokenEstimator(),
         custody=InMemoryToolCallCustody(),
         bus=bus,
+        coalesce=coalesce,
     )
 
     async def cleanup() -> None:

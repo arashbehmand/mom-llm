@@ -3,18 +3,35 @@
 Normalizes provider responses/chunks into the domain's ``Completion`` / ``CompletionChunk`` and
 usage into ``Usage`` (including provider prompt-cache tokens). This first version covers the chat
 route; the Responses route and the provider-specific streaming quirks are layered on later.
+
+Retries are entirely mom's own (see ``_call_with_retries``) — litellm's built-in ``num_retries`` is
+never used. Reading litellm's own wrapper (``litellm/utils.py``'s ``wrapper_async``) turned up why:
+``num_retries=N`` gives N *extra* attempts (N+1 total) via a ``tenacity`` retryer with **zero**
+backoff for every error class except ``RateLimitError``; and if every one of those retries ALSO
+fails, that failure is silently discarded (``except Exception: pass`` in the wrapper) and the
+*original first-attempt* exception is re-raised instead — so the caller never even learns what the
+last, most-informative failure actually was. mom's loop below classifies each attempt, backs off
+exponentially (honoring a provider ``Retry-After`` when present), and always surfaces the last
+failure with an honest attempt count.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import replace
 import os
+import re
 from typing import Any
 from urllib.parse import urlparse
 
-from mom.domain.errors import UpstreamError
+from mom.domain.errors import ErrorKind, UpstreamError
 from mom.domain.ports import CallSpec, Completion, CompletionChunk
 from mom.domain.results import Usage
+from mom.runtime.logging import get_logger
+
+
+logger = get_logger("mom.litellm")
 
 
 # Set before litellm is ever imported (lazily, below): use the bundled model-cost map instead of
@@ -225,8 +242,8 @@ def _responses_params(spec: CallSpec) -> dict[str, Any]:
         params["tool_choice"] = _chat_tool_choice_to_responses(params["tool_choice"])
     if spec.timeout_seconds is not None:
         params["timeout"] = spec.timeout_seconds
-    if spec.retries:
-        params["num_retries"] = spec.retries
+    # mom owns retries (_call_with_retries) — never litellm's own (see the module docstring).
+    params["num_retries"] = 0
     api_key = _resolve_api_key(spec.key_env_candidates)
     if api_key is not None:
         params["api_key"] = api_key
@@ -380,8 +397,8 @@ def _call_params(spec: CallSpec) -> dict[str, Any]:
     params["messages"] = spec.messages
     if spec.timeout_seconds is not None:
         params["timeout"] = spec.timeout_seconds
-    if spec.retries:
-        params["num_retries"] = spec.retries
+    # mom owns retries (_call_with_retries) — never litellm's own (see the module docstring).
+    params["num_retries"] = 0
     api_key = _resolve_api_key(spec.key_env_candidates)
     if api_key is not None:
         params["api_key"] = api_key
@@ -398,6 +415,183 @@ def _call_params(spec: CallSpec) -> dict[str, Any]:
     return params
 
 
+def _classify(exc: Exception) -> ErrorKind:
+    """Best-effort mapping from a caught exception to a mom-owned, client-safe ``ErrorKind``.
+
+    litellm normalizes provider errors onto OpenAI's exception hierarchy, so an ``isinstance``
+    check against its well-known classes is the primary signal; a raw ``status_code`` and finally
+    class-name substrings are the fallback for anything litellm doesn't wrap (a proxy/httpx
+    failure, a provider SDK quirk litellm hasn't seen yet).
+    """
+    try:
+        import litellm.exceptions as le
+
+        if isinstance(exc, le.Timeout):
+            return "timeout"
+        if isinstance(exc, le.RateLimitError):
+            return "rate_limit"
+        if isinstance(exc, le.AuthenticationError | le.PermissionDeniedError):
+            return "auth"
+        if isinstance(exc, le.ContextWindowExceededError):
+            return "context_length"
+        if isinstance(exc, le.ContentPolicyViolationError):
+            return "content_filter"
+        if isinstance(exc, le.APIConnectionError):
+            return "connection"
+        if isinstance(exc, le.InternalServerError | le.ServiceUnavailableError):
+            return "server_error"
+        if isinstance(exc, le.BadRequestError):
+            return "bad_request"
+    except ImportError:
+        pass
+
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        if status in (401, 403):
+            return "auth"
+        if status == 408:
+            return "timeout"
+        if status == 429:
+            return "rate_limit"
+        if status in (400, 422):
+            return "bad_request"
+        if status >= 500:
+            return "server_error"
+
+    name = exc.__class__.__name__.lower()
+    if "timeout" in name:
+        return "timeout"
+    if "ratelimit" in name:
+        return "rate_limit"
+    if "authenticat" in name or "permissiondenied" in name:
+        return "auth"
+    if "contextwindow" in name or "contextlength" in name:
+        return "context_length"
+    if "contentpolicy" in name or "contentfilter" in name:
+        return "content_filter"
+    if "connection" in name:
+        return "connection"
+    if "badrequest" in name or "invalidrequest" in name:
+        return "bad_request"
+    if "internalserver" in name or "serviceunavailable" in name:
+        return "server_error"
+    return "unknown"
+
+
+def _scrub(text: str, *, max_chars: int = 500) -> str:
+    """Redact likely secrets from upstream error text before it reaches logs/metrics/tracing.
+
+    Best-effort defense in depth — this text never reaches a client either way (an ``UpstreamError``
+    always carries a fixed, generic ``safe_message``); this is only for the operator-facing copy.
+    """
+    scrubbed = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}", "[redacted-key]", text)
+    scrubbed = re.sub(r"\bAIza[A-Za-z0-9_-]{10,}", "[redacted-key]", scrubbed)
+    scrubbed = re.sub(r"[Bb]earer\s+\S+", "Bearer [redacted]", scrubbed)
+    scrubbed = re.sub(r"(https?://[^\s\"'?]+)\?[^\s\"']*", r"\1?[redacted]", scrubbed)
+    # `(?<!/)` keeps this from also eating a URL's own `//host/path` (each `/segment` there is
+    # preceded by another `/`, which a genuine absolute filesystem path never is).
+    scrubbed = re.sub(r"(?<!/)(?:/[\w.\-]+){3,}", "[path]", scrubbed)
+    return scrubbed.strip()[:max_chars]
+
+
+def _upstream_error(
+    spec: CallSpec, exc: Exception, verb: str, *, attempts: int = 1
+) -> UpstreamError:
+    """The one construction site for every provider-call failure.
+
+    Every raise site (``complete`` / ``_complete_via_responses`` / ``stream`` /
+    ``_stream_via_responses``) goes through this, so classification can't drift between them.
+    ``verb`` is ``"call"`` or ``"stream"`` — kept in the safe message for symmetry with the
+    pre-existing wording. ``attempts`` is how many times mom's own retry loop tried before giving
+    up (1 if the failure came from somewhere other than ``_call_with_retries``, e.g. a mid-stream
+    error, which is never retried).
+    """
+    return UpstreamError(
+        f"{spec.llm_name} {verb} failed",
+        kind=_classify(exc),
+        detail=_scrub(str(exc)),
+        attempts=attempts,
+    )
+
+
+# Only these are worth retrying: a rate limit or a transient connection/server/timeout failure. A
+# bad_request/auth/context_length/content_filter error will fail identically on every attempt —
+# retrying it just burns 2-3x the latency (and, for a paid call that partially generated before
+# erroring, 2-3x the cost) for a guaranteed-identical outcome.
+_RETRYABLE_KINDS: frozenset[ErrorKind] = frozenset(
+    {"rate_limit", "connection", "server_error", "timeout"}
+)
+
+
+def _retry_after_seconds(exc: Exception, *, cap: float = 30.0) -> float | None:
+    """A provider's ``Retry-After`` response header, if present and sane.
+
+    Preferred over our own blind exponential backoff when a rate-limited provider tells us exactly
+    how long to wait; capped so a malformed or deliberately huge header value can't stall a request
+    far past its own timeout budget. Best-effort: any shape mismatch just falls through to None,
+    letting the caller fall back to its own backoff schedule.
+    """
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) or getattr(exc, "headers", None)
+    if headers is None:
+        return None
+    try:
+        raw = headers.get("retry-after") or headers.get("Retry-After")
+    except AttributeError:
+        return None
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, cap)
+
+
+async def _call_with_retries[T](
+    make_call: Callable[[], Awaitable[T]], *, spec: CallSpec, verb: str
+) -> tuple[T, int]:
+    """Attempt ``make_call()`` up to ``spec.retries + 1`` times total, retrying only a classified-
+    retryable failure (see ``_RETRYABLE_KINDS``) with exponential backoff (``retry_backoff_seconds
+    * 2**(attempt-1)``, or the provider's own ``Retry-After`` when present). Returns
+    ``(result, attempts)`` on success. On exhaustion, raises the classified ``UpstreamError`` from
+    the LAST attempt — never litellm's own "swallow the retry, re-raise the first" behavior (see
+    the module docstring) — with the real attempt count attached.
+
+    ``make_call`` must return a *fresh* awaitable on every call (e.g. a lambda re-invoking
+    ``litellm.acompletion(...)``, never a single already-created coroutine — those can only be
+    awaited once).
+    """
+    max_attempts = max(1, spec.retries + 1)
+    backoff = spec.retry_backoff_seconds if spec.retry_backoff_seconds is not None else 2.0
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            result = await make_call()
+        except Exception as exc:
+            kind = _classify(exc)
+            if kind not in _RETRYABLE_KINDS or attempt >= max_attempts:
+                raise _upstream_error(spec, exc, verb, attempts=attempt) from exc
+            delay = _retry_after_seconds(exc)
+            if delay is None:
+                delay = backoff * (2 ** (attempt - 1))
+            logger.warning(
+                "retrying upstream call",
+                llm=spec.llm_name,
+                verb=verb,
+                attempt=attempt,
+                max_attempts=max_attempts,
+                kind=kind,
+                delay_s=round(delay, 2),
+            )
+            await asyncio.sleep(delay)
+            continue
+        return result, attempt
+
+
 def _proxy_client(proxy_url_env: str | None, timeout: float | None, llm_name: str) -> Any:
     """Build a request-scoped litellm HTTP client that routes this model through its proxy.
 
@@ -410,10 +604,14 @@ def _proxy_client(proxy_url_env: str | None, timeout: float | None, llm_name: st
         return None
     proxy_url = os.getenv(proxy_url_env)
     if not proxy_url:
-        raise UpstreamError(f"proxy env var {proxy_url_env!r} is required for {llm_name} but unset")
+        raise UpstreamError(
+            f"proxy env var {proxy_url_env!r} is required for {llm_name} but unset", kind="proxy"
+        )
     parsed = urlparse(proxy_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise UpstreamError(f"proxy env var {proxy_url_env!r} must be a valid http(s) URL")
+        raise UpstreamError(
+            f"proxy env var {proxy_url_env!r} must be a valid http(s) URL", kind="proxy"
+        )
 
     import httpx
     from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
@@ -484,10 +682,9 @@ class LiteLLMClient:
         proxy = _proxy_client(spec.proxy_url_env, spec.timeout_seconds, spec.llm_name)
         if proxy is not None:
             params["client"] = proxy
-        try:
-            response = await litellm.acompletion(stream=False, **params)
-        except Exception as exc:
-            raise UpstreamError(f"{spec.llm_name} call failed") from exc
+        response, attempts = await _call_with_retries(
+            lambda: litellm.acompletion(stream=False, **params), spec=spec, verb="call"
+        )
 
         choice = response.choices[0]
         message = choice.message
@@ -502,6 +699,7 @@ class LiteLLMClient:
             usage=usage,
             tool_calls=tool_calls,
             cost_usd=_response_cost(response, spec.model, usage),
+            attempts=attempts,
         )
 
     async def _complete_via_responses(self, spec: CallSpec) -> Completion:
@@ -512,28 +710,43 @@ class LiteLLMClient:
         proxy = _proxy_client(spec.proxy_url_env, spec.timeout_seconds, spec.llm_name)
         if proxy is not None:
             params["client"] = proxy
-        try:
-            response = await litellm.aresponses(**params)
-        except Exception as exc:
-            raise UpstreamError(f"{spec.llm_name} call failed") from exc
-        return _responses_to_completion(response, spec.model)
+        response, attempts = await _call_with_retries(
+            lambda: litellm.aresponses(**params), spec=spec, verb="call"
+        )
+        return replace(_responses_to_completion(response, spec.model), attempts=attempts)
 
     async def _stream_via_responses(self, spec: CallSpec) -> AsyncIterator[CompletionChunk]:
-        """Streaming call over the provider's Responses API (for an ``api: responses`` synth)."""
+        """Streaming call over the provider's Responses API (for an ``api: responses`` synth).
+
+        Retries only cover establishing the stream (before any chunk exists to accidentally
+        duplicate); once iteration starts, a failure is never retried — see the module docstring
+        and ``_call_with_retries``.
+        """
         import litellm
 
         params = _responses_params(spec)
         proxy = _proxy_client(spec.proxy_url_env, spec.timeout_seconds, spec.llm_name)
         if proxy is not None:
             params["client"] = proxy
+        stream, attempts = await _call_with_retries(
+            lambda: litellm.aresponses(stream=True, **params), spec=spec, verb="stream"
+        )
+        stamped = False
+
+        def stamp(chunk: CompletionChunk) -> CompletionChunk:
+            nonlocal stamped
+            if stamped:
+                return chunk
+            stamped = True
+            return replace(chunk, attempts=attempts)
+
         try:
-            stream = await litellm.aresponses(stream=True, **params)
             async for event in stream:
                 chunk = _responses_event_to_chunk(event, spec.model)
                 if chunk is not None:
-                    yield chunk
+                    yield stamp(chunk)
         except Exception as exc:
-            raise UpstreamError(f"{spec.llm_name} stream failed") from exc
+            raise _upstream_error(spec, exc, "stream") from exc
 
     async def stream(self, spec: CallSpec) -> AsyncIterator[CompletionChunk]:
         if spec.api == "responses":
@@ -547,15 +760,27 @@ class LiteLLMClient:
         proxy = _proxy_client(spec.proxy_url_env, spec.timeout_seconds, spec.llm_name)
         if proxy is not None:
             params["client"] = proxy
+        # Retries only cover establishing the stream, same reasoning as _stream_via_responses.
+        stream, attempts = await _call_with_retries(
+            lambda: litellm.acompletion(stream=True, **params), spec=spec, verb="stream"
+        )
+        stamped = False
+
+        def stamp(chunk: CompletionChunk) -> CompletionChunk:
+            nonlocal stamped
+            if stamped:
+                return chunk
+            stamped = True
+            return replace(chunk, attempts=attempts)
+
         try:
-            stream = await litellm.acompletion(stream=True, **params)
             async for part in stream:
                 choices = getattr(part, "choices", None) or []
                 delta = choices[0].delta if choices else None
                 finish = choices[0].finish_reason if choices else None
                 usage_raw = getattr(part, "usage", None)
                 for raw_tool in (getattr(delta, "tool_calls", None) or []) if delta else []:
-                    yield CompletionChunk(tool_call=_tool_call_fragment(raw_tool))
+                    yield stamp(CompletionChunk(tool_call=_tool_call_fragment(raw_tool)))
                 content = getattr(delta, "content", None) if delta else None
                 reasoning = getattr(delta, "reasoning_content", None) if delta else None
                 if content is not None or reasoning is not None or finish or usage_raw:
@@ -565,12 +790,14 @@ class LiteLLMClient:
                         chunk_cost = _provider_cost(part, usage_raw) or _cost_from_usage(
                             spec.model, chunk_usage
                         )
-                    yield CompletionChunk(
-                        content=content,
-                        reasoning=reasoning,
-                        finish_reason=finish,
-                        usage=chunk_usage,
-                        cost_usd=chunk_cost,
+                    yield stamp(
+                        CompletionChunk(
+                            content=content,
+                            reasoning=reasoning,
+                            finish_reason=finish,
+                            usage=chunk_usage,
+                            cost_usd=chunk_cost,
+                        )
                     )
         except Exception as exc:
-            raise UpstreamError(f"{spec.llm_name} stream failed") from exc
+            raise _upstream_error(spec, exc, "stream") from exc

@@ -75,8 +75,13 @@ class InMemoryEventBus:
         return channel
 
     def publish(self, request_id: str, event: ProgressEvent) -> None:
-        self._evict_expired()
+        # Touch BEFORE sweeping: this channel's own `expires_at` might already be in the past
+        # (a long gap since its last activity — e.g. between `synthesis_started` and `completed`
+        # on a slow call). Sweeping first would evict it — destroying its history and
+        # sentinel-closing its own live subscribers — one line before this same publish would have
+        # kept it alive. Touching first means "my channel is alive; sweep the OTHERS."
         channel = self._touch(request_id)
+        self._evict_expired()
         channel.history.append(event)
         if event.terminal:
             channel.closed = True
@@ -84,8 +89,11 @@ class InMemoryEventBus:
             queue.put_nowait(event)
 
     async def subscribe(self, request_id: str) -> AsyncIterator[ProgressEvent]:
-        self._evict_expired()
+        # Same reordering as `publish` — a subscriber must never evict the very history it came to
+        # replay. `_evict_expired` is synchronous (no `await`), so this doesn't reopen the
+        # register-and-snapshot race the comment below describes.
         channel = self._touch(request_id)
+        self._evict_expired()
         queue: asyncio.Queue[ProgressEvent | None] = asyncio.Queue()
         # Register and snapshot the history in one synchronous step (no await between): a publish
         # cannot interleave, so nothing is missed and nothing is replayed twice.

@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from mom.api.auth import check_token
 from mom.api.deps import ContainerDep
+from mom.api.sse import SSE_HEADERS
 from mom.domain.progress import ProgressEvent
 
 
@@ -68,11 +69,13 @@ _PAGE = """<!doctype html>
   :root {{
     --bg: #fff; --fg: #1a1a1a; --muted: #6b6b6b; --border: #e2e2e2; --card: #f7f7f8;
     --pending: #9ca3af; --ok: #16a34a; --err: #dc2626; --err-bg: #fef2f2; --err-fg: #7f1d1d;
+    --warn: #d97706; --warn-bg: #fffbeb; --warn-fg: #78350f;
   }}
   @media (prefers-color-scheme: dark) {{
     :root {{
       --bg: #0d0d0e; --fg: #e6e6e6; --muted: #9a9a9a; --border: #2b2b2d; --card: #18181a;
       --pending: #6b7280; --ok: #4ade80; --err: #f87171; --err-bg: #2a1414; --err-fg: #fca5a5;
+      --warn: #fbbf24; --warn-bg: #2a2110; --warn-fg: #fde68a;
     }}
   }}
   * {{ box-sizing: border-box; }}
@@ -111,6 +114,7 @@ _PAGE = """<!doctype html>
   .dot.pending {{ animation: pulse 1.3s ease-in-out infinite; }}
   .dot.ok {{ background: var(--ok); }}
   .dot.err {{ background: var(--err); }}
+  .dot.warn {{ background: var(--warn); }}
   @keyframes pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: .35; }} }}
   .name {{ font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   .meta {{ color: var(--muted); font-size: .75rem; margin-top: .15rem; }}
@@ -120,6 +124,7 @@ _PAGE = """<!doctype html>
     max-height: 12rem; overflow-y: auto; color: var(--fg);
   }}
   .preview.err {{ color: var(--err-fg); }}
+  .preview.warn {{ color: var(--warn-fg); }}
   .placeholder {{ color: var(--muted); }}
 </style>
 </head>
@@ -159,6 +164,15 @@ _PAGE = """<!doctype html>
     return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's';
   }}
 
+  // A completed member's own duration_ms — distinct from formatElapsed's live ticker text.
+  // Previously rendered as a raw millisecond count (e.g. "151000ms" for a 151s member).
+  function formatDuration(ms) {{
+    if (ms < 1000) return Math.round(ms) + 'ms';
+    const s = ms / 1000;
+    if (s < 60) return (Math.round(s * 10) / 10) + 's';
+    return Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's';
+  }}
+
   function tick() {{
     if (fanoutStartMs === null) return;
     const elapsed = formatElapsed(Date.now() - fanoutStartMs);
@@ -190,10 +204,18 @@ _PAGE = """<!doctype html>
     return html;
   }}
 
-  function makePendingCards(memberList) {{
+  function makePendingCards(memberList, detail) {{
     total = memberList.length;
     filled = 0;
     slotByIdentity = {{}};
+    if (total === 0) {{
+      // A passthrough/relay turn: no fan-out at all, not a stuck/broken request. Previously
+      // nothing was published for this case, so the dashboard just showed a blank page.
+      const reason = detail ? ' \\u00b7 ' + escapeHtml(detail) : '';
+      members.innerHTML = '<div class="placeholder">fan-out skipped' + reason + '</div>';
+      memberCount.textContent = '';
+      return;
+    }}
     members.innerHTML = '';
     memberList.forEach(([identity, model]) => {{
       const div = document.createElement('div');
@@ -205,6 +227,11 @@ _PAGE = """<!doctype html>
     }});
     memberCount.textContent = '(0/' + total + ')';
   }}
+
+  // Statuses that reached a definite outcome but aren't a clean success and aren't a hard failure
+  // either — a member abandoned past the fan-out deadline (still running/cached in the
+  // background, or cancelled), or one that answered with nothing. Rendered amber, not red.
+  const WARN_STATUSES = new Set(['detached', 'aborted', 'empty']);
 
   function fillCard(data) {{
     const identity = data.member;
@@ -220,18 +247,33 @@ _PAGE = """<!doctype html>
     }}
     filled += 1;
     const ok = data.status === 'ok';
+    const warn = !ok && WARN_STATUSES.has(data.status);
+    const dotClass = ok ? 'ok' : (warn ? 'warn' : 'err');
     const meta = (data.model || '') + (typeof data.duration_ms === 'number'
-      ? '  \\u00b7  ' + Math.round(data.duration_ms) + 'ms' : '');
+      ? '  \\u00b7  ' + formatDuration(data.duration_ms) : '');
     slot.className = 'card';
-    slot.innerHTML = cardHead(ok ? 'ok' : 'err', data.member || '?', meta);
+    slot.innerHTML = cardHead(dotClass, data.member || '?', meta);
     if (data.preview) {{
       const p = document.createElement('div');
-      p.className = 'preview' + (ok ? '' : ' err');
+      p.className = 'preview' + (ok ? '' : ' ' + dotClass);
       p.textContent = data.preview;
       slot.appendChild(p);
     }}
     const shownTotal = typeof data.members_total === 'number' ? data.members_total : total;
     memberCount.textContent = '(' + filled + '/' + shownTotal + ')';
+  }}
+
+  // Belt-and-braces: resolve any card that never got its own member_completed event (the server
+  // now publishes one for every announced member, including abandoned ones, but a missed/
+  // undecoded SSE frame is always possible) instead of leaving it pulsing "waiting..." forever
+  // after the request has already ended.
+  function sweepPending(note) {{
+    for (const identity in slotByIdentity) {{
+      const slot = slotByIdentity[identity];
+      slot.className = 'card';
+      slot.innerHTML = cardHead('warn', identity, note);
+    }}
+    slotByIdentity = {{}};
   }}
 
   function fillSynth(dotClass, name, meta, preview, previewErr) {{
@@ -252,24 +294,29 @@ _PAGE = """<!doctype html>
       showEnsemble(data);
       if (kind === 'fanout_started') {{
         status.textContent = 'running';
-        makePendingCards(Array.isArray(data.members) ? data.members : []);
-        fanoutStartMs = Date.now();
+        makePendingCards(Array.isArray(data.members) ? data.members : [], data.detail);
         stopTicker();
-        ticker = setInterval(tick, 1000);
-        tick();
+        if (total > 0) {{
+          fanoutStartMs = Date.now();
+          ticker = setInterval(tick, 1000);
+          tick();
+        }}
       }} else if (kind === 'member_completed') {{
         fillCard(data);
       }} else if (kind === 'synthesis_started') {{
         stopTicker();
+        status.textContent = 'synthesizing';
         fillSynth('pending', data.model || data.member || 'synthesizing\\u2026', null);
       }} else if (kind === 'completed') {{
         stopTicker();
+        sweepPending('no result recorded');
         status.textContent = 'completed';
         status.className = 'badge ok';
         fillSynth('ok', data.status || 'completed', null, data.preview, false);
         es.close();
       }} else if (kind === 'failed') {{
         stopTicker();
+        sweepPending('no result recorded');
         status.textContent = 'failed';
         status.className = 'badge err';
         if (data.detail) {{
@@ -338,4 +385,7 @@ async def progress(request_id: str, container: ContainerDep, request: Request) -
                 await task
             await _aclose(events)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    # This route has its own heartbeat built into `event_stream()` (the `: ping` comment on an
+    # idle `queue.get()`), so it doesn't use `sse_response`'s `with_heartbeat` wrapping — just the
+    # same anti-buffering headers the other three SSE surfaces now carry.
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=SSE_HEADERS)

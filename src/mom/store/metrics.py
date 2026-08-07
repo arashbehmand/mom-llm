@@ -53,6 +53,64 @@ MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX ix_llm_calls_request ON llm_calls (request_id);
     CREATE INDEX ix_llm_calls_ensemble_ts ON llm_calls (ensemble, ts);
     """,
+    # v2: widen `status` to the full OutcomeStatus vocabulary ('empty'/'timeout'/'aborted' used to
+    # collapse into 'error', hiding a real failure mode — see domain/results.py OutcomeStatus) and
+    # add finish_reason/error_kind/error_detail/attempts. SQLite can't ALTER a CHECK constraint, so
+    # this is the documented create-copy-drop-rename, wrapped in an explicit transaction:
+    # `executescript` runs the whole block as given (it does not open one on its own), and without
+    # BEGIN/COMMIT a failure between DROP and RENAME would destroy the table rather than roll back.
+    # Historical rows get finish_reason/error_kind/error_detail = NULL and attempts = 1 (the field
+    # didn't exist yet; 1 is the neutral "no retries recorded" default) — deliberately NOT
+    # backfilled from a guess.
+    """
+    BEGIN;
+    CREATE TABLE llm_calls_v2 (
+        id                   INTEGER PRIMARY KEY,
+        request_id           TEXT    NOT NULL,
+        ts                   REAL    NOT NULL,
+        ensemble             TEXT    NOT NULL,
+        llm                  TEXT    NOT NULL,
+        model                TEXT,
+        role                 TEXT    NOT NULL CHECK (role IN ('fanout', 'synthesis')),
+        status               TEXT    NOT NULL
+                                     CHECK (status IN
+                                            ('ok', 'empty', 'error', 'timeout', 'skipped',
+                                             'aborted')),
+        cache_hit            INTEGER NOT NULL DEFAULT 0,
+        turn_type            TEXT    NOT NULL DEFAULT 'ensemble',
+        prompt_tokens        INTEGER,
+        completion_tokens    INTEGER,
+        reasoning_tokens     INTEGER,
+        cached_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens   INTEGER NOT NULL DEFAULT 0,
+        total_tokens         INTEGER,
+        cost_usd             REAL    CHECK (cost_usd IS NULL OR cost_usd >= 0),
+        duration_ms          REAL,
+        error                TEXT,
+        finish_reason        TEXT,
+        error_kind           TEXT,
+        error_detail         TEXT,
+        attempts             INTEGER NOT NULL DEFAULT 1
+    ) STRICT;
+    INSERT INTO llm_calls_v2 (
+        id, request_id, ts, ensemble, llm, model, role, status, cache_hit, turn_type,
+        prompt_tokens, completion_tokens, reasoning_tokens, cached_prompt_tokens,
+        cache_write_tokens, total_tokens, cost_usd, duration_ms, error,
+        finish_reason, error_kind, error_detail, attempts
+    )
+    SELECT
+        id, request_id, ts, ensemble, llm, model, role, status, cache_hit, turn_type,
+        prompt_tokens, completion_tokens, reasoning_tokens, cached_prompt_tokens,
+        cache_write_tokens, total_tokens, cost_usd, duration_ms, error,
+        NULL, NULL, NULL, 1
+    FROM llm_calls;
+    DROP TABLE llm_calls;
+    ALTER TABLE llm_calls_v2 RENAME TO llm_calls;
+    CREATE INDEX ix_llm_calls_ts ON llm_calls (ts);
+    CREATE INDEX ix_llm_calls_request ON llm_calls (request_id);
+    CREATE INDEX ix_llm_calls_ensemble_ts ON llm_calls (ensemble, ts);
+    COMMIT;
+    """,
 )
 
 # Static SQL — column identifiers are fixed constants; all values are bound parameters.
@@ -60,8 +118,9 @@ _INSERT_SQL = (
     "INSERT INTO llm_calls ("
     "request_id, ts, ensemble, llm, model, role, status, cache_hit, turn_type, "
     "prompt_tokens, completion_tokens, reasoning_tokens, cached_prompt_tokens, "
-    "cache_write_tokens, total_tokens, cost_usd, duration_ms, error"
-    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "cache_write_tokens, total_tokens, cost_usd, duration_ms, error, "
+    "finish_reason, error_kind, error_detail, attempts"
+    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 # The aggregate column list, reused by the single-window aggregate and the grouped variant.
@@ -73,8 +132,14 @@ _AGGREGATE_COLUMNS = (
     "COALESCE(SUM(cached_prompt_tokens), 0) AS cached_prompt_tokens, "
     "COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens, "
     "COALESCE(SUM(cost_usd), 0.0) AS cost_usd, "
-    "SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors, "
+    # `<> 'ok'` (not `= 'error'`): status now also carries 'empty'/'timeout'/'aborted', all of
+    # which are failures too — the old `= 'error'` check would silently under-count them.
+    "SUM(CASE WHEN status <> 'ok' THEN 1 ELSE 0 END) AS errors, "
+    "SUM(CASE WHEN status = 'empty' THEN 1 ELSE 0 END) AS empty, "
+    "SUM(CASE WHEN status = 'timeout' THEN 1 ELSE 0 END) AS timeouts, "
     "SUM(CASE WHEN cache_hit = 1 THEN 1 ELSE 0 END) AS cache_hits, "
+    # A cache hit costs $0 by construction; everything else was a real (attempted) upstream call.
+    "SUM(CASE WHEN cache_hit = 0 THEN 1 ELSE 0 END) AS billable_calls, "
     "SUM(CASE WHEN turn_type = 'relay' THEN 1 ELSE 0 END) AS relay_calls"
 )
 _AGGREGATE_SELECT = f"SELECT {_AGGREGATE_COLUMNS} FROM llm_calls"  # noqa: S608 (constant columns)
@@ -86,6 +151,8 @@ GROUP_DIMENSIONS: dict[str, str] = {
     "member": "llm",
     "turn_type": "turn_type",
     "day": "date(ts, 'unixepoch')",
+    "ensemble": "ensemble",
+    "status": "status",
 }
 
 
@@ -177,6 +244,42 @@ class MetricsStore:
         await cursor.close()
         return [dict(row) for row in rows]
 
+    async def estimated_cache_savings(
+        self, *, start: float | None = None, end: float | None = None, ensemble: str | None = None
+    ) -> float:
+        """Estimated $ saved by cache hits over an optional time/ensemble window.
+
+        "Estimated": a cache hit's row carries ``cost_usd = 0`` (it really was free), so there is
+        no per-hit real cost to sum — this instead assumes each hit would have cost the SAME as
+        the mean *non-cached* call for the same ``(llm, model)`` in the window. A reasonable
+        proxy (token counts vary call to call, so it is not exact), and the only honest way to
+        answer "roughly how much is the cache saving us" from data mom actually has.
+        """
+        where, params = _window(start, end, ensemble)
+        extra = f" AND {' AND '.join(where)}" if where else ""
+        # constant columns; only window values (in `extra`, bound via `params`) vary -> not a
+        # SQL-injection surface, same reasoning as _AGGREGATE_SELECT above.
+        avg_sql = (
+            f"SELECT llm, model, AVG(cost_usd) AS avg_cost FROM llm_calls "  # noqa: S608
+            f"WHERE cache_hit = 0 AND cost_usd IS NOT NULL{extra} GROUP BY llm, model"
+        )
+        hits_sql = (
+            f"SELECT llm, model, COUNT(*) AS hits FROM llm_calls "  # noqa: S608
+            f"WHERE cache_hit = 1{extra} GROUP BY llm, model"
+        )
+        avg_cursor = await self._conn.execute(avg_sql, params)
+        avg_rows = await avg_cursor.fetchall()
+        await avg_cursor.close()
+        avg_cost = {(row["llm"], row["model"]): row["avg_cost"] for row in avg_rows}
+
+        hits_cursor = await self._conn.execute(hits_sql, params)
+        hits_rows = await hits_cursor.fetchall()
+        await hits_cursor.close()
+
+        return float(
+            sum(avg_cost.get((row["llm"], row["model"]), 0.0) * row["hits"] for row in hits_rows)
+        )
+
 
 class MetricsRecorder:
     """Buffers metrics on a bounded queue and drains them to the store off the hot path."""
@@ -201,7 +304,7 @@ class MetricsRecorder:
             if self._dropped % 100 == 1:
                 logger.warning("metrics queue full; dropping metrics", dropped=self._dropped)
 
-    async def _drain_batch(self) -> None:
+    async def _pull_batch(self) -> list[CallMetric]:
         first = await self._queue.get()
         batch = [first]
         while len(batch) < self._batch:
@@ -209,18 +312,30 @@ class MetricsRecorder:
                 batch.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:
                 break
-        await self._store.insert_many(batch)
+        return batch
 
     async def _run(self) -> None:
         while True:
+            batch: list[CallMetric] = []
             try:
-                await self._drain_batch()
+                batch = await self._pull_batch()
+                await self._store.insert_many(batch)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 # A failed insert must not kill the writer for the process lifetime: drop the
-                # batch, log, and back off briefly so a persistent DB error can't tight-spin.
-                logger.warning("metrics batch write failed; batch dropped", exc_info=True)
+                # batch, log, and back off briefly so a persistent DB error can't tight-spin. This
+                # used to drop the batch WITHOUT counting it — under-reporting real loss on top of
+                # the queue-overflow drops in `record()`, at exactly the moment (a DB write
+                # actually failing) an operator most needs the real number.
+                if batch:
+                    self._dropped += len(batch)
+                logger.warning(
+                    "metrics batch write failed; batch dropped",
+                    exc_info=True,
+                    dropped_now=len(batch),
+                    dropped_total=self._dropped,
+                )
                 await asyncio.sleep(0.5)
 
     async def start(self) -> None:

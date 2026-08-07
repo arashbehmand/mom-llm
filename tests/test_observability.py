@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from mom.adapters.observability import LangfuseTracer, NoopTracer
+from mom.adapters.observability import LangfuseTracer, NoopTracer, _record_exception
 from mom.domain.results import Usage
 
 
@@ -24,16 +24,28 @@ from mom.domain.results import Usage
 # --------------------------------------------------------------------------------------------
 
 
-class _Generation:
+class _OtelSpanStub:
+    """Stands in for the private ``_otel_span`` a real langfuse generation wraps."""
+
     def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def add_event(self, name: str, attributes: dict[str, Any]) -> None:
+        self.events.append((name, attributes))
+
+
+class _Generation:
+    def __init__(self, *, with_otel_span: bool = False) -> None:
         self.updates: list[dict[str, Any]] = []
         self.ended = False
         self.start_calls: list[dict[str, Any]] = []
         self.children: list[_Generation] = []
+        if with_otel_span:
+            self._otel_span = _OtelSpanStub()
 
     def start_observation(self, **kwargs: Any) -> _Generation:
         self.start_calls.append(kwargs)
-        child = _Generation()
+        child = _Generation(with_otel_span=True)  # a real generation always wraps a span
         self.children.append(child)
         return child
 
@@ -160,6 +172,83 @@ def test_observe_marks_error_level_when_error_present() -> None:
     error_update = next(u for u in gen.updates if u.get("level") == "ERROR")
     assert error_update["status_message"] == "boom"
     assert gen.ended is True
+
+
+def test_cost_usd_overrides_langfuse_own_cost_calculation() -> None:
+    """The fix for both directions of the cost lie: Langfuse pricing a cache hit as if it were a
+    fresh call, and Langfuse having no pricing at all for most non-OpenAI models."""
+    client = _StubClient()
+    tracer = LangfuseTracer(client)
+    _observe(tracer, cost_usd=0.0)  # a cache hit: real cost is exactly zero, not "unpriced"
+
+    gen = client.generation.children[0]
+    update = next(u for u in gen.updates if "cost_details" in u)
+    assert update["cost_details"] == {"total": 0.0}
+
+
+def test_cost_usd_omitted_leaves_cost_details_unset() -> None:
+    client = _StubClient()
+    tracer = LangfuseTracer(client)
+    _observe(tracer)  # no cost_usd given
+
+    gen = client.generation.children[0]
+    assert all("cost_details" not in u for u in gen.updates)
+
+
+def test_metadata_carries_status_error_kind_and_finish_reason() -> None:
+    client = _StubClient()
+    tracer = LangfuseTracer(client)
+    _observe(tracer, status="empty", error_kind="context_length", finish_reason="length")
+
+    root = client.generation
+    metadata = root.start_calls[0]["metadata"]
+    assert metadata["status"] == "empty"
+    assert metadata["error_kind"] == "context_length"
+    assert metadata["finish_reason"] == "length"
+
+
+def test_error_records_an_otel_exception_event_on_the_wrapped_span() -> None:
+    """Regression guard: langfuse 4.14.1 has no exception API — `update(level="ERROR")` only sets
+    the span's status, which is why `find_exceptions` read zero exceptions against real member
+    failures in production. This confirms the OTel-span-reaching workaround actually attaches the
+    event, not just that ``observe`` doesn't crash."""
+    client = _StubClient()
+    tracer = LangfuseTracer(client)
+    _observe(tracer, error="upstream error", error_kind="rate_limit", error_detail="429, key=sk-x")
+
+    gen = client.generation.children[0]
+    (event_name, attrs) = gen._otel_span.events[0]
+    assert event_name == "exception"
+    assert attrs["exception.type"] == "rate_limit"
+    assert attrs["exception.message"] == "429, key=sk-x"
+
+
+def test_error_without_kind_or_detail_still_records_a_safe_exception_event() -> None:
+    client = _StubClient()
+    tracer = LangfuseTracer(client)
+    _observe(tracer, error="boom")  # no error_kind/error_detail supplied
+
+    gen = client.generation.children[0]
+    (event_name, attrs) = gen._otel_span.events[0]
+    assert event_name == "exception"
+    assert attrs["exception.type"] == "unknown"
+    assert attrs["exception.message"] == ""
+
+
+def test_no_error_means_no_exception_event_recorded() -> None:
+    client = _StubClient()
+    tracer = LangfuseTracer(client)
+    _observe(tracer)
+
+    gen = client.generation.children[0]
+    assert gen._otel_span.events == []
+
+
+def test_missing_otel_span_attribute_is_a_silent_no_op() -> None:
+    """Defense in depth: if a future langfuse SDK renames/removes ``_otel_span``, exception
+    recording degrades to a no-op instead of breaking the whole observation."""
+    bare = _Generation(with_otel_span=False)
+    _record_exception(bare, kind="rate_limit", detail="x")  # must not raise
 
 
 def test_observe_never_raises_when_client_fails() -> None:

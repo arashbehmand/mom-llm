@@ -16,6 +16,7 @@ import hashlib
 import time
 from typing import Any
 
+from mom.domain.errors import ErrorKind
 from mom.domain.results import Usage
 from mom.runtime.logging import get_logger
 
@@ -44,6 +45,23 @@ class CompositeTracer:
     def flush(self) -> None:
         for tracer in self._tracers:
             tracer.flush()
+
+
+def _record_exception(generation: Any, *, kind: str, detail: str | None) -> None:
+    """Attach an OTel exception event to a Langfuse generation's wrapped span.
+
+    langfuse 4.14.1 has no dedicated exception-recording API: ``generation.update(level="ERROR")``
+    only sets the span's status, which is exactly why ``find_exceptions`` read zero exceptions
+    against ~90 real member failures in production. ``LangfuseObservationWrapper`` (the base of the
+    generation/span objects this module builds) stores the real OTel span it wraps as
+    ``_otel_span`` — private and undocumented, so this is reached defensively via ``getattr``; a
+    future SDK renaming/removing it degrades to a no-op rather than breaking tracing (the caller
+    already wraps everything in ``try/except -> logger.debug``).
+    """
+    span = getattr(generation, "_otel_span", None)
+    if span is None:
+        return
+    span.add_event("exception", {"exception.type": kind, "exception.message": detail or ""})
 
 
 class LangfuseTracer:
@@ -112,6 +130,11 @@ class LangfuseTracer:
         duration_ms: float,
         cached: bool = False,
         error: str | None = None,
+        status: str | None = None,
+        cost_usd: float | None = None,
+        error_kind: ErrorKind | None = None,
+        error_detail: str | None = None,
+        finish_reason: str | None = None,
     ) -> None:
         try:
             trace_id = self._trace_id(request_id)
@@ -126,18 +149,30 @@ class LangfuseTracer:
                     "role": role,
                     "cached": cached,
                     "duration_ms": duration_ms,
+                    "status": status,
+                    "error_kind": error_kind,
+                    "finish_reason": finish_reason,
                 },
             )
-            generation.update(
-                output=output,
-                usage_details={
+            update: dict[str, Any] = {
+                "output": output,
+                "usage_details": {
                     "input": usage.prompt_tokens,
                     "output": usage.completion_tokens,
                     "cache_read": usage.cached_prompt_tokens,
                 },
-            )
+            }
+            if cost_usd is not None:
+                # Overrides Langfuse's own cost calculation (missing for most non-OpenAI models,
+                # e.g. every OpenRouter/xAI/Gemini one) with mom's real, already-computed cost. A
+                # cache hit passes 0.0 here — the fix for the other direction: Langfuse pricing a
+                # cache hit as if it were a fresh call, which is what made one duplicated turn
+                # read $1.08 there against $0.15 actually spent.
+                update["cost_details"] = {"total": cost_usd}
+            generation.update(**update)
             if error:
                 generation.update(level="ERROR", status_message=error)
+                _record_exception(generation, kind=error_kind or "unknown", detail=error_detail)
             generation.end()
             if role == "synthesis":  # the concluding call closes the ensemble root span
                 closing = self._roots.pop(trace_id, None)
@@ -215,6 +250,11 @@ class OtelTracer:
         duration_ms: float,
         cached: bool = False,
         error: str | None = None,
+        status: str | None = None,
+        cost_usd: float | None = None,
+        error_kind: ErrorKind | None = None,
+        error_detail: str | None = None,
+        finish_reason: str | None = None,
     ) -> None:
         try:
             from opentelemetry.trace import SpanKind, Status, StatusCode
@@ -231,13 +271,27 @@ class OtelTracer:
                     span.set_attribute("gen_ai.request.model", model)
                 span.set_attribute("gen_ai.usage.input_tokens", usage.prompt_tokens)
                 span.set_attribute("gen_ai.usage.output_tokens", usage.completion_tokens)
+                if cost_usd is not None:
+                    span.set_attribute("gen_ai.usage.cost", cost_usd)
                 span.set_attribute("mom.request.id", request_id)
                 span.set_attribute("mom.ensemble", ensemble)
                 span.set_attribute("mom.role", role)
                 span.set_attribute("mom.llm", llm)
                 span.set_attribute("mom.cached", cached)
+                if status is not None:
+                    span.set_attribute("mom.status", status)
+                if finish_reason is not None:
+                    span.set_attribute("mom.finish_reason", finish_reason)
                 if error:
                     span.set_status(Status(StatusCode.ERROR, error))
+                    # A real OTel span (not langfuse's private wrapper), so this is the public API.
+                    span.add_event(
+                        "exception",
+                        {
+                            "exception.type": error_kind or "unknown",
+                            "exception.message": error_detail or "",
+                        },
+                    )
             finally:
                 span.end(end_time=end_ns)
         except Exception:

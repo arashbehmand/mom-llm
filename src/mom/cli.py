@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import time
+from typing import Any
 import urllib.error
 import urllib.request
 
@@ -236,6 +238,90 @@ def cache_purge(
     typer.secho(
         f"purged {removed} cache entr{'y' if removed == 1 else 'ies'}", fg=typer.colors.GREEN
     )
+
+
+metrics_app = typer.Typer(help="Inspect recorded call metrics (usage/cost).", no_args_is_help=True)
+app.add_typer(metrics_app, name="metrics")
+
+_MetricsConfigOpt = typer.Option(
+    None, "--config", "-c", exists=True, dir_okay=False, help="Config YAML (to resolve data_dir)."
+)
+_MetricsDataDirOpt = typer.Option(
+    None, "--data-dir", help="Data directory holding metrics.db (overrides config/env)."
+)
+
+
+async def _usage_report(
+    db: Path, *, start: float | None, ensemble: str | None, by: str | None
+) -> tuple[dict[str, Any], list[dict[str, Any]] | None, float]:
+    from mom.store.metrics import MetricsStore
+
+    store = await MetricsStore.open(db)
+    try:
+        agg = await store.aggregate(start=start, ensemble=ensemble)
+        groups = await store.aggregate_by(by, start=start, ensemble=ensemble) if by else None
+        savings = await store.estimated_cache_savings(start=start, ensemble=ensemble)
+        return agg, groups, savings
+    finally:
+        await store.close()
+
+
+@metrics_app.command("usage")
+def metrics_usage(
+    config: Path | None = _MetricsConfigOpt,
+    data_dir: Path | None = _MetricsDataDirOpt,
+    days: float = typer.Option(7.0, help="Look back this many days (0 or negative = all time)."),
+    ensemble: str | None = typer.Option(None, help="Restrict to one ensemble."),
+    by: str | None = typer.Option(
+        None, "--by", help="Also group by: day, member, ensemble, status, or turn_type."
+    ),
+) -> None:
+    """Print usage/cost: calls, billable calls, cache hit rate, per-status breakdown, and
+    estimated cache savings. NOTE: `MetricsRecorder` drops rows under sustained load (see
+    `GET /health`'s `metrics_dropped`) — treat this as a lower bound on real spend, not exact."""
+    db = _resolve_data_dir(config, data_dir) / "metrics.db"
+    if not db.exists():
+        typer.echo(f"metrics: empty (no database at {db})")
+        return
+    start = time.time() - days * 86400 if days > 0 else None
+    try:
+        agg, groups, savings = asyncio.run(
+            _usage_report(db, start=start, ensemble=ensemble, by=by)
+        )
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"path:    {db}")
+    typer.echo(f"window:  last {days:g} days" if start is not None else "window:  all time")
+    if ensemble:
+        typer.echo(f"ensemble: {ensemble}")
+    calls = int(agg.get("calls", 0) or 0)
+    billable = int(agg.get("billable_calls", 0) or 0)
+    cache_hits = int(agg.get("cache_hits", 0) or 0)
+    hit_rate = (cache_hits / calls * 100) if calls else 0.0
+    cost = float(agg.get("cost_usd", 0.0) or 0.0)
+    typer.echo(f"calls:        {calls}  (billable: {billable})")
+    typer.echo(f"cache hits:   {cache_hits}  ({hit_rate:.1f}% hit rate)")
+    typer.echo(f"cost:         ${cost:.4f}")
+    typer.echo(f"  errors:     {int(agg.get('errors', 0) or 0)}")
+    typer.echo(f"  empty:      {int(agg.get('empty', 0) or 0)}")
+    typer.echo(f"  timeouts:   {int(agg.get('timeouts', 0) or 0)}")
+    typer.echo(f"  relay:      {int(agg.get('relay_calls', 0) or 0)}")
+    typer.echo(f"estimated cache savings: ${savings:.4f}  (see --help for what 'estimated' means)")
+
+    if groups is not None and by is not None:
+        typer.echo(f"\nby {by}:")
+        for row in groups:
+            key = row.get(by, "?")
+            row_calls = int(row.get("calls", 0) or 0)
+            row_cost = float(row.get("cost_usd", 0.0) or 0.0)
+            row_errors = int(row.get("errors", 0) or 0)
+            row_hits = int(row.get("cache_hits", 0) or 0)
+            typer.echo(
+                f"  {key!s:<16} calls={row_calls:<6} cost=${row_cost:<10.4f} "
+                f"errors={row_errors:<4} cache_hits={row_hits}"
+            )
 
 
 if __name__ == "__main__":

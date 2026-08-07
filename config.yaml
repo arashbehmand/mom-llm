@@ -35,8 +35,10 @@ observability:
 llms:
   # An effort/variant family: one base, a nested `variants:` map. Each key becomes a sibling llm
   # named `<base>-<key>`; `params` deep-merges with the base, other fields (model/api/api_key_env/
-  # proxy_url_env) inherit unless overridden. Capability fields (search/pricing/...) never
-  # propagate to a variant — see k3 below for why that matters.
+  # proxy_url_env) inherit unless overridden. Capability fields (search/pricing/capabilities/
+  # max_input_tokens/timeout/cache_ttl) ALSO inherit — a variant is the same model at a different
+  # effort, so what it can do (and costs) travels with it. See k3 below, where the `search:` block
+  # is deliberately declared once on the base and relied on by all its variants.
   # OpenAI search is Responses-API-only (chat completions rejects web_search_options for these
   # models) — like grok45 below, `api: responses` makes the request-triggered search block usable.
   oai56t:
@@ -411,6 +413,10 @@ ensembles:
       - qwn37max
       - glm52
       - { llm: k3,       effort: [low, high, max] }
+    # Synth effort tracks the requested tier (low at the default tier) — reviewed and kept as-is:
+    # a `minimal`-effort synth was too weak to attentively weigh one dissenting real-search
+    # candidate against several generic non-answers, even with the right prompt (see `4fdd974`).
+    # This is NOT drift; don't "fix" it back down without re-confirming with the owner first.
     synthesizer:
       llm: g35fl
       effort: [low, medium, high]

@@ -17,6 +17,7 @@ from typing import Any
 from mom.domain.events import (
     AnswerDelta,
     Completed,
+    FanoutStarted,
     MemberCompleted,
     PipelineFailed,
     StreamEvent,
@@ -275,13 +276,25 @@ async def encode_sse(
 
     usage: dict[str, int] | None = None
     member_dump_started = False
+
+    def open_member_dump() -> list[bytes]:
+        """The `Progress:` reasoning preamble, once — mirrors chat.py's `open_think`: previously
+        this only ran on the first `MemberCompleted`, so the link stayed invisible until the first
+        fan-out member finished; `FanoutStarted` fires immediately instead."""
+        nonlocal member_dump_started
+        if member_dump_started or not progress_url:
+            member_dump_started = True
+            return []
+        member_dump_started = True
+        return reasoning_delta(f"Progress: {progress_url}\n\n")
+
     async for event in events:
-        if isinstance(event, MemberCompleted) and show_work == "inline":
-            if not member_dump_started:
-                member_dump_started = True
-                if progress_url:
-                    for chunk in reasoning_delta(f"Progress: {progress_url}\n\n"):
-                        yield chunk
+        if isinstance(event, FanoutStarted) and show_work == "inline":
+            for chunk in open_member_dump():
+                yield chunk
+        elif isinstance(event, MemberCompleted) and show_work == "inline":
+            for chunk in open_member_dump():  # fallback opener if FanoutStarted never arrived
+                yield chunk
             for chunk in reasoning_delta(_member_line(event.outcome)):
                 yield chunk
         elif isinstance(event, SynthesisStarted):

@@ -105,6 +105,19 @@ async def test_streaming_completion():
     assert any(p.get("usage") for p in payloads)
 
 
+async def test_streaming_response_carries_anti_buffering_headers():
+    """Previously unset on every SSE surface — a buffering intermediary could swallow
+    with_heartbeat's keepalive comments entirely, defeating the one thing meant to stop a slow
+    fan-out from tripping a client's idle read-timeout."""
+    async with _client(_container()) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "e", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+        )
+    assert resp.headers["cache-control"] == "no-cache"
+    assert resp.headers["x-accel-buffering"] == "no"
+
+
 async def test_show_work_inline_renders_think_block():
     async with _client(_container(catalog=_catalog(show_work="inline"))) as client:
         resp = await client.post(

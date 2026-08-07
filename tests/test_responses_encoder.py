@@ -8,6 +8,7 @@ from mom.api.encoders.responses import build_response, encode_sse
 from mom.domain.events import (
     AnswerDelta,
     Completed,
+    FanoutStarted,
     MemberCompleted,
     PipelineFailed,
     StreamEvent,
@@ -18,14 +19,21 @@ from mom.domain.events import (
 from mom.domain.results import EnsembleResult, ModelOutcome, Usage
 
 
-async def _collect(events: list[StreamEvent], *, show_work: str = "off") -> list[dict]:
+async def _collect(
+    events: list[StreamEvent], *, show_work: str = "off", progress_url: str | None = None
+) -> list[dict]:
     async def gen():
         for event in events:
             yield event
 
     payloads: list[dict] = []
     async for block in encode_sse(
-        gen(), response_id="resp-1", model="e", created=1, show_work=show_work
+        gen(),
+        response_id="resp-1",
+        model="e",
+        created=1,
+        show_work=show_work,
+        progress_url=progress_url,
     ):
         payloads.extend(
             json.loads(line[len("data: ") :])
@@ -174,6 +182,68 @@ async def test_show_work_inline_with_no_genuine_reasoning_still_shows_member_dum
     output = _of_type(payloads, "response.completed")[0]["response"]["output"]
     assert [o["type"] for o in output] == ["reasoning", "message"]
     assert "perspective A" in output[0]["summary"][0]["text"]
+
+
+async def test_progress_link_opens_on_first_fanout_started_before_any_member_dump():
+    """Issue 2 parity fix: the Progress link used to appear only after the first member finished
+    (mirrors the chat encoder's `<think>` fix) — now it's the very first reasoning delta."""
+    payloads = await _collect(
+        [
+            FanoutStarted(identity="a", model="openai/a"),
+            FanoutStarted(identity="b", model="openai/b"),
+            MemberCompleted(outcome=_outcome("a", "perspective A")),
+            MemberCompleted(outcome=_outcome("b", "perspective B")),
+            SynthesisStarted(llm="syn", model="syn/model"),
+            AnswerDelta(content="answer"),
+            Completed(
+                finish_reason="stop",
+                usage=Usage(prompt_tokens=1, completion_tokens=1),
+                total_cost_usd=0.0,
+            ),
+        ],
+        show_work="inline",
+        progress_url="https://mom.local/v1/progress/req-1",
+    )
+    deltas = [d["delta"] for d in _of_type(payloads, "response.reasoning_summary_text.delta")]
+    assert deltas[0] == "Progress: https://mom.local/v1/progress/req-1\n\n"
+    assert "Model: a" in deltas[1]
+    # A second FanoutStarted is a no-op — only one Progress delta across the whole stream.
+    assert sum(1 for d in deltas if d.startswith("Progress:")) == 1
+
+
+async def test_member_completed_still_opens_progress_link_when_fanout_started_is_absent():
+    payloads = await _collect(
+        [
+            MemberCompleted(outcome=_outcome("a", "perspective A")),
+            SynthesisStarted(llm="syn", model="syn/model"),
+            AnswerDelta(content="answer"),
+            Completed(
+                finish_reason="stop",
+                usage=Usage(prompt_tokens=1, completion_tokens=1),
+                total_cost_usd=0.0,
+            ),
+        ],
+        show_work="inline",
+        progress_url="https://mom.local/v1/progress/req-1",
+    )
+    deltas = [d["delta"] for d in _of_type(payloads, "response.reasoning_summary_text.delta")]
+    assert deltas[0] == "Progress: https://mom.local/v1/progress/req-1\n\n"
+
+
+async def test_fanout_started_without_show_work_inline_does_nothing():
+    payloads = await _collect(
+        [
+            FanoutStarted(identity="a", model="openai/a"),
+            Completed(
+                finish_reason="stop",
+                usage=Usage(prompt_tokens=1, completion_tokens=1),
+                total_cost_usd=0.0,
+            ),
+        ],
+        show_work="off",
+        progress_url="https://mom.local/v1/progress/req-1",
+    )
+    assert not _of_type(payloads, "response.reasoning_summary_text.delta")
 
 
 # ---------------------------------------------------------------------------------------------

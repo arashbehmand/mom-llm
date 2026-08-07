@@ -13,13 +13,14 @@ from typing import Any
 import uuid
 
 from mom.domain.cost import compute_cost
-from mom.domain.errors import MomError, QuorumNotMet, UpstreamError, UpstreamTimeout
+from mom.domain.errors import ErrorKind, MomError, QuorumNotMet, UpstreamError, UpstreamTimeout
 from mom.domain.events import (
     AnswerDelta,
     Completed,
     FanoutSkipped,
     FanoutStarted,
     FinishReason,
+    MemberAbandoned,
     MemberCompleted,
     PipelineFailed,
     StreamEvent,
@@ -41,7 +42,7 @@ from mom.domain.ports import (
 from mom.domain.progress import PREVIEW_CHARS, ProgressEvent
 from mom.domain.prompt_caching import inject_anthropic_cache
 from mom.domain.results import EnsembleResult, ModelOutcome, OutcomeStatus, Usage
-from mom.domain.synthesis import all_failed_message, build_synthesis_messages
+from mom.domain.synthesis import all_failed_message, append_instruction, build_synthesis_messages
 from mom.domain.tooling import restore_provider_tool_ids, select_member_tool_call
 from mom.engine.plan import ExecutionPlan, PlannedMember
 from mom.runtime.logging import get_logger
@@ -102,7 +103,9 @@ def _record_member(
             llm=outcome.llm,
             model=outcome.model,
             role="fanout",
-            status="ok" if outcome.ok else "error",
+            # The full status, not the old "ok"/"error" collapse — 'empty'/'timeout'/'aborted'
+            # are distinct failure modes and used to be indistinguishable in the metrics DB.
+            status=outcome.status,
             cache_hit=outcome.cached,
             turn_type=turn_type,
             prompt_tokens=usage.prompt_tokens,
@@ -114,12 +117,23 @@ def _record_member(
             cost_usd=outcome.cost_usd,
             duration_ms=outcome.duration_ms,
             error=outcome.error,
+            finish_reason=outcome.finish_reason,
+            error_kind=outcome.error_kind,
+            error_detail=outcome.error_detail,
+            attempts=outcome.attempts,
         )
     )
 
 
 def _record_synth(
-    deps: PipelineDeps, plan: ExecutionPlan, usage: Usage, cost: float, turn_type: TurnType
+    deps: PipelineDeps,
+    plan: ExecutionPlan,
+    usage: Usage,
+    cost: float,
+    turn_type: TurnType,
+    *,
+    finish_reason: str | None = None,
+    attempts: int = 1,
 ) -> None:
     if deps.recorder is None:
         return
@@ -140,6 +154,41 @@ def _record_synth(
             cache_write_tokens=usage.cache_write_tokens,
             total_tokens=usage.total_tokens,
             cost_usd=cost,
+            finish_reason=finish_reason,
+            attempts=attempts,
+        )
+    )
+
+
+def _record_synth_failure(
+    deps: PipelineDeps,
+    plan: ExecutionPlan,
+    turn_type: TurnType,
+    *,
+    error: str,
+    error_kind: ErrorKind,
+    error_detail: str | None,
+    attempts: int,
+) -> None:
+    """A failed synthesis call used to be recorded nowhere — the metrics DB simply had no row for
+    it, so a repeatedly-failing (and repeatedly-retried, per this session's own retry-loop fix)
+    synthesizer was invisible to any cost/error accounting."""
+    if deps.recorder is None:
+        return
+    deps.recorder.record(
+        CallMetric(
+            request_id=deps.request_id,
+            ts=deps.clock.now(),
+            ensemble=plan.ensemble,
+            llm=plan.synth.llm_name,
+            model=plan.synth.model,
+            role="synthesis",
+            status="error",
+            turn_type=turn_type,
+            error=error,
+            error_kind=error_kind,
+            error_detail=error_detail,
+            attempts=attempts,
         )
     )
 
@@ -152,6 +201,26 @@ def _coerce_finish(value: str | None) -> FinishReason:
             return "stop"
 
 
+def _cause_text(exc: BaseException, *, max_chars: int = 500) -> str:
+    """Walk ``__cause__``/``__context__`` to the root and return a truncated, operator-facing str.
+
+    litellm/provider SDKs often wrap the real failure (a timeout, an HTTP error body) in a generic
+    exception; the outer ``str(exc)`` alone can be uninformative (e.g. just the exception class
+    name). This is for logs/metrics/tracing only — never returned to a client.
+    """
+    parts: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current).strip()
+        if text:
+            parts.append(text)
+        current = current.__cause__ or current.__context__
+    combined = " | caused by: ".join(parts) if parts else exc.__class__.__name__
+    return combined[:max_chars]
+
+
 async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome:
     start = deps.clock.now()
     common = {"identity": member.identity, "llm": member.identity, "model": member.spec.model}
@@ -159,14 +228,53 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
         timeout = member.spec.timeout_seconds
         completion = await asyncio.wait_for(deps.client.complete(member.spec), timeout=timeout)
     except TimeoutError:
-        return ModelOutcome(**common, status="timeout", error="timed out")  # type: ignore[arg-type]
+        return ModelOutcome(
+            **common,  # type: ignore[arg-type]
+            status="timeout",
+            error="timed out",
+            error_kind="timeout",
+        )
     except MomError as exc:
-        return ModelOutcome(**common, status="error", error=exc.safe_message)  # type: ignore[arg-type]
+        # exc.safe_message is what the client sees; log the real cause for the operator — this
+        # branch used to return silently, which is why provider failures were invisible in logs
+        # and Langfuse (UpstreamError is a MomError, so the generic `except Exception` below,
+        # which does log, never ran for the failures that actually mattered). exc.kind/exc.detail
+        # are already the classified/scrubbed pair the adapter attached (or the class-level
+        # "unknown"/None default for a MomError that isn't an UpstreamError) — never re-derive a
+        # detail from raw text here, so `error_detail` is scrubbed-or-absent, never "sometimes".
+        logger.warning(
+            "member call failed",
+            llm=member.identity,
+            model=member.spec.model,
+            request_id=deps.request_id,
+            error=_cause_text(exc),
+        )
+        return ModelOutcome(
+            **common,  # type: ignore[arg-type]
+            status="error",
+            error=exc.safe_message,
+            error_kind=exc.kind,
+            error_detail=exc.detail,
+            attempts=exc.attempts,
+        )
     except Exception as exc:
         # Never surface raw provider/third-party text (it can carry keys, URLs, internal paths);
-        # log it for the operator and return a safe, generic message.
-        logger.warning("member call failed", llm=member.identity, error=str(exc))
-        return ModelOutcome(**common, status="error", error="call failed")  # type: ignore[arg-type]
+        # log it for the operator and return a safe, generic message. No adapter has classified or
+        # scrubbed this one (it isn't a MomError at all — a client implementation bug, not a normal
+        # provider failure), so `error_detail` stays unset rather than persisting unscrubbed text.
+        logger.warning(
+            "member call failed",
+            llm=member.identity,
+            model=member.spec.model,
+            request_id=deps.request_id,
+            error=_cause_text(exc),
+        )
+        return ModelOutcome(
+            **common,  # type: ignore[arg-type]
+            status="error",
+            error="call failed",
+            error_kind="unknown",
+        )
     duration_ms = (deps.clock.now() - start) * 1000.0
     # A member that only proposed tool calls (no prose) is still a real answer, not "empty" — its
     # proposal feeds the candidate envelope and the vote/first strategies.
@@ -180,7 +288,7 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
     else:
         cost = completion.cost_usd or 0.0
     return ModelOutcome(
-        **common,
+        **common,  # type: ignore[arg-type]
         status=status,
         content=completion.content,
         reasoning=completion.reasoning,
@@ -189,6 +297,8 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
         duration_ms=duration_ms,
         cost_usd=cost,
         tool_calls=completion.tool_calls,
+        finish_reason=completion.finish_reason,
+        attempts=completion.attempts,
     )
 
 
@@ -234,23 +344,46 @@ async def _fan_out(
             return await _run_member(deps, member)
 
     tasks = [asyncio.create_task(run(m)) for m in plan.members]
+    # task -> its PlannedMember, so an abandoned task can be named (identity/model) in its event.
+    member_of: dict[asyncio.Task[ModelOutcome], PlannedMember] = dict(
+        zip(tasks, plan.members, strict=True)
+    )
     loop = asyncio.get_running_loop()
     deadline = None if plan.fanout_deadline is None else loop.time() + plan.fanout_deadline
+    # `pending` means "not yet accounted for" — its outcome hasn't been reported (a yielded
+    # MemberCompleted, which is what triggers run_ensemble's _record_member) and it hasn't been
+    # handed to `finally` for detach/cancel. This is DELIBERATELY not the same thing as
+    # asyncio.wait's own "didn't complete this round" set: `yield` is a suspension point, so if the
+    # consumer tears this generator down (GeneratorExit) between two yields in the same round, a
+    # task that finished (is in `done`) but hasn't been individually yielded yet must still fall
+    # through to `finally` — otherwise it's silently dropped with no event and no metric, because
+    # `task.done()` is already True for it and the old `if not task.done()` check in `finally`
+    # skipped it entirely.
     pending = set(tasks)
     try:
         while pending:
             timeout = None if deadline is None else max(0.0, deadline - loop.time())
-            done, pending = await asyncio.wait(
+            done, _ = await asyncio.wait(
                 pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
             )
             if not done:  # deadline elapsed with nothing new — abandon the stragglers
-                logger.warning("fan-out deadline exceeded", ensemble=plan.ensemble)
+                logger.warning(
+                    "fan-out deadline exceeded", ensemble=plan.ensemble, pending=len(pending)
+                )
+                # In plan (config) order, not set-iteration order, for a deterministic sequence.
+                # Still genuinely running (not done) — leave them IN `pending` so `finally` below
+                # detaches/cancels them; this only announces that they won't make the deadline.
+                for task in tasks:
+                    if task in pending:
+                        member = member_of[task]
+                        yield MemberAbandoned(member.identity, member.spec.model)
                 break
             for task in done:
+                pending.discard(task)  # accounted for — its outcome is about to be reported
                 yield MemberCompleted(await task)
     finally:
         for task in tasks:
-            if not task.done():
+            if task in pending:
                 if plan.detach_on_disconnect:
                     # finish + cache in the background (a retry hits it); its metric is recorded
                     # from the completion callback since the request loop is gone.
@@ -331,6 +464,7 @@ def _synth_spec(plan: ExecutionPlan, messages: list[dict[str, object]]) -> CallS
         proxy_url_env=plan.synth.proxy_url_env,
         key_env_candidates=plan.synth.key_env_candidates,
         retries=plan.synth.retries,
+        retry_backoff_seconds=plan.synth.retry_backoff_seconds,
         timeout_seconds=plan.synth.timeout_seconds,
     )
 
@@ -338,14 +472,42 @@ def _synth_spec(plan: ExecutionPlan, messages: list[dict[str, object]]) -> CallS
 async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator[StreamEvent]:
     """Run an ensemble, emitting a typed event stream. Never raises — failures are events."""
     turn_type: TurnType = "relay" if plan.skip_reason == "tool_continuation" else "ensemble"
+    terminal_published = False
+    # True only once the REAL synthesizer call is under way (not the vote/first short-circuit's
+    # synthetic SynthesisStarted, which never calls an LLM) — gates the failure-recording below so
+    # a fan-out-stage error is never mistakenly recorded as a synthesis failure.
+    synthesizing = False
+
+    def _publish_terminal(event: ProgressEvent) -> None:
+        nonlocal terminal_published
+        terminal_published = True
+        _publish(deps, event)
+
     try:
         outcomes: list[ModelOutcome] = []
         if plan.skip_fanout:
+            # Publish SOMETHING on a passthrough/relay turn too — previously nothing was ever
+            # published here, so a progress dashboard opened on such a turn showed a blank page
+            # indistinguishable from a stuck/broken request. members_total=0 + detail=skip_reason
+            # lets the dashboard render an honest "no fan-out this turn" state instead.
+            _publish(
+                deps,
+                ProgressEvent(
+                    kind="fanout_started",
+                    ensemble=plan.ensemble,
+                    members_total=0,
+                    detail=plan.skip_reason,
+                ),
+            )
             if plan.skip_reason is not None:
                 yield FanoutSkipped(plan.skip_reason)
             synth_messages = plan.client_messages
             if plan.skip_reason == "tool_continuation":
                 synth_messages = _restore_relay_ids(deps, plan, synth_messages)
+            # The instruction is stripped from the client message during plan resolution
+            # regardless of path — without this, a passthrough/relay turn silently dropped it
+            # (it was never re-attached anywhere on this branch).
+            synth_messages = append_instruction(synth_messages, plan.instruction)
         else:
             members_total = len(plan.members)
             _publish(
@@ -391,7 +553,39 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                             duration_ms=outcome.duration_ms,
                             cached=outcome.cached,
                             error=outcome.error,
+                            status=outcome.status,
+                            cost_usd=outcome.cost_usd,
+                            error_kind=outcome.error_kind,
+                            error_detail=outcome.error_detail,
+                            finish_reason=outcome.finish_reason,
                         )
+                elif isinstance(event, MemberAbandoned):
+                    # Reuses "member_completed" (not a new ProgressKind): the dashboard's
+                    # fillCard is the only code path that clears a pending slot, and it already
+                    # keys off ANY member_completed event regardless of status — so this needs no
+                    # new dashboard event type, just a status value it renders distinctly (see
+                    # progress.py). Publishes NO metric here (unlike a real MemberCompleted) — the
+                    # spend, if any, is recorded later by _detach_member's completion callback, or
+                    # never if the task was cancelled outright.
+                    _publish(
+                        deps,
+                        ProgressEvent(
+                            kind="member_completed",
+                            ensemble=plan.ensemble,
+                            member=event.identity,
+                            model=event.model,
+                            status="detached" if plan.detach_on_disconnect else "aborted",
+                            duration_ms=(plan.fanout_deadline or 0.0) * 1000.0,
+                            members_total=members_total,
+                            completed=len(outcomes),
+                            preview=(
+                                "no result before the fan-out deadline — left to finish in the "
+                                "background"
+                                if plan.detach_on_disconnect
+                                else "no result before the fan-out deadline — cancelled"
+                            ),
+                        ),
+                    )
                 yield event
             # Quorum first: refuse to synthesize on a thin panel. With the default min_results=1
             # this also replaces the all-failed fallback (0 ok -> 502); min_results=0 re-enables it.
@@ -415,6 +609,13 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                     yield SynthesisStarted(plan.synth.llm_name, plan.synth.model)
                     for tool_event in _short_circuit_tool_events(deps, selected, outcomes):
                         yield tool_event
+                    # This path used to `return` here with NO terminal progress event ever
+                    # published — a dashboard watching a vote/first turn hung open forever.
+                    _publish_terminal(
+                        ProgressEvent(
+                            kind="completed", ensemble=plan.ensemble, status="tool_calls"
+                        )
+                    )
                     return
             if any(o.ok for o in outcomes):
                 synth_messages = build_synthesis_messages(
@@ -442,11 +643,15 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         )
         usage = Usage()
         synth_llm_cost: float | None = None
+        synth_attempts = 1
         finish: FinishReason = "stop"
         started_tools: set[int] = set()
         synth_text: list[str] = []
+        synthesizing = True  # a real LLM call from here on — gates failure recording below
         synth_stream = deps.client.stream(_synth_spec(plan, synth_messages))
         async for chunk in _stream_with_timeout(synth_stream, plan.synth.timeout_seconds):
+            if chunk.attempts is not None:
+                synth_attempts = chunk.attempts
             if chunk.content is not None or chunk.reasoning is not None:
                 yield AnswerDelta(content=chunk.content, reasoning=chunk.reasoning)
                 if chunk.content:
@@ -479,7 +684,9 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             synth_cost = compute_cost(usage, plan.synth.pricing)
         else:
             synth_cost = synth_llm_cost or 0.0
-        _record_synth(deps, plan, usage, synth_cost, turn_type)
+        _record_synth(
+            deps, plan, usage, synth_cost, turn_type, finish_reason=finish, attempts=synth_attempts
+        )
         if deps.tracer is not None:
             deps.tracer.observe(
                 request_id=deps.request_id,
@@ -491,13 +698,15 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 output="".join(synth_text),
                 usage=usage,
                 duration_ms=0.0,
+                status="ok",
+                cost_usd=synth_cost,
+                finish_reason=finish,
             )
         total_usage = usage
         for outcome in outcomes:
             total_usage = total_usage + outcome.usage
         total_cost = sum(o.cost_usd for o in outcomes) + synth_cost
-        _publish(
-            deps,
+        _publish_terminal(
             ProgressEvent(
                 kind="completed",
                 ensemble=plan.ensemble,
@@ -507,15 +716,52 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         )
         yield Completed(finish_reason=finish, usage=total_usage, total_cost_usd=total_cost)
     except MomError as exc:
-        _publish(
-            deps, ProgressEvent(kind="failed", ensemble=plan.ensemble, detail=exc.safe_message)
+        if synthesizing:
+            # A failed synthesis call used to be recorded nowhere at all — see
+            # _record_synth_failure. exc.kind/exc.detail/exc.attempts are the adapter's classified
+            # triple (or the class-level "unknown"/None/1 default for a MomError that isn't an
+            # UpstreamError, e.g. QuorumNotMet, which can't reach here since it's raised before
+            # `synthesizing` is set).
+            _record_synth_failure(
+                deps,
+                plan,
+                turn_type,
+                error=exc.safe_message,
+                error_kind=exc.kind,
+                error_detail=exc.detail,
+                attempts=exc.attempts,
+            )
+        _publish_terminal(
+            ProgressEvent(kind="failed", ensemble=plan.ensemble, detail=exc.safe_message)
         )
         yield PipelineFailed(code=exc.code, message=exc.safe_message, http_status=exc.http_status)
     except Exception:
-        _publish(
-            deps, ProgressEvent(kind="failed", ensemble=plan.ensemble, detail="internal error")
+        if synthesizing:
+            _record_synth_failure(
+                deps,
+                plan,
+                turn_type,
+                error="internal error",
+                error_kind="unknown",
+                error_detail=None,
+                attempts=1,
+            )
+        _publish_terminal(
+            ProgressEvent(kind="failed", ensemble=plan.ensemble, detail="internal error")
         )
         yield PipelineFailed(code="internal_error", message="Internal server error")
+    finally:
+        if not terminal_published:
+            # Some path left without ever publishing completed/failed — most likely the
+            # generator was torn down (a client disconnect propagates as GeneratorExit at
+            # whatever `yield` was in flight). Without this, a progress-dashboard tab watching
+            # the SAME request_id from a second connection would sit open until the bus's TTL
+            # eventually evicts the channel, rather than resolving when the request actually
+            # ended. `_publish` (not `_publish_terminal`) — no further reporting needed here.
+            _publish(
+                deps,
+                ProgressEvent(kind="failed", ensemble=plan.ensemble, detail="client disconnected"),
+            )
 
 
 async def collect(events: AsyncIterator[StreamEvent]) -> EnsembleResult:

@@ -8,9 +8,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from mom.domain.errors import ErrorKind
+from mom.domain.results import OutcomeStatus
+
 
 Role = Literal["fanout", "synthesis"]
-Status = Literal["ok", "error"]
 TurnType = Literal["ensemble", "relay"]
 
 
@@ -22,7 +24,9 @@ class CallMetric:
     llm: str
     model: str | None
     role: Role
-    status: Status
+    # The full ModelOutcome status vocabulary (schema v2) — previously collapsed to 'ok'/'error'
+    # at the call site, which hid 'empty'/'timeout'/'aborted' calls inside a single opaque bucket.
+    status: OutcomeStatus
     cache_hit: bool = False
     turn_type: TurnType = "ensemble"
     prompt_tokens: int | None = None
@@ -34,6 +38,13 @@ class CallMetric:
     cost_usd: float | None = None
     duration_ms: float | None = None
     error: str | None = None
+    # Appended last (schema v2) — MUST stay last: MetricsStore.insert_many does astuple(m) against
+    # a hand-written column list in the same order, so a field inserted out of order between
+    # same-typed columns would silently swap data rather than error.
+    finish_reason: str | None = None
+    error_kind: ErrorKind | None = None
+    error_detail: str | None = None
+    attempts: int = 1
 
 
 class MetricsSink(Protocol):

@@ -86,9 +86,14 @@ ensembles: { ... }      # required — the "models" clients call
 server:
   auth: bearer          # bearer (default) | none
   public_url: null      # external base URL, used to build progress/callback links
+  stream_heartbeat: null # emit an SSE keepalive comment after this much idle time; null = off
   cors:
     origins: []         # allowed origins; [] disables CORS
     allow_credentials: false
+  dedupe:
+    enabled: false       # in-flight request coalescing (see below); off by default
+    orphan_grace: 90s    # cancel a run this long after its last subscriber leaves
+    max_buffer: 8MB      # backstop against one run buffering unbounded history
 ```
 
 - **`auth`** — `bearer` requires every request to carry the token (see
@@ -98,8 +103,29 @@ server:
   configuration error.
 - **`public_url`** — the externally-reachable base URL of the gateway, used when it needs to
   emit an absolute link back to itself. Optional.
+- **`stream_heartbeat`** — when set, every SSE response (`/v1/chat/completions`, `/v1/responses`,
+  `/v1/messages`, and the progress feed) emits a `: keepalive` comment whenever the stream has
+  gone this long without a real chunk, so a slow fan-out or synthesizer call doesn't trip a
+  client's or intermediary's idle read-timeout. `null` (the default) disables it.
 - **`cors`** — an empty `origins` list means CORS middleware is not installed at all. Listing
   `"*"` together with `allow_credentials: true` is rejected (a browser would refuse it anyway).
+- **`dedupe`** — in-flight *request* coalescing: two concurrent, identical chat requests (same
+  ensemble, messages, tools, sampling, effort, and resolved `<<SYSTEM>>` directives — see the
+  `<<SYSTEM>>` section in [`README.md`](../README.md)) share one fan-out + synthesis instead of
+  paying for it twice. The second (and any later) caller attaches to the first's live run and streams
+  the exact same answer from token zero; its response carries an `X-MoM-Coalesced: 1` header and
+  `X-Request-Id`/the progress link both point at the original (leading) request. This is distinct
+  from [`cache.coalesce`](#cache), which dedupes identical *member calls* within/across ensembles
+  at the LLM-call layer — `server.dedupe` operates one layer up, at the whole-request layer, and
+  also catches a client's own retry-because-it-looked-stuck (the classic cause of doubled spend).
+  In-flight only: a run is dropped the instant it completes, so a deliberate regenerate afterward
+  always starts fresh. `orphan_grace` is how long a run keeps going with zero attached
+  subscribers (covers the gap between one client dropping and either a new one attaching or the
+  original reconnecting) before it's cancelled outright. `max_buffer` is a backstop against one
+  pathologically large run buffering unbounded history for a slow/absent subscriber; past it, the
+  run keeps going but stops accepting new attachers (a request landing after that point just
+  starts its own fresh run). Off by default — enable once validated against real traffic.
+  Currently wired into `/v1/chat/completions` only.
 
 ---
 
@@ -124,7 +150,16 @@ defaults:
 ```
 
 **`defaults.call`** — `timeout`, `retries`, and `retry_backoff` are the per-call transport
-settings applied to both members and the synthesizer.
+settings applied to both members and the synthesizer. Retries are entirely mom's own — litellm's
+built-in retry wrapper is never used (it gives zero backoff for most error classes and, when a
+retry attempt also fails, silently discards that failure in favor of re-raising the *first*
+attempt's error). mom instead retries only classified-transient failures (a rate limit or a
+connection/server/timeout error — never a bad request, an auth failure, or a context-length
+overflow, which fail identically on every attempt) with exponential backoff starting at
+`retry_backoff` (honoring a provider's own `Retry-After` header when present), and always surfaces
+the *last* attempt's error with an honest attempt count. A synthesizer's streamed answer is
+retried only while establishing the connection — once the first token has streamed to the client,
+a failure is never retried (it can't be un-sent).
 
 **`defaults.fanout`** —
 - `max_concurrency` bounds how many members hit upstream at once. `null` does **not** mean

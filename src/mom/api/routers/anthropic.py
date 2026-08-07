@@ -6,13 +6,14 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from mom.api.auth import require_api_key
 from mom.api.deps import Container, ContainerDep
 from mom.api.encoders.anthropic import build_message, encode_sse
 from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id, response_headers
 from mom.api.schemas.anthropic import AnthropicMessage, CountTokensRequest, MessagesRequest
+from mom.api.sse import sse_response
 from mom.config.resolve import ResolvedCatalog
 from mom.engine.pipeline import PipelineDeps, collect, run_ensemble
 from mom.engine.plan import resolve_plan
@@ -48,7 +49,9 @@ async def messages(req: MessagesRequest, container: ContainerDep, http_request: 
             model=ir.model,
             input_tokens=input_tokens,
         )
-        return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
+        heartbeat = container.catalog.config.server.stream_heartbeat
+        heartbeat_seconds = heartbeat.total_seconds() if heartbeat is not None else None
+        return sse_response(stream, headers=headers, heartbeat_seconds=heartbeat_seconds)
     result = await collect(run_ensemble(plan, deps))
     return JSONResponse(
         build_message(result, message_id=message_id, model=ir.model, input_tokens=input_tokens),

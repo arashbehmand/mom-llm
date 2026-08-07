@@ -95,6 +95,54 @@ async def test_streaming_events():
     assert text == "synthesized answer"
 
 
+_HEARTBEAT_CONFIG = dedent("""
+    version: 2
+    server: { auth: none, stream_heartbeat: 20ms }
+    llms:
+      a: { model: openai/a }
+      slow: { model: openai/slow }
+    ensembles:
+      e:
+        members: [{ llm: a }, { llm: slow }]
+        synthesizer: { llm: a, prompt: p }
+    prompts:
+      p: "synthesize"
+""")
+
+
+def _heartbeat_client(fake: FakeLLM):
+    catalog = resolve_catalog(Config.model_validate(yaml.safe_load(_HEARTBEAT_CONFIG)))
+    container = Container(
+        settings=Settings(_env_file=None),
+        catalog=catalog,
+        client=fake,
+        clock=ManualClock(),
+        ids=SequentialIds(),
+    )
+    app = create_app(container=container)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+async def test_streaming_response_carries_anti_buffering_headers():
+    async with _client(FakeLLM()) as client:
+        resp = await client.post(
+            "/v1/responses", json={"model": "e", "input": "hi", "stream": True}
+        )
+    assert resp.headers["cache-control"] == "no-cache"
+    assert resp.headers["x-accel-buffering"] == "no"
+
+
+async def test_streaming_now_carries_a_heartbeat_previously_missing_on_this_surface():
+    """Regression: this surface had NO ``with_heartbeat`` wiring at all before this fix — only
+    ``chat.py`` did — so a slow member here could idle-timeout a client with zero keepalive."""
+    fake = FakeLLM(delays={"slow": 0.05})
+    async with _heartbeat_client(fake) as client:
+        resp = await client.post(
+            "/v1/responses", json={"model": "e", "input": "hi", "stream": True}
+        )
+    assert ": keepalive" in resp.text
+
+
 async def test_input_item_list_and_tool_call():
     fake = FakeLLM(tool_calls=({"id": "call_1", "name": "get_weather", "arguments": '{"c":"SF"}'},))
     async with _client(fake) as client:
