@@ -53,58 +53,34 @@ class TestOpenAIEndpoints:
         assert response.status_code == 401
 
     def test_get_models_codex_client_version(self, test_client, auth_headers):
-        """GET /v1/models?client_version=<v> returns Codex {"models":[...]} shape."""
+        """GET /v1/models?client_version=<v> returns Codex's {"models":[...]} shape."""
         response = test_client.get("/v1/models?client_version=0.1.0", headers=auth_headers)
 
         assert response.status_code == 200
         data = response.json()
-        assert "models" in data
-        assert isinstance(data["models"], list)
-        assert len(data["models"]) > 0
+        # Codex deserializes into ModelsResponse, which needs exactly this one key.
+        assert data == {"models": []}
+        # Never the OpenAI list shape on this path.
         assert "object" not in data
         assert "data" not in data
-        # One entry per configured MoM model.
-        from mom_service.config import load_config
 
-        assert len(data["models"]) == len(load_config().models)
-        # Codex ModelInfo required fields are present per entry.
-        required = {
-            "slug",
-            "display_name",
-            "description",
-            "supported_reasoning_levels",
-            "shell_type",
-            "visibility",
-            "supported_in_api",
-            "priority",
-            "availability_nux",
-            "upgrade",
-            "base_instructions",
-            "support_verbosity",
-            "default_verbosity",
-            "apply_patch_tool_type",
-            "truncation_policy",
-            "supports_parallel_tool_calls",
-            "experimental_supported_tools",
-        }
-        seen_slugs = []
-        for entry in data["models"]:
-            assert required.issubset(entry.keys())
-            # slug and display_name both derive from the MoM model name.
-            assert entry["slug"] == entry["display_name"]
-            assert entry["slug"]
-            assert entry["visibility"] == "list"
-            assert entry["supported_in_api"] is True
-            assert entry["shell_type"] == "default"
-            assert entry["apply_patch_tool_type"] == "freeform"
-            assert entry["supports_parallel_tool_calls"] is True
-            assert entry["truncation_policy"]["mode"] == "tokens"
-            assert entry["truncation_policy"]["limit"] == 8192
-            assert entry["context_window"] == 200000
-            assert entry["max_context_window"] == 200000
-            seen_slugs.append(entry["slug"])
-        # Every model exposes a unique slug.
-        assert len(seen_slugs) == len(set(seen_slugs))
+    def test_get_models_codex_catalog_omits_entries(self, test_client, auth_headers):
+        """The Codex catalog stays empty so Codex keeps its own agent prompt.
+
+        Codex requires every catalog entry to carry ``base_instructions`` and uses
+        whatever it receives verbatim as that model's system prompt. Emitting entries
+        here would replace Codex's own prompt with a MoM-authored placeholder -- with
+        codex-cli 0.147.0 that dropped the entire 20.7 KB prompt from its request. An
+        empty catalog clears the refresh error without touching prompt behaviour, so
+        no entry may carry instructions of any kind.
+        """
+        response = test_client.get("/v1/models?client_version=0.147.0", headers=auth_headers)
+
+        assert response.status_code == 200
+        entries = response.json()["models"]
+        assert entries == []
+        assert not any("base_instructions" in entry for entry in entries)
+        assert not any("model_messages" in entry for entry in entries)
 
     def test_get_models_codex_client_version_empty_value(self, test_client, auth_headers):
         """Presence (not value) of client_version triggers Codex shape."""
