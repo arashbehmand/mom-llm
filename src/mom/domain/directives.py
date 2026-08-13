@@ -73,7 +73,14 @@ def _parse_body(body: str, *, legacy: bool) -> SystemDirectives:
     if legacy:
         return SystemDirectives(instruction=body.strip() or None)
 
-    lines = body.splitlines()
+    # The canonical, documented way to write this block puts `<<SYSTEM>>` on its own line, so the
+    # very first character of `body` is ALWAYS the newline that follows it — that's an artifact of
+    # how a human (or the README's own example) types the tag, not a deliberate blank-line escape
+    # hatch. Strip exactly that one leading line break before splitting, so `splitlines()` doesn't
+    # hand the loop below a leading empty string it can't tell apart from a genuine blank line. A
+    # REAL blank-line escape hatch (an instruction that starts with something `key:`-shaped) still
+    # works after this: it needs a second, deliberate newline, and one strip only ever removes one.
+    lines = re.sub(r"^\r?\n", "", body, count=1).splitlines()
     collected: dict[str, list[str]] = {}
     idx = 0
     for idx, raw_line in enumerate(lines):

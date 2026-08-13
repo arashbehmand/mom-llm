@@ -235,6 +235,43 @@ def test_only_and_show_work_and_synth_all_parse():
     )
 
 
+def test_opening_tag_on_its_own_line_still_parses_the_directive_header():
+    # This is how a human actually types the block (press Enter after `<<SYSTEM>>`, then write
+    # directives) and exactly how the README documents it — must not be confused with the real
+    # blank-line escape hatch (see the test above).
+    content = (
+        "<<SYSTEM>>\nexclude: k3\nsynth: cl48op\n<</SYSTEM>>\n\nwhat is the capital of france?"
+    )
+    messages = _msgs(MessageIR(role="user", content=content))
+    stripped, directives = extract_system_block(messages)
+    assert directives == SystemDirectives(
+        instruction=None, exclude=("k3",), only=(), show_work=None, synth="cl48op"
+    )
+    assert stripped[0].text.strip() == "what is the capital of france?"
+
+
+def test_readme_documented_multi_directive_example_parses_as_documented():
+    content = (
+        "Compare these two approaches.\n"
+        "<<SYSTEM>>\n"
+        "exclude: k3, glm52\n"
+        "only: oai56s, cl48op\n"
+        "show_work: off\n"
+        "synth: cl48op\n"
+        "Weigh whichever response cites real sources most heavily.\n"
+        "<</SYSTEM>>"
+    )
+    messages = _msgs(MessageIR(role="user", content=content))
+    _, directives = extract_system_block(messages)
+    assert directives == SystemDirectives(
+        instruction="Weigh whichever response cites real sources most heavily.",
+        exclude=("k3", "glm52"),
+        only=("oai56s", "cl48op"),
+        show_work="off",
+        synth="cl48op",
+    )
+
+
 def test_unknown_directive_key_raises_400():
     messages = _msgs(MessageIR(role="user", content="<<SYSTEM>>skpi: k3\ntext<</SYSTEM>>"))
     with pytest.raises(InvalidRequestError, match="skpi"):
@@ -250,10 +287,25 @@ def test_body_starting_with_non_directive_line_becomes_instruction_verbatim():
 
 
 def test_leading_blank_line_is_the_escape_hatch_for_key_shaped_prose():
-    messages = _msgs(MessageIR(role="user", content="<<SYSTEM>>\nNote: be careful<</SYSTEM>>"))
+    # "Leave a blank line before it" (per the README) means a genuinely empty line — two newlines,
+    # not one. The one newline that unavoidably follows `<<SYSTEM>>` when it's written on its own
+    # line (see the header-parsing block below) must NOT by itself be mistaken for this.
+    messages = _msgs(MessageIR(role="user", content="<<SYSTEM>>\n\nNote: be careful<</SYSTEM>>"))
     _, directives = extract_system_block(messages)
     assert directives is not None
     assert directives.instruction == "Note: be careful"
+
+
+def test_a_single_newline_after_the_opening_tag_is_not_the_blank_line_escape_hatch():
+    # Regression for a real bug: writing `<<SYSTEM>>` on its own line (the only way a human types
+    # it, and exactly how the README's own multi-directive example is formatted) put exactly one
+    # newline at the start of the captured body. `splitlines()` on a string starting with `\n`
+    # yields a leading empty string, which the parser mistook for the deliberate blank-line escape
+    # hatch above — silently discarding every directive and turning the whole header into inert
+    # instruction text. `exclude:`/`synth:`/etc. must still be parsed here, not skipped.
+    messages = _msgs(MessageIR(role="user", content="<<SYSTEM>>\nNote: be careful<</SYSTEM>>"))
+    with pytest.raises(InvalidRequestError, match="note"):
+        extract_system_block(messages)
 
 
 def test_instruction_terminator_key_is_the_other_escape_hatch():
