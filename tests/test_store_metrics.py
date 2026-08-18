@@ -185,8 +185,24 @@ async def test_migration_over_existing_v1_data_preserves_rows(tmp_path: Path):
         "cache_write_tokens, total_tokens, cost_usd, duration_ms, error"
         ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            "req-old", 500.0, "bmom", "gpt", "openai/gpt-x", "fanout", "error", 0, "ensemble",
-            100, 0, 0, 0, 0, 100, 0.01, 250.0, "call failed",
+            "req-old",
+            500.0,
+            "bmom",
+            "gpt",
+            "openai/gpt-x",
+            "fanout",
+            "error",
+            0,
+            "ensemble",
+            100,
+            0,
+            0,
+            0,
+            0,
+            100,
+            0.01,
+            250.0,
+            "call failed",
         ),
     )
     await v1_conn.commit()
@@ -249,9 +265,7 @@ async def test_group_by_status(store: MetricsStore):
 
 
 async def test_group_by_ensemble(store: MetricsStore):
-    await store.insert_many(
-        [_metric(ensemble="a"), _metric(ensemble="a"), _metric(ensemble="b")]
-    )
+    await store.insert_many([_metric(ensemble="a"), _metric(ensemble="a"), _metric(ensemble="b")])
     rows = await store.aggregate_by("ensemble")
     assert {row["ensemble"]: row["calls"] for row in rows} == {"a": 2, "b": 1}
 

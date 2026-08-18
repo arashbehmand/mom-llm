@@ -285,9 +285,7 @@ def metrics_usage(
         return
     start = time.time() - days * 86400 if days > 0 else None
     try:
-        agg, groups, savings = asyncio.run(
-            _usage_report(db, start=start, ensemble=ensemble, by=by)
-        )
+        agg, groups, savings = asyncio.run(_usage_report(db, start=start, ensemble=ensemble, by=by))
     except ValueError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from exc

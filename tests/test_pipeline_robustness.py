@@ -362,9 +362,7 @@ async def test_vote_first_short_circuit_publishes_a_terminal_completed_event():
     ir = ChatRequestIR(model="e", messages=(MessageIR(role="user", content="hi"),))
     plan = resolve_plan(catalog, ir)
     bus = InMemoryEventBus()
-    client = FakeLLM(
-        member_tool_calls={"a": ({"id": "c1", "name": "fn", "arguments": "{}"},)}
-    )
+    client = FakeLLM(member_tool_calls={"a": ({"id": "c1", "name": "fn", "arguments": "{}"},)})
     deps = PipelineDeps(client=client, clock=ManualClock(), bus=bus, request_id="req-5")
 
     await asyncio.wait_for(collect(run_ensemble(plan, deps)), timeout=1.0)
@@ -443,7 +441,9 @@ class _BothInstantClient:
 
     async def complete(self, spec: CallSpec) -> Completion:
         return Completion(
-            content=f"reply from {spec.llm_name}", reasoning=None, finish_reason="stop",
+            content=f"reply from {spec.llm_name}",
+            reasoning=None,
+            finish_reason="stop",
             usage=Usage(),
         )
 

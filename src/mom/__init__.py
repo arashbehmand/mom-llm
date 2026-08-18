@@ -7,6 +7,6 @@ wiring happens in :func:`mom.api.app.create_app` via an explicit lifespan/compos
 from __future__ import annotations
 
 
-__version__ = "2.0.0.dev0"
+__version__ = "2.0.0"
 
 __all__ = ["__version__"]

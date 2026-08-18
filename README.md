@@ -82,6 +82,9 @@ docker compose up              # reads .env for secrets and MOM_CONFIG
 Secrets come from the environment (or a gitignored `.env`); the YAML config only ever *names* the
 env vars, never the values. Check the server with `curl localhost:8000/health`.
 
+> **Coming from v1?** The config format and the way you run MoM both changed (your *clients* don't).
+> [docs/MIGRATION.md](docs/MIGRATION.md) walks through both, field by field.
+
 ## 🔌 API surfaces
 
 The `model` you send is an **ensemble** from your config (e.g. `bmom`), not a raw provider model.
@@ -254,7 +257,8 @@ MoM is a drop-in `base_url` for the OpenAI SDK, the Anthropic SDK and Claude Cod
 - [docs/API.md](docs/API.md) — endpoint and wire-format reference
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — the v2 config schema
 - [docs/PROVIDERS.md](docs/PROVIDERS.md) — using MoM from SDKs and agent tools
-- [docs/MIGRATION.md](docs/MIGRATION.md) — upgrading from v1
+- [docs/MIGRATION.md](docs/MIGRATION.md) — upgrading from v1 (deployment + config)
+- [CHANGELOG.md](CHANGELOG.md) — what landed in each release
 
 ## 🛠️ Development
 

@@ -106,8 +106,6 @@ def test_metrics_usage_restricts_to_one_ensemble(tmp_path: Path):
 
 def test_metrics_usage_rejects_unknown_grouping_dimension(tmp_path: Path):
     _seed(tmp_path / "metrics.db", [_metric()])
-    result = runner.invoke(
-        app, ["metrics", "usage", "--data-dir", str(tmp_path), "--by", "bogus"]
-    )
+    result = runner.invoke(app, ["metrics", "usage", "--data-dir", str(tmp_path), "--by", "bogus"])
     assert result.exit_code == 1
     assert "unknown grouping dimension" in result.output

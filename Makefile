@@ -1,4 +1,4 @@
-.PHONY: help install fmt fmt-check lint typecheck imports test test-v1 cov check run clean \
+.PHONY: help install fmt fmt-check lint typecheck imports test cov check run clean \
         docker-build docker-up docker-down
 
 # Tools resolve from the project venv (populated by `make install` / `uv sync`).
@@ -15,17 +15,16 @@ help:
 	@echo "  make cov         v2 tests with coverage"
 	@echo "  make check       fmt-check + lint + typecheck + test"
 	@echo "  make run         Run the server (dev reload)"
-	@echo "  make test-v1     Run the legacy v1 suite (transition only)"
 
 install:
 	uv sync --group dev
 
 fmt:
-	$(BIN)/ruff format src/mom tests_v2
-	$(BIN)/ruff check --fix src/mom tests_v2
+	$(BIN)/ruff format src/mom tests
+	$(BIN)/ruff check --fix src/mom tests
 
 fmt-check:
-	$(BIN)/ruff format --check src/mom tests_v2
+	$(BIN)/ruff format --check src/mom tests
 
 lint:
 	$(BIN)/ruff check .
@@ -35,20 +34,16 @@ typecheck:
 	$(BIN)/mypy
 
 test:
-	$(PY) -m pytest -c pyproject.toml
+	$(PY) -m pytest
 
 cov:
-	$(PY) -m pytest -c pyproject.toml --cov=mom --cov-report=term-missing
+	$(PY) -m pytest --cov=mom --cov-report=term-missing
 
 check: fmt-check lint typecheck test
 	@echo "All checks passed."
 
 run:
 	$(BIN)/mom serve --reload
-
-# Legacy v1 suite (deleted at Phase 11 cutover).
-test-v1:
-	$(PY) -m pytest
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
@@ -57,10 +52,9 @@ clean:
 	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 
-# Legacy v1 docker targets (replaced at cutover).
 docker-build:
-	docker build -t mom-service .
+	docker build -t mom-llm:latest .
 docker-up:
-	docker-compose up -d
+	docker compose up -d
 docker-down:
-	docker-compose down
+	docker compose down

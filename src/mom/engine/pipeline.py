@@ -612,9 +612,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                     # This path used to `return` here with NO terminal progress event ever
                     # published — a dashboard watching a vote/first turn hung open forever.
                     _publish_terminal(
-                        ProgressEvent(
-                            kind="completed", ensemble=plan.ensemble, status="tool_calls"
-                        )
+                        ProgressEvent(kind="completed", ensemble=plan.ensemble, status="tool_calls")
                     )
                     return
             if any(o.ok for o in outcomes):

@@ -70,9 +70,7 @@ def test_legacy_marker_requires_the_exact_double_lt_closer():
 
 
 def test_legacy_marker_two_blocks_strips_both_honors_first():
-    messages = _msgs(
-        MessageIR(role="user", content=f"{_ci('first')} mid {_ci('second')}")
-    )
+    messages = _msgs(MessageIR(role="user", content=f"{_ci('first')} mid {_ci('second')}"))
     new_messages, directives = extract_system_block(messages)
     assert directives is not None
     assert directives.instruction == "first"
@@ -141,7 +139,9 @@ def test_multipart_message_with_no_marker_stops_the_scan_there():
     messages = _msgs(
         MessageIR(role="user", content="<<SYSTEM>>old<</SYSTEM>>"),
         MessageIR(role="assistant", content="ok"),
-        MessageIR(role="user", content=(TextPart(text="no marker"), ImagePart(url="https://x/i.jpg"))),
+        MessageIR(
+            role="user", content=(TextPart(text="no marker"), ImagePart(url="https://x/i.jpg"))
+        ),
     )
     _, directives = extract_system_block(messages)
     assert directives is None
