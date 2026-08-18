@@ -101,3 +101,30 @@ async def test_model_info_litellm_shape():
     assert entry["litellm_params"]["model"] == "mom/tiered"
     assert entry["model_info"]["max_input_tokens"] == 200000
     assert entry["model_info"]["supports_web_search"] is True
+
+
+async def test_codex_dialect_returns_its_own_catalog_envelope():
+    """Codex's model-picker refresh decodes ``{"models": [...]}``, not OpenAI's list shape."""
+    async with _client() as client:
+        resp = await client.get("/v1/models", params={"client_version": "0.147.0"})
+    assert resp.status_code == 200
+    assert resp.json() == {"models": []}
+
+
+async def test_codex_catalog_carries_no_entries():
+    """The catalog stays empty so Codex keeps its own agent prompt.
+
+    Codex uses an entry's ``base_instructions`` verbatim as that model's system prompt, so any
+    entry MoM emitted would replace Codex's prompt instead of describing a model.
+    """
+    async with _client() as client:
+        resp = await client.get("/v1/models", params={"client_version": ""})
+    assert resp.json()["models"] == []
+
+
+async def test_absent_client_version_keeps_the_openai_shape():
+    async with _client() as client:
+        resp = await client.get("/v1/models")
+    body = resp.json()
+    assert body["object"] == "list"
+    assert "models" not in body

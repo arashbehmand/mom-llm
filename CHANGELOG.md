@@ -26,7 +26,11 @@ A ground-up rebuild of MoM as the `mom` package (src-layout, distribution `mom-l
 - **Tool calling** through the synthesizer, with relay continuations — a tool result skips a fresh
   fan-out and goes straight to the synthesizer, keeping multi-turn agent loops cheap.
 - **Honest capability cards** on `/v1/models`: vision, tools, reasoning, and web-search support plus
-  a minimum context window aggregated from the actual panel members.
+  a minimum context window aggregated from the actual panel members. Discovery answers in the
+  dialect the request asks for — the OpenAI list shape by default, the Anthropic list shape on an
+  `anthropic-version`/`x-api-key` header, and Codex CLI's `{"models": []}` catalog on
+  `?client_version=` (deliberately empty: Codex uses an entry's `base_instructions` verbatim as the
+  model's system prompt, so any entry would replace its own agent prompt).
 - **Automatic cost tracking**: per-call USD from litellm's cost map for direct providers and from
   OpenRouter's returned usage-cost; the config `pricing:` block is now an optional override only.
 - **Provider prompt caching**: automatic Anthropic `cache_control` breakpoints and OpenAI/xAI

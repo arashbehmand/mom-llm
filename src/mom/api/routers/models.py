@@ -1,8 +1,10 @@
 """``GET /v1/models`` (+/{id}) and ``GET /v1/model/info`` with capability metadata.
 
-Serves OpenAI's required fields plus OpenRouter-convention fields and a ``mom`` vendor block; the
-Anthropic list shape is returned when the request carries anthropic-version / x-api-key. A
-LiteLLM-shaped ``/v1/model/info`` is provided for agents that probe it.
+Serves OpenAI's required fields plus OpenRouter-convention fields and a ``mom`` vendor block. Model
+discovery is the one place where compatible clients disagree on the *envelope*, so ``/v1/models``
+answers in the dialect the request asks for: the Anthropic list shape when it carries
+anthropic-version / x-api-key, and the Codex catalog shape when it carries ``?client_version=``.
+A LiteLLM-shaped ``/v1/model/info`` is provided for agents that probe it.
 """
 
 from __future__ import annotations
@@ -87,7 +89,22 @@ def _is_anthropic(request: Request) -> bool:
 
 
 @router.get("/models")
-async def list_models(request: Request, container: ContainerDep) -> dict[str, Any]:
+async def list_models(
+    request: Request, container: ContainerDep, client_version: str | None = None
+) -> dict[str, Any]:
+    # Codex CLI's model-picker refresh calls GET /v1/models?client_version=<v> and decodes its own
+    # catalog envelope, {"models": [...]}. Handed OpenAI's list shape it logs `failed to refresh
+    # available models: missing field 'models'` and falls back to its bundled metadata. Presence of
+    # the parameter (not its value) selects the dialect; absent, every other client gets the
+    # unchanged OpenAI shape.
+    #
+    # The catalog is deliberately *empty*. Codex requires each entry to carry `base_instructions`
+    # and uses what it receives verbatim as that model's system prompt, so any entry MoM emitted
+    # would replace Codex's own agent prompt rather than describe a model — measured against
+    # codex-cli 0.147.0, an entry with `"base_instructions": ""` dropped the whole 20.7 KB prompt
+    # from the request. An empty catalog clears the error and leaves Codex on its own metadata.
+    if client_version is not None:
+        return {"models": []}
     created = int(container.clock.now())
     cards = _cards(container)
     if _is_anthropic(request):

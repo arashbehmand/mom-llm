@@ -227,10 +227,34 @@ Lists the ensembles. Each entry carries OpenAI's fields plus OpenRouter-conventi
 `supported_parameters` grows with capability — tools/response_format when tool-capable,
 `reasoning_effort`/`reasoning` when reasoning-capable, `web_search*` when search-capable.
 
-When the request carries `anthropic-version` or `x-api-key`, `GET /v1/models` returns the **Anthropic
-list shape** instead (`{data: [{type:"model", id, display_name, created_at}], has_more, first_id,
-last_id}`). `GET /v1/models/{id}` returns the OpenAI single-model object, or **404** for an unknown
-ensemble.
+`GET /v1/models/{id}` returns the OpenAI single-model object, or **404** for an unknown ensemble.
+
+#### Discovery dialects
+
+Model discovery is the one place where otherwise-compatible clients disagree on the *envelope*, so
+`GET /v1/models` answers in the dialect the request asks for. The models themselves are identical in
+every dialect; only the wrapper changes.
+
+| Request carries | Envelope |
+| --- | --- |
+| *(nothing)* | OpenAI — `{object:"list", data:[…]}` |
+| `anthropic-version` or `x-api-key` header | Anthropic — `{data:[{type:"model", id, display_name, created_at}], has_more, first_id, last_id}` |
+| `?client_version=` query param | Codex — `{"models": []}` |
+
+Codex CLI refreshes its model picker with `GET /v1/models?client_version=<v>`. Given the OpenAI
+envelope it logs `failed to refresh available models: … missing field 'models'` and falls back to
+its bundled metadata; the parameter's *presence* (whatever its value) selects the Codex envelope.
+
+```bash
+curl "http://localhost:8000/v1/models?client_version=0.147.0" -H "Authorization: Bearer $TOKEN"
+# {"models": []}
+```
+
+That catalog is empty on purpose. Codex requires every entry to carry `base_instructions` and uses
+what it receives *verbatim* as that model's system prompt — measured against codex-cli 0.147.0, an
+entry with `"base_instructions": ""` dropped the entire 20.7 KB agent prompt from Codex's request.
+MoM has no business owning an agent's prompt, so it emits no entries: the refresh error goes away
+and Codex keeps the metadata it already uses. Auth applies on this path like any other.
 
 ### `GET /v1/model/info`
 
