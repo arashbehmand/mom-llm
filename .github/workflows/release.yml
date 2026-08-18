@@ -78,6 +78,11 @@ jobs:
           name: dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          # PyPI refuses to overwrite a released version, which would fail every re-run of a
+          # workflow_dispatch against an already-published tag. Skipping what is already there
+          # keeps re-running the workflow (e.g. to rebuild the image) a safe operation.
+          skip-existing: true
 
   ghcr:
     runs-on: ubuntu-latest
