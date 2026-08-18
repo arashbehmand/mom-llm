@@ -3,27 +3,80 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Lets a tag that predates a workflow change be released without moving the tag.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag or ref to build and publish (e.g. v2.0.0)"
+        required: true
 
+# Read-only by default; each job escalates to exactly what it needs.
 permissions:
-  contents: write
+  contents: read
+
+# Third-party actions are pinned to full commit SHAs (repo-wide policy, and it matters most in
+# this workflow: it writes releases and mints a PyPI OIDC token). A mutable major tag lets an
+# upstream retag change the code we execute without any change landing in this repo.
+# Renovate bumps each pin and its version comment together.
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # Third-party actions are pinned to full commit SHAs (repo-wide policy, and it matters
-      # most here: this workflow runs with `contents: write`). A mutable major tag lets an
-      # upstream retag change the code we execute without any change landing in this repo.
-      # Renovate bumps the pin and its version comment together.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: "0.11.32"
       - name: Build sdist + wheel
         run: uv build
+      # `uv build` leaves a `.gitignore` in dist/; upload only the distributions themselves so it
+      # cannot ride along into the release or to PyPI.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
       - name: GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          files: dist/*
+          tag_name: ${{ inputs.ref || github.ref_name }}
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
           generate_release_notes: true
-      # PyPI publish (trusted publishing) and ghcr image are enabled in Phase 10/11.
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    # Trusted publishing: PyPI mints a short-lived token from this job's OIDC identity, so there is
+    # no long-lived API token stored in the repo. Configure the publisher at
+    # https://pypi.org/manage/project/mom-llm/settings/publishing/ with workflow `release.yml` and
+    # environment `pypi`.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/mom-llm
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  # DEFERRED: a ghcr image is not published from here yet.
