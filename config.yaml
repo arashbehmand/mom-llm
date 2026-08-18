@@ -40,7 +40,7 @@ llms:
   # effort, so what it can do (and costs) travels with it. See k3 below, where the `search:` block
   # is deliberately declared once on the base and relied on by all its variants.
   # OpenAI search is Responses-API-only (chat completions rejects web_search_options for these
-  # models) — like grok45 below, `api: responses` makes the request-triggered search block usable.
+  # models) — like grok46 below, `api: responses` makes the request-triggered search block usable.
   oai56t:
     model: openai/gpt-5.6-terra
     api: responses
@@ -70,14 +70,16 @@ llms:
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
 
-  g36f:
-    model: gemini/gemini-3.6-flash
+  # No `mi` rung: 3.7-flash dropped the MINIMAL thinking level that 3.6-flash accepted (verified
+  # live — it 400s with "Thinking level MINIMAL is not supported for this model"). `low` is this
+  # model's floor; g35fl below is still the one to reach for when minimal-effort is the point.
+  g37f:
+    model: gemini/gemini-3.7-flash
     search: { web_search_options: { search_context_size: high } }
     variants:
-      mi: { params: { reasoning_effort: minimal } }
-      l:  { params: { reasoning_effort: low } }
-      m:  { params: { reasoning_effort: medium } }
-      h:  { params: { reasoning_effort: high } }
+      l: { params: { reasoning_effort: low } }
+      m: { params: { reasoning_effort: medium } }
+      h: { params: { reasoning_effort: high } }
 
   g31p:
     model: gemini/gemini-3.1-pro-preview
@@ -99,9 +101,11 @@ llms:
     model: anthropic/claude-sonnet-5
     search: { web_search_options: { search_context_size: high } }
     variants:
-      l: { params: { reasoning_effort: low, thinking: { type: adaptive } } }
-      m: { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
-      h: { params: { reasoning_effort: high, thinking: { type: adaptive } } }
+      l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
+      m:  { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
+      h:  { params: { reasoning_effort: high, thinking: { type: adaptive } } }
+      xh: { params: { reasoning_effort: xhigh, thinking: { type: adaptive } } }
+      am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
 
   cl45hk:
     model: anthropic/claude-haiku-4-5-20251001
@@ -109,13 +113,18 @@ llms:
     variants:
       m: { params: { thinking: { type: enabled, budget_tokens: 4096 } } }
 
-  cl48op:
-    model: anthropic/claude-opus-4-8
+  # Opus 5 thinks by DEFAULT (unlike 4.8, where an unset `thinking` meant no thinking), and it
+  # carries the full five-rung ladder — hence the `xh` variant that 4.8 never had here. Never send
+  # `thinking: {type: disabled}` on this model: it is a 400 above `high` effort, and adaptive is
+  # what every rung below wants anyway.
+  cl5op:
+    model: anthropic/claude-opus-5
     search: { web_search_options: { search_context_size: high } }
     variants:
       l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
       m:  { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
       h:  { params: { reasoning_effort: high, thinking: { type: adaptive } } }
+      xh: { params: { reasoning_effort: xhigh, thinking: { type: adaptive } } }
       am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
 
   cl5f:
@@ -128,8 +137,8 @@ llms:
       am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
 
   grok420ma: { model: xai/grok-4.20-multi-agent, api: responses, search: { tools: [{ type: web_search }] } }
-  grok45:
-    model: xai/grok-4.5
+  grok46:
+    model: xai/grok-4.6
     # api: responses (like grok420ma) — needed for web search: xai's chat-completions tool type
     # is restricted to function|live_search, but the Responses API accepts tools:[{type:web_search}].
     api: responses
@@ -140,17 +149,23 @@ llms:
       h: { params: { reasoning_effort: high } }
 
   # OpenRouter's web plugin is a PLATFORM capability, not model-specific — verified live on both
-  # k3 and qwn37max (two unrelated architectures), so it's wired on every openrouter/* model here
+  # k3 and qwn38max (two unrelated architectures), so it's wired on every openrouter/* model here
   # except glm52 (independently broken — 'NoneType' object is not subscriptable even without
   # search, a pre-existing litellm/provider issue, not a search-wiring one; fix separately).
   grokbuild: { model: openrouter/x-ai/grok-build-0.1, search: { extra_body: { plugins: [{ id: web }] } } }
   dsv4:      { model: openrouter/deepseek/deepseek-v4-pro, search: { extra_body: { plugins: [{ id: web }] } } }
   dsv4-f:    { model: openrouter/deepseek/deepseek-v4-flash, search: { extra_body: { plugins: [{ id: web }] } } }
-  codestral: { model: mistral/codestral-2508 }
-  qwn37max:  { model: openrouter/qwen/qwen3.7-max, search: { extra_body: { plugins: [{ id: web }] } } }
+  # Mistral's agentic-coding line; codestral-2508 was a 2025-vintage FIM/completion pin and
+  # the only stale model left in the catalog.
+  devstral:  { model: mistral/devstral-2512 }
+  mstlm:     { model: mistral/mistral-medium-2604 }
+  qwn38max:  { model: openrouter/qwen/qwen3.8-max, search: { extra_body: { plugins: [{ id: web }] } } }
 
   k3:
-    model: openrouter/moonshotai/kimi-k3
+    # :nitro = OpenRouter's throughput-sorted provider routing. The bare slug routes by price and
+    # was landing on sluggish providers (owner-observed; measured 2026-08-18: totals swung
+    # 5s-14s per identical tiny prompt, and 12.5s at reasoning-low — :nitro held a steady 6-7.6s).
+    model: openrouter/moonshotai/kimi-k3:nitro
     search:                                # request-triggered online: OpenRouter web plugin,
       extra_body:                          # merged ONLY when the client asks for web_search.
         plugins:                           # Inherited by the variants below (same model).
@@ -162,8 +177,11 @@ llms:
 
   k27code: { model: openrouter/moonshotai/kimi-k2.7-code, search: { extra_body: { plugins: [{ id: web }] } } }
 
-  muse11:
-    model: openrouter/meta/muse-spark-1.1
+  # Slow first token (10-17s TTFT measured 2026-08-18) — the proxy hop plus server-side reasoning
+  # that doesn't stream. Fine on the deliberative panels it sits on (the 6m fan-out deadline
+  # absorbs it); don't seat it anywhere latency is the point.
+  muse12:
+    model: openrouter/meta/muse-spark-1.2
     proxy_url_env: MUSE_SPARK_PROXY_URL
     search: { extra_body: { plugins: [{ id: web }] } }
     variants:
@@ -188,9 +206,44 @@ llms:
     model: openrouter/nvidia/nemotron-3-ultra-550b-a55b
     params: { reasoning: { enabled: true } }
     search: { extra_body: { plugins: [{ id: web }] } }
+  # GLM 5.3 (2026-08-14) is deliberately NOT pinned here: at time of writing it ships only through
+  # Z.ai's own Coding Plan endpoint — no OpenRouter slug, no open weights (~2 weeks out), and no
+  # Z.ai key in .env. Revisit once `z-ai/glm-5.3` appears on OpenRouter; the 5.2 pin below is the
+  # newest reachable GLM until then.
   glm52:    { model: openrouter/z-ai/glm-5.2 }  # search omitted: broken independent of search, see above
   m3:       { model: openrouter/minimax/minimax-m3, search: { extra_body: { plugins: [{ id: web }] } } }
   mimo25:   { model: openrouter/xiaomi/mimo-v2.5-pro:nitro, search: { extra_body: { plugins: [{ id: web }] } } }
+
+  # Newcomers since the last catalog pass. Left variant-free on purpose: each one's reasoning
+  # ladder is unproven here, and a bare name means "no reasoning param, ever" — the honest default
+  # until a live pass earns them an effort vector.
+  seed2c:   { model: openrouter/bytedance-seed/seed-2.0-code, search: { extra_body: { plugins: [{ id: web }] } } }
+  laguna:   { model: openrouter/poolside/laguna-s-2.1, search: { extra_body: { plugins: [{ id: web }] } } }
+  longcat2: { model: openrouter/meituan/longcat-2.0, search: { extra_body: { plugins: [{ id: web }] } } }
+  inksm:    { model: openrouter/thinkingmachines/inkling-small, search: { extra_body: { plugins: [{ id: web }] } } }
+  nem35l:   { model: openrouter/nvidia/nemotron-3.5-lightning, search: { extra_body: { plugins: [{ id: web }] } } }
+  solar4:   { model: openrouter/upstage/solar-pro4, search: { extra_body: { plugins: [{ id: web }] } } }
+  # sakana/sakana-namazu (Japanese-specialised, Kimi-K2.6-derived) would be the obvious pick for
+  # the translation panels, but every endpoint serving it is excluded by this account's OpenRouter
+  # data-policy settings — 404 "No endpoints available matching your guardrail restrictions".
+  # Relax the policy at openrouter.ai/settings/privacy to wire it in.
+
+  # Labs with no other seat in the catalog. Diversity of training lineage is the whole point of a
+  # panel — a cheap model from an unrepresented lab is worth more here than a fifth strong model
+  # from a lab that already has a voice. All four are cheap and small-active-param (i.e. fast), so
+  # they widen the panel without stretching the 6m fan-out deadline or the bill.
+  hy3:      { model: openrouter/tencent/hy3, search: { extra_body: { plugins: [{ id: web }] } } }          # Tencent Hunyuan
+  katair:   { model: openrouter/kwaipilot/kat-coder-air-v2.5, search: { extra_body: { plugins: [{ id: web }] } } } # Kuaishou, coding
+  # Catalog-only (mom-debug reaches it via `all`): the lone Ant Group endpoint collapses under
+  # concurrent load — 0.8s solo but 16s (or hard errors) at just 4-way fan-in, measured
+  # 2026-08-18. Not seated on any panel until it has more providers behind it.
+  ling3f:   { model: openrouter/inclusionai/ling-3.0-flash, search: { extra_body: { plugins: [{ id: web }] } } }  # Ant Group, 5.1B active
+
+  # Latency-tested additions (TTFT/total on a one-line prompt, 2026-08-18):
+  mercury2: { model: openrouter/inception/mercury-2, search: { extra_body: { plugins: [{ id: web }] } } }   # diffusion LLM — parallel token refinement, 0.8s/0.8s
+  step37f:  { model: openrouter/stepfun/step-3.7-flash, search: { extra_body: { plugins: [{ id: web }] } } } # StepFun MoE, 0.6s TTFT
+  granite41: { model: openrouter/ibm-granite/granite-4.1-8b, search: { extra_body: { plugins: [{ id: web }] } } } # IBM, 0.5s/0.8s at $0.05/$0.10
+  nova2l:   { model: openrouter/amazon/nova-2-lite-v1, search: { extra_body: { plugins: [{ id: web }] } } }  # Amazon, 1M ctx, 0.7s/0.8s
 
   # One-off reuses of a base model for a different purpose (not an effort family) — `extends`
   # still fits these: no repeated model string, and each needs its OWN api/params shape.
@@ -215,7 +268,7 @@ llms:
   # A dedicated grok-dr (always-on, like oai-dr/gem-dr) isn't wired: xAI retired live_search (->
   # Agent Tools API), and litellm's xai CHAT COMPLETIONS path still only accepts tool type
   # function|live_search, not web_search. The Responses API path works though (verified live) —
-  # see grok45 above (api: responses + search: tools:web_search), request-triggered like everyone
+  # see grok46 above (api: responses + search: tools:web_search), request-triggered like everyone
   # else, so no separate always-on variant is needed here.
 
 prompts:
@@ -405,14 +458,14 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: low
     members:
-      - { llm: oai56s,   effort: [low, medium, high] }
-      - { llm: oai56t,   effort: [low, medium, high] }
-      - { llm: g31p,     effort: ["off", low, high] }
-      - { llm: cl48op,   effort: [low, medium, high] }
-      - { llm: grok45,   effort: [low, medium, high] }
-      - qwn37max
+      - { llm: oai56s, effort: [low, medium, high] }
+      - { llm: oai56t, effort: [low, medium, high] }
+      - { llm: g31p,   effort: ["off", low, high] }
+      - { llm: cl5op,  effort: [low, medium, high] }
+      - { llm: grok46, effort: [low, medium, high] }
+      - qwn38max
       - glm52
-      - { llm: k3,       effort: [low, high, max] }
+      - { llm: k3,     effort: [low, high, max] }
     # Synth effort tracks the requested tier (low at the default tier) — reviewed and kept as-is:
     # a `minimal`-effort synth was too weak to attentively weigh one dissenting real-search
     # candidate against several generic non-answers, even with the right prompt (see `4fdd974`).
@@ -430,17 +483,17 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: medium
     members:
-      - { llm: oai56s,  effort: [low, medium, high] }
-      - { llm: oai56t,  effort: [medium, high, high] }
-      - { llm: g31p,    effort: [low, high, high] }
-      - { llm: g36f,    effort: [medium, high, high] }
-      - { llm: cl48op,  effort: [low, medium, high] }
-      # was two members (grok45-l and grok45-h) firing at once — one architecture giving two
+      - { llm: oai56s, effort: [low, medium, high] }
+      - { llm: oai56t, effort: [medium, high, high] }
+      - { llm: g31p,   effort: [low, high, high] }
+      - { llm: g37f,   effort: [medium, high, high] }
+      - { llm: cl5op,  effort: [low, medium, high] }
+      # was two members (grok at low and at high) firing at once — one architecture giving two
       # "opinions" isn't opinion diversity, just a spent seat; merged into one tiered member.
-      - { llm: grok45,  effort: [low, medium, high] }
-      - { llm: k3,      effort: [low, high, max] }
+      - { llm: grok46, effort: [low, medium, high] }
+      - { llm: k3,     effort: [low, high, max] }
       - glm52
-      - qwn37max
+      - qwn38max
     synthesizer:
       llm: g31p
       effort: [low, medium, high]
@@ -454,20 +507,24 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: high
     members:
-      - { llm: oai56s,  effort: [low, medium, high] }
-      - { llm: oai56t,  effort: [low, medium, high] }
-      - { llm: g31p,    effort: ["off", low, high] }
-      - { llm: g36f,    effort: [low, medium, high] }
-      - { llm: cl48op,  effort: [low, medium, high] }
-      - { llm: cl5st,   effort: [low, medium, high] }
-      - { llm: grok45,  effort: [low, medium, high] }
-      - { llm: muse11,  effort: [low, medium, high] }
-      - { llm: ink,     effort: [low, medium, high] }
+      - { llm: oai56s, effort: [low, medium, high] }
+      - { llm: oai56t, effort: [low, medium, high] }
+      - { llm: g31p,   effort: ["off", low, high] }
+      - { llm: g37f,   effort: [low, medium, high] }
+      - { llm: cl5op,  effort: [low, medium, high] }
+      - { llm: cl5st,  effort: [low, medium, high] }
+      - { llm: grok46, effort: [low, medium, high] }
+      - { llm: muse12, effort: [low, medium, high] }
+      - { llm: ink,    effort: [low, medium, high] }
       - nem3u
-      - qwn37max
-      - { llm: k3,      effort: ["off", low, high] }
+      - qwn38max
+      - { llm: k3,     effort: ["off", low, high] }
       - glm52
       - m3
+      - longcat2
+      - hy3
+      - mstlm
+      - step37f
     synthesizer:
       llm: g31p
       effort: [low, medium, high]
@@ -483,18 +540,20 @@ ensembles:
     effort_tiers: [high, xhigh, max]
     default_tier: max
     members:
-      - { llm: oai56s,  effort: [medium, high, xhigh] }
-      - { llm: cl48op,  effort: [medium, high, max] }
-      - { llm: cl5f,    effort: [medium, high, max] }
-      - { llm: cl5st,   effort: high }   # 'high' is cl5st's own ceiling — nowhere higher to go
-      - { llm: g31p,    effort: high }   # ditto
-      - { llm: g36f,    effort: high }   # ditto
-      - { llm: grok45,  effort: high }   # ditto
+      - { llm: oai56s, effort: [medium, high, xhigh] }
+      # Opus 5's ladder gained `xhigh`, so the calibration rule above now lands one rung higher at
+      # emom's lower tiers; the default (`max`) tier cell is unchanged.
+      - { llm: cl5op,  effort: [high, xhigh, max] }
+      - { llm: cl5f,   effort: [medium, high, max] }
+      - { llm: cl5st,  effort: [high, xhigh, max] }
+      - { llm: g31p,   effort: high }   # 'high' is g31p's own ceiling — nowhere higher to go
+      - { llm: g37f,   effort: high }   # ditto
+      - { llm: grok46, effort: high }   # ditto
       - grok420ma
-      - { llm: muse11,  effort: [medium, high, xhigh] }
-      - { llm: ink,     effort: [medium, high, max] }
+      - { llm: muse12, effort: [medium, high, xhigh] }
+      - { llm: ink,    effort: [medium, high, max] }
       - nem3u
-      - { llm: k3,      effort: [low, high, max] }
+      - { llm: k3,     effort: [low, high, max] }
     synthesizer:
       llm: cl5st
       effort: high
@@ -512,13 +571,15 @@ ensembles:
       - { llm: oai53cdx, effort: ["off", medium, high] }
       - { llm: oai56t,   effort: [low, medium, high] }
       - { llm: g31p,     effort: [low, high, high] }
-      - { llm: cl48op,   effort: [low, medium, high] }
-      - { llm: grok45,   effort: [medium, high, high] }
+      - { llm: cl5op,    effort: [low, medium, high] }
+      - { llm: grok46,   effort: [medium, high, high] }
       - grokbuild
       - glm52
       - k27code
       - m3
       - mimo25
+      - seed2c
+      - katair
     synthesizer:
       llm: g31p
       effort: [low, medium, high]
@@ -530,7 +591,7 @@ ensembles:
       Creative Mom — a panel for creative writing and brainstorming, synthesized with a
       voice-preserving prompt that commits to one strong spine instead of averaging into
       committee prose.
-    members: [oai56s-m, g36f-h, cl48op-m, cl5st-l, grok45-h, qwn37max]
+    members: [oai56s-m, g37f-h, cl5op-m, cl5st-l, grok46-h, qwn38max]
     synthesizer:
       llm: oai56s-m
       prompt: synth_creative
@@ -546,25 +607,27 @@ ensembles:
       - { llm: oai53cdx, effort: ["off", medium, high] }
       - { llm: oai56t,   effort: [low, medium, high] }
       - { llm: g31p,     effort: ["off", low, high] }
-      - { llm: cl48op,   effort: [low, medium, high] }
-      - { llm: grok45,   effort: [low, medium, high] }
+      - { llm: cl5op,    effort: [low, medium, high] }
+      - { llm: grok46,   effort: [low, medium, high] }
       - grokbuild
-      - codestral
-      - qwn37max
+      - devstral
+      - qwn38max
       - k27code
       - glm52
       - m3
+      - seed2c
+      - laguna
     synthesizer:
-      llm: cl48op
+      llm: cl5op
       effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
     show_work: inline
   mom-cheap:
     description: >-
-      Mom Cheap — the smallest, fastest, near-zero-cost pair, for trivial requests where quality
-      is not the bottleneck.
-    members: [oai56l, g35fl-mi]
+      Mom Cheap — the smallest, fastest, near-zero-cost models, for trivial requests where
+      quality is not the bottleneck.
+    members: [oai56l, g35fl-mi, solar4, granite41]
     synthesizer:
       llm: g35fl-mi
       prompt: synth_default
@@ -574,9 +637,9 @@ ensembles:
     description: >-
       Mom Mini — a small step up from mom-cheap: light-effort models for routine tasks that
       don't warrant the full panel.
-    members: [oai56l, g36f-m, cl45hk-m, dsv4-f]
+    members: [oai56l, g37f-m, cl45hk-m, dsv4-f, nem35l, mercury2, nova2l]
     synthesizer:
-      llm: g36f-m
+      llm: g37f-m
       prompt: synth_default
       search_prompt: synth_search
     show_work: inline
@@ -585,12 +648,12 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: medium
     members:
-      - { llm: g36f,   effort: [low, medium, high] }
+      - { llm: g37f,   effort: [low, medium, high] }
       - { llm: g35fl,  effort: [low, medium, high] }
       - { llm: oai56t, effort: [low, medium, high] }
       - mimo25
     synthesizer:
-      llm: g36f
+      llm: g37f
       effort: high
       prompt: synth_translate
     show_work: inline
@@ -599,11 +662,11 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: low
     members:
-      - { llm: g36f,   effort: [low, medium, high] }
+      - { llm: g37f,   effort: [low, medium, high] }
       - { llm: g35fl,  effort: [low, medium, high] }
       - { llm: oai56t, effort: [low, medium, high] }
     synthesizer:
-      llm: g36f
+      llm: g37f
       effort: medium
       prompt: synth_translate
     show_work: inline
@@ -614,7 +677,7 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: high
     members:
-      - { llm: g36f,   effort: [low, medium, high] }
+      - { llm: g37f,   effort: [low, medium, high] }
       - { llm: g31p,   effort: ["off", low, high] }
       - { llm: oai56s, effort: [none, low, medium] }
       - { llm: cl5st,  effort: ["off", low, medium] }
