@@ -61,8 +61,24 @@ async def _publish_progress_event(request: Request, event_type: str, data: dict[
 
 
 @openai_router.get("/models")
-async def get_openai_models(request: Request):
+async def get_openai_models(request: Request, client_version: str | None = None):
     verify_bearer_token(request)
+    # Codex CLI's model-picker refresh calls GET /v1/models?client_version=<v> and
+    # expects its own catalog shape, {"models": [...]}. Handed OpenAI's list shape it
+    # logs `failed to refresh available models: missing field 'models'` and falls back
+    # to its bundled model metadata. Presence of the param switches the response shape;
+    # absent -> OpenAI shape, unchanged for every other client.
+    #
+    # We answer with a valid but *empty* catalog rather than one entry per MoM model.
+    # Codex requires every entry to carry `base_instructions` and uses whatever it
+    # receives verbatim as that model's system prompt (protocol/src/openai_models.rs ::
+    # deserialize_model_infos_with_legacy_base). MoM has no business owning Codex's
+    # agent prompt, and a placeholder would silently replace it -- measured against
+    # codex-cli 0.147.0, sending `"base_instructions": ""` dropped the whole 20.7 KB
+    # prompt from Codex's request. An empty catalog clears the error and leaves Codex
+    # on its own metadata, which is what it already uses today.
+    if client_version is not None:
+        return {"models": []}
     data = []
     for m_config in config.models:
         data.append(

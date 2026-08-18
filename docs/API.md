@@ -81,6 +81,47 @@ curl http://localhost:8000/v1/models \
   -H "Authorization: Bearer your-secret-bearer-token"
 ```
 
+#### Codex CLI Compatibility
+
+Codex CLI's model-picker refresh calls `GET /v1/models?client_version=<v>` and expects
+its own catalog shape, `{"models": [...]}`, not the OpenAI list shape. Handed the
+OpenAI shape it logs an error and falls back to its bundled model metadata:
+
+```
+ERROR codex_models_manager: failed to refresh available models:
+failed to decode models response: missing field `models`
+```
+
+When the `client_version` query parameter is present, the endpoint returns a valid but
+empty catalog, which clears that error:
+
+```json
+{"models": []}
+```
+
+> **Why the catalog is empty.** Codex requires every catalog entry to carry
+> `base_instructions`, and it uses whatever it receives *verbatim* as that model's
+> system prompt. MoM has no way to supply Codex's own agent prompt, so any entry it
+> emitted would silently replace it — measured against `codex-cli` 0.147.0, an entry
+> with `"base_instructions": ""` dropped the whole 20.7 KB prompt from Codex's
+> request, leaving the agent with no instructions at all. An empty catalog leaves
+> Codex on the model metadata it already uses today, so the only change is that the
+> error goes away.
+
+When `client_version` is absent, the standard OpenAI `{"object":"list","data":[...]}`
+shape is returned, so the OpenAI SDK and other OpenAI-compatible clients continue
+to work unchanged.
+
+**Example:**
+```bash
+curl "http://localhost:8000/v1/models?client_version=0.1.0" \
+  -H "Authorization: Bearer your-secret-bearer-token"
+```
+
+> **Note:** this only fixes the model-picker refresh. Codex CLI 0.147.0 removed
+> `wire_api = "chat"` and requires `wire_api = "responses"`, which this service does
+> not expose — so recent Codex releases cannot run a session against it regardless.
+
 ### Chat Completions
 
 Send chat completion requests to your MoM models.

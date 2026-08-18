@@ -52,6 +52,65 @@ class TestOpenAIEndpoints:
 
         assert response.status_code == 401
 
+    def test_get_models_codex_client_version(self, test_client, auth_headers):
+        """GET /v1/models?client_version=<v> returns Codex's {"models":[...]} shape."""
+        response = test_client.get("/v1/models?client_version=0.1.0", headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        # Codex deserializes into ModelsResponse, which needs exactly this one key.
+        assert data == {"models": []}
+        # Never the OpenAI list shape on this path.
+        assert "object" not in data
+        assert "data" not in data
+
+    def test_get_models_codex_catalog_omits_entries(self, test_client, auth_headers):
+        """The Codex catalog stays empty so Codex keeps its own agent prompt.
+
+        Codex requires every catalog entry to carry ``base_instructions`` and uses
+        whatever it receives verbatim as that model's system prompt. Emitting entries
+        here would replace Codex's own prompt with a MoM-authored placeholder -- with
+        codex-cli 0.147.0 that dropped the entire 20.7 KB prompt from its request. An
+        empty catalog clears the refresh error without touching prompt behaviour, so
+        no entry may carry instructions of any kind.
+        """
+        response = test_client.get("/v1/models?client_version=0.147.0", headers=auth_headers)
+
+        assert response.status_code == 200
+        entries = response.json()["models"]
+        assert entries == []
+        assert not any("base_instructions" in entry for entry in entries)
+        assert not any("model_messages" in entry for entry in entries)
+
+    def test_get_models_codex_client_version_empty_value(self, test_client, auth_headers):
+        """Presence (not value) of client_version triggers Codex shape."""
+        response = test_client.get("/v1/models?client_version=", headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "models" in data
+        assert isinstance(data["models"], list)
+        assert "data" not in data
+
+    def test_get_models_codex_client_version_unauthorized(self, test_client):
+        """Codex path still enforces Bearer auth."""
+        response = test_client.get("/v1/models?client_version=0.1.0")
+
+        assert response.status_code == 401
+        assert "error" in response.json()
+
+    def test_get_models_without_client_version_returns_openai_shape(
+        self, test_client, auth_headers
+    ):
+        """Backward compat: no client_version -> OpenAI {"object":"list","data":[...]}."""
+        response = test_client.get("/v1/models", headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "list"
+        assert isinstance(data["data"], list)
+        assert "models" not in data
+
     @patch("mom_service.main.get_mom_model_config")
     @patch("mom_service.main._process_mom_chat_request")
     def test_chat_completions_non_streaming(
