@@ -1,0 +1,64 @@
+"""Process settings: environment and secrets only (never the YAML model config).
+
+``Settings`` is the single typed source for machine-local facts and secrets. It reads ``MOM_``
+prefixed env vars, and — via :class:`~pydantic.AliasChoices` — also accepts the legacy v1 names
+(``API_TOKEN``, ``REDIS_URL``, ``MOM_CONFIG_PATH``, ``LITELLM_VERBOSE``) so existing deployments
+keep working; the ``MOM_`` name wins when both are set.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Literal
+
+from pydantic import AliasChoices, Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Machine-local configuration resolved from the environment (and ``.env``)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MOM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # --- server ---
+    host: str = "127.0.0.1"
+    port: int = 8000
+
+    # --- auth (secret) ---
+    api_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MOM_API_TOKEN", "API_TOKEN"),
+    )
+
+    # --- paths ---
+    config_file: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MOM_CONFIG", "MOM_CONFIG_PATH"),
+    )
+    # Deep-merged over config_file (e.g. server.public_url, or any deployment-local value that
+    # shouldn't sit in the tracked config) — the same layering `mom config validate --overlay`
+    # already offered, now also available to `mom serve`.
+    config_overlay: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MOM_CONFIG_OVERLAY"),
+    )
+    data_dir: Path | None = None  # None -> platform default at resolution time
+
+    # --- optional services ---
+    redis_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MOM_REDIS_URL", "REDIS_URL"),
+    )
+
+    # --- logging ---
+    log_level: str = "INFO"
+    log_format: Literal["text", "json"] = "text"
+    litellm_debug: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("MOM_LITELLM_DEBUG", "LITELLM_VERBOSE"),
+    )

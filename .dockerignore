@@ -1,0 +1,8 @@
+# Allowlist: ignore everything, then re-include only what the image build needs (the Dockerfile
+# COPYs pyproject.toml, uv.lock, README.md, and src/). This makes it impossible to bake local
+# databases, .env secrets, or the dev virtualenv into an image layer.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src

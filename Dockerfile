@@ -1,60 +1,36 @@
-# Multi-stage build for smaller image size
-# Stage 1: Build dependencies
-FROM python:3.12-slim-bookworm AS builder
+# MoM v2 image — uv-based, multi-stage, non-root. Built from the repo root
+# (`docker build -f docker/Dockerfile .`). The dependency layer is cached from the lockfile.
+FROM python:3.13-slim AS builder
 
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /bin/uv
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    libsqlite3-dev \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# Dependency layer (cached until pyproject/uv.lock change).
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --locked --no-dev --no-install-project
 
-# Copy requirements and install dependencies (install globally so binaries are available system-wide)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Project layer.
+COPY src ./src
+RUN uv sync --locked --no-dev --no-editable
 
-# Stage 2: Production image
-FROM python:3.12-slim-bookworm
 
-WORKDIR /app
+FROM python:3.13-slim AS runtime
 
-# Install only runtime dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    libsqlite3-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy installed packages from builder (system-wide install under /usr/local)
-COPY --from=builder /usr/local /usr/local
-
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash appuser && \
-    chown -R appuser:appuser /app
-
-# Copy application code
-COPY --chown=appuser:appuser ./mom_service ./mom_service
-COPY --chown=appuser:appuser ./docker/start-uvicorn.sh /usr/local/bin/start-uvicorn.sh
-# Note: config.yaml should be mounted as a volume or provided via environment
-
-# Create directories for databases with correct permissions
-RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
-RUN chmod +x /usr/local/bin/start-uvicorn.sh
-
-# Set environment variables
-ENV PYTHONPATH=/app \
-    PATH=/usr/local/bin:$PATH \
+RUN useradd --create-home --uid 10001 app
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH" \
+    MOM_DATA_DIR=/data \
     PYTHONUNBUFFERED=1
 
-# Switch to non-root user
-USER appuser
-
-# Expose port
+RUN mkdir -p /data && chown app:app /data
+VOLUME /data
 EXPOSE 8000
+USER app
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)" || exit 1
+# Healthcheck uses the CLI (stdlib urllib) — no undeclared dependency.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+    CMD ["mom", "healthcheck"]
 
-ENTRYPOINT ["/usr/local/bin/start-uvicorn.sh"]
+ENTRYPOINT ["mom"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8000"]

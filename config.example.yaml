@@ -1,0 +1,126 @@
+# yaml-language-server: $schema=./schema/mom-config.schema.json
+#
+# MoM v2 example configuration.
+#
+# Read top to bottom: `llms` are the individual models (`variants:` nests an effort family under
+# its base, `extends` links one-off reuses of a model), `prompts` are synthesis instructions, and
+# `ensembles` are the models clients actually call.
+# Secrets never appear here — only the NAMES of environment variables that hold them.
+version: 2
+
+server:
+  auth: bearer            # bearer (token from MOM_API_TOKEN) | none (explicit dev opt-out)
+  public_url: null        # external base URL, used to build progress links
+  stream_heartbeat: null  # e.g. 15s: SSE keepalive comment on idle, so a slow fan-out doesn't
+                          # trip a streaming client's idle read-timeout. null = off.
+  cors:
+    origins: []           # empty = CORS disabled; ["*"] with allow_creditals=true is rejected
+    allow_credentials: false
+
+defaults:
+  call:
+    timeout: 20m
+    retries: 3
+    retry_backoff: 2s
+  fanout:
+    max_concurrency: null # null = unbounded
+    min_results: 1        # quorum: successful members required before synthesis
+    detach_on_disconnect: false  # true: on disconnect, let members finish + cache (retry hits
+                                 # cache -> straight to synth) instead of cancelling them
+  provider_cache:
+    anthropic: { enabled: true, ttl: 5m }
+    openai: { prompt_cache_key: auto }
+
+cache:
+  enabled: true
+  ttl: 14d
+  max_size: 1GB
+  coalesce: true          # collapse identical concurrent fan-out calls
+
+storage:
+  data_dir: null          # null = platform default (or MOM_DATA_DIR)
+
+observability:
+  langfuse:
+    enabled: false        # keys from LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST
+  otel:                   # OpenTelemetry/OTLP tracing (GenAI conventions); pip install 'mom-llm[otel]'
+    enabled: false
+    endpoint: http://localhost:4318   # OTLP collector
+    protocol: http        # http | grpc  (grpc also needs opentelemetry-exporter-otlp-proto-grpc)
+    service_name: mom-llm
+
+# --------------------------------------------------------------------------------------------
+# LLMs: one entry per callable model.
+# --------------------------------------------------------------------------------------------
+llms:
+  gpt:
+    model: openai/gpt-5.6-sol
+    # `variants:` in practice: nest a fixed-effort family right under its base — no repeated
+    # model string, and the family reads as one block. Each key becomes its own llm identity
+    # `gpt-<key>` (here `gpt-high`), with `params` deep-merged onto the base's. This is a
+    # SEPARATE mechanism from bmom's `effort: [l, m, h]` below (one llm, a per-tier value vector,
+    # picked by the client's requested effort): reach for `variants:` when you want a model at
+    # one FIXED effort as its own distinct, reusable identity — e.g. to reference from several
+    # ensembles, or to expose every effort of every model side by side in a `mom-debug`-style
+    # panel (see `members: all` below). `gpt-high` isn't referenced by an ensemble here.
+    variants:
+      high: { params: { reasoning_effort: high } }
+  claude:     { model: anthropic/claude-opus-4-8 }
+  gemini:                                             # api_key_env inferred (GEMINI/GOOGLE)
+    model: gemini/gemini-3.1-pro
+    # `search:` marks this LLM web-search-capable. When a request sets web_search, these params
+    # are merged in for THIS member (others in the ensemble answer without search). Presence of
+    # the block (even `{}`) is the capability signal — like reasoning effort, but for search.
+    search: { web_search_options: { search_context_size: high } }
+  qwen:                                              # OpenRouter web search, request-triggered:
+    model: openrouter/qwen/qwen-3.6-max              # the web plugin is merged only when the
+    search: { extra_body: { plugins: [{ id: web }] } }   # client sends web_search (no ":online" model)
+  flash:      { model: gemini/gemini-3.6-flash }
+  # A per-LLM outbound proxy, unchanged concept from v1:
+  muse:
+    model: openrouter/meta/muse-spark-1.1
+    proxy_url_env: MUSE_SPARK_PROXY_URL
+
+prompts:
+  synth_default: |
+    You are the concluding model of a multi-model ensemble. Synthesize the candidate responses
+    into a single, superior answer. Resolve disagreements, drop hallucinations, and keep the
+    strongest reasoning from each.
+
+# --------------------------------------------------------------------------------------------
+# Ensembles: the models clients call. Effort tiers are selected by the request's
+# `reasoning_effort` (no `mom-high` alias models). Each member declares its OWN effort per tier:
+# a level, `pass` (relay the client's effort), `off` (no reasoning param), or `skip` (excluded).
+# --------------------------------------------------------------------------------------------
+ensembles:
+  bmom:
+    description: Balanced panel across four providers.
+    effort_tiers: [low, medium, high]
+    default_tier: medium
+    members:
+      - { llm: gpt,    effort: [l, m, h] }     # follows the tier
+      - { llm: claude, effort: [m, h, h] }     # a touch heavier
+      - { llm: qwen,   effort: [m, h, h] }     # "not equally intelligent": floored at medium
+      - { llm: gemini, effort: pass }          # relay the client's requested effort
+      - { llm: flash,  effort: [skip, m, h] }  # excluded at the low tier
+    synthesizer: { llm: claude, effort: [m, h, h], prompt: synth_default }
+    show_work: native
+
+  # A single-model agent variant for coding agents — no fan-out, low latency.
+  mom-code:
+    description: One strong tool-capable model for agent loops.
+    strategy: passthrough
+    members:
+      - { llm: claude, effort: pass }
+    synthesizer: { llm: claude, prompt: synth_default }
+    tools: { continuation: relay }
+
+  # Kitchen sink for manual testing: `members: all` is every llm in the catalog (bases and
+  # expanded variants alike), so this panel never needs hand-editing as llms come and go.
+  # `{ all: true, exclude: [...] }` opts specific llms out by name — e.g. a slow/costly
+  # special-purpose variant that doesn't belong in a routine debug fan-out.
+  mom-debug:
+    description: Every llm side by side, auto-synced — for manual testing, never hand-maintained.
+    members: all
+    synthesizer: { llm: claude, prompt: synth_default }
+    show_work: inline

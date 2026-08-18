@@ -1,637 +1,646 @@
-llm_definitions:
-  - base_name: oai56t
+# yaml-language-server: $schema=./schema/mom-config.schema.json
+#
+# MoM v2 configuration — the owner's real setup. No secrets: only the NAMES of the environment
+# variables that hold them appear here.
+#
+# Online search is REQUEST-TRIGGERED for models that can toggle it (a `search:` block activates
+# only when the client sends web_search) — no always-on ":online" variants. Perplexity Sonar is
+# the exception: it is inherently online (no offline variant), so it carries no `search:` block.
+version: 2
+server:
+  # SSE keepalive comment whenever the stream idles this long, so a slow fan-out doesn't trip a
+  # client's idle read-timeout (lobe-chat and friends dropping long turns).
+  stream_heartbeat: 15s
+defaults:
+  call:
+    timeout: 20m
+    retries: 3
+    retry_backoff: 2s
+  fanout:
+    # On client disconnect, let in-flight members finish and cache in the background instead of
+    # cancelling them — so retrying the same turn hits cache and goes straight to the synthesizer.
+    detach_on_disconnect: true
+    # Cap the whole fan-out's wall-clock time so one stuck/slow member can't hold the entire
+    # ensemble hostage up to its full per-call timeout (20m default) — hit live 2026-07-28: emom's
+    # other 11 members all finished within 6s-151s, but `ink` hung well past 12 minutes with
+    # nothing forcing the panel to move on. A straggler past this deadline still gets to finish
+    # in the background (detach_on_disconnect, above) and cache its answer for next time — it's
+    # just no longer blocking THIS response.
+    deadline: 6m
+cache:
+  enabled: true
+observability:
+  langfuse:
+    enabled: true
+llms:
+  # An effort/variant family: one base, a nested `variants:` map. Each key becomes a sibling llm
+  # named `<base>-<key>`; `params` deep-merges with the base, other fields (model/api/api_key_env/
+  # proxy_url_env) inherit unless overridden. Capability fields (search/pricing/capabilities/
+  # max_input_tokens/timeout/cache_ttl) ALSO inherit — a variant is the same model at a different
+  # effort, so what it can do (and costs) travels with it. See k3 below, where the `search:` block
+  # is deliberately declared once on the base and relied on by all its variants.
+  # OpenAI search is Responses-API-only (chat completions rejects web_search_options for these
+  # models) — like grok45 below, `api: responses` makes the request-triggered search block usable.
+  oai56t:
     model: openai/gpt-5.6-terra
+    api: responses
+    search: { tools: [{ type: web_search }] }
     variants:
-      - suffix: l
-        params:
-          reasoning_effort: low
-      - suffix: m
-        params:
-          reasoning_effort: medium
-      - suffix: h
-        params:
-          reasoning_effort: high
-  - base_name: oai56s
+      l: { params: { reasoning_effort: low } }
+      m: { params: { reasoning_effort: medium } }
+      h: { params: { reasoning_effort: high } }
+
+  oai56s:
     model: openai/gpt-5.6-sol
+    api: responses
+    search: { tools: [{ type: web_search }] }
     variants:
-      - suffix: n
-        params:
-          reasoning_effort: none
-      - suffix: l
-        params:
-          reasoning_effort: low
-      - suffix: m
-        params:
-          reasoning_effort: medium
-      - suffix: h
-        params:
-          reasoning_effort: high
-      - suffix: xh
-        params:
-          reasoning_effort: xhigh
-      - suffix: p
-        api_mode: responses
-        params:
-          reasoning:
-            effort: max
-            mode: pro
-  - base_name: oai56l
-    model: openai/gpt-5.6-luna
-  - base_name: oai53cdx
+      n:  { params: { reasoning_effort: none } }
+      l:  { params: { reasoning_effort: low } }
+      m:  { params: { reasoning_effort: medium } }
+      h:  { params: { reasoning_effort: high } }
+      xh: { params: { reasoning_effort: xhigh } }
+      p:  { params: { reasoning: { effort: max, mode: pro } } }
+
+  oai56l: { model: openai/gpt-5.6-luna, api: responses, search: { tools: [{ type: web_search }] } }
+
+  oai53cdx:
     model: openai/gpt-5.3-codex
     variants:
-      - suffix: m
-        params:
-          reasoning_effort: medium
-      - suffix: h
-        params:
-          reasoning_effort: high
-  - base_name: g36f
-    model: gemini/gemini-3.6-flash
-    variants:
-      - suffix: mi
-        params:
-          reasoning_effort: minimal
-      - suffix: l
-        params:
-          reasoning_effort: low
-      - suffix: m
-        params:
-          reasoning_effort: medium
-      - suffix: h
-        params:
-          reasoning_effort: high
-        variants:
-          - suffix: o
-            params:
-              web_search_options:
-                search_context_size: high
-  - base_name: g31p
-    model: gemini/gemini-3.1-pro-preview
-    variants:
-      - suffix: l
-        params:
-          reasoning_effort: low
-      - suffix: h
-        params:
-          reasoning_effort: high
-        variants:
-          - suffix: o
-            params:
-              web_search_options:
-                search_context_size: high
-  - base_name: g35fl
-    model: gemini/gemini-3.5-flash-lite
-    variants:
-      - suffix: mi
-        params:
-          reasoning_effort: minimal
-      - suffix: l
-        params:
-          reasoning_effort: low
-      - suffix: m
-        params:
-          reasoning_effort: medium
-      - suffix: h
-        params:
-          reasoning_effort: high
-        variants:
-          - suffix: o
-            params:
-              web_search_options:
-                search_context_size: high
-  - base_name: cl5st
-    model: anthropic/claude-sonnet-5
-    variants:
-      - suffix: l
-        params:
-          reasoning_effort: low
-          thinking:
-            type: adaptive
-      - suffix: m
-        params:
-          reasoning_effort: medium
-          thinking:
-            type: adaptive
-      - suffix: h
-        params:
-          reasoning_effort: high
-          thinking:
-            type: adaptive
-        variants:
-          - suffix: o
-            params:
-              web_search_options:
-                search_context_size: high
-    # - suffix: am
-    #   params:
-    #     reasoning_effort: max
-    #     thinking:
-    #       type: adaptive
-  - base_name: cl45hk
-    model: anthropic/claude-haiku-4-5-20251001
-    variants:
-      - suffix: m
-        params:
-          thinking:
-            type: enabled
-            budget_tokens: 4096
-  - base_name: cl48op
-    model: anthropic/claude-opus-4-8
-    variants:
-      - suffix: l
-        params:
-          reasoning_effort: low
-          thinking:
-            type: adaptive
-      - suffix: m
-        params:
-          reasoning_effort: medium
-          thinking:
-            type: adaptive
-      - suffix: h
-        params:
-          reasoning_effort: high
-          thinking:
-            type: adaptive
-        variants:
-          - suffix: o
-            params:
-              web_search_options:
-                search_context_size: high
-      - suffix: am
-        params:
-          reasoning_effort: max
-          thinking:
-            type: adaptive
-  - base_name: cl5f
-    model: anthropic/claude-fable-5
-    variants:
-      - suffix: l
-        params:
-          reasoning_effort: low
-          thinking:
-            type: adaptive
-      - suffix: m
-        params:
-          reasoning_effort: medium
-          thinking:
-            type: adaptive
-      - suffix: h
-        params:
-          reasoning_effort: high
-          thinking:
-            type: adaptive
-      - suffix: am
-        params:
-          reasoning_effort: max
-          thinking:
-            type: adaptive
-  - base_name: grok420ma
-    model: xai/grok-4.20-multi-agent
-    api_mode: responses
-  - base_name: grok45
-    model: xai/grok-4.5
-    variants:
-      - suffix: l
-        params:
-          reasoning_effort: low
-      - suffix: m
-        params:
-          reasoning_effort: medium
-      - suffix: h
-        params:
-          reasoning_effort: high
-        variants:
-          - suffix: o
-            api_mode: responses
-            params:
-              tools:
-                - type: web_search
-  - base_name: grokbuild
-    model: openrouter/x-ai/grok-build-0.1
+      m: { params: { reasoning_effort: medium } }
+      h: { params: { reasoning_effort: high } }
 
-  - base_name: dsv4
-    model: openrouter/deepseek/deepseek-v4-pro
+  g36f:
+    model: gemini/gemini-3.6-flash
+    search: { web_search_options: { search_context_size: high } }
     variants:
-      - suffix: f
-        model: openrouter/deepseek/deepseek-v4-flash
-  - base_name: codestral
-    model: mistral/codestral-2508
-  - base_name: qwn37max
-    model: openrouter/qwen/qwen3.7-max
-  - base_name: k3
+      mi: { params: { reasoning_effort: minimal } }
+      l:  { params: { reasoning_effort: low } }
+      m:  { params: { reasoning_effort: medium } }
+      h:  { params: { reasoning_effort: high } }
+
+  g31p:
+    model: gemini/gemini-3.1-pro-preview
+    search: { web_search_options: { search_context_size: high } }
+    variants:
+      l: { params: { reasoning_effort: low } }
+      h: { params: { reasoning_effort: high } }
+
+  g35fl:
+    model: gemini/gemini-3.5-flash-lite
+    search: { web_search_options: { search_context_size: high } }
+    variants:
+      mi: { params: { reasoning_effort: minimal } }
+      l:  { params: { reasoning_effort: low } }
+      m:  { params: { reasoning_effort: medium } }
+      h:  { params: { reasoning_effort: high } }
+
+  cl5st:
+    model: anthropic/claude-sonnet-5
+    search: { web_search_options: { search_context_size: high } }
+    variants:
+      l: { params: { reasoning_effort: low, thinking: { type: adaptive } } }
+      m: { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
+      h: { params: { reasoning_effort: high, thinking: { type: adaptive } } }
+
+  cl45hk:
+    model: anthropic/claude-haiku-4-5-20251001
+    search: { web_search_options: { search_context_size: high } }
+    variants:
+      m: { params: { thinking: { type: enabled, budget_tokens: 4096 } } }
+
+  cl48op:
+    model: anthropic/claude-opus-4-8
+    search: { web_search_options: { search_context_size: high } }
+    variants:
+      l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
+      m:  { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
+      h:  { params: { reasoning_effort: high, thinking: { type: adaptive } } }
+      am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
+
+  cl5f:
+    model: anthropic/claude-fable-5
+    search: { web_search_options: { search_context_size: high } }
+    variants:
+      l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
+      m:  { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
+      h:  { params: { reasoning_effort: high, thinking: { type: adaptive } } }
+      am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
+
+  grok420ma: { model: xai/grok-4.20-multi-agent, api: responses, search: { tools: [{ type: web_search }] } }
+  grok45:
+    model: xai/grok-4.5
+    # api: responses (like grok420ma) — needed for web search: xai's chat-completions tool type
+    # is restricted to function|live_search, but the Responses API accepts tools:[{type:web_search}].
+    api: responses
+    search: { tools: [{ type: web_search }] }
+    variants:
+      l: { params: { reasoning_effort: low } }
+      m: { params: { reasoning_effort: medium } }
+      h: { params: { reasoning_effort: high } }
+
+  # OpenRouter's web plugin is a PLATFORM capability, not model-specific — verified live on both
+  # k3 and qwn37max (two unrelated architectures), so it's wired on every openrouter/* model here
+  # except glm52 (independently broken — 'NoneType' object is not subscriptable even without
+  # search, a pre-existing litellm/provider issue, not a search-wiring one; fix separately).
+  grokbuild: { model: openrouter/x-ai/grok-build-0.1, search: { extra_body: { plugins: [{ id: web }] } } }
+  dsv4:      { model: openrouter/deepseek/deepseek-v4-pro, search: { extra_body: { plugins: [{ id: web }] } } }
+  dsv4-f:    { model: openrouter/deepseek/deepseek-v4-flash, search: { extra_body: { plugins: [{ id: web }] } } }
+  codestral: { model: mistral/codestral-2508 }
+  qwn37max:  { model: openrouter/qwen/qwen3.7-max, search: { extra_body: { plugins: [{ id: web }] } } }
+
+  k3:
     model: openrouter/moonshotai/kimi-k3
+    search:                                # request-triggered online: OpenRouter web plugin,
+      extra_body:                          # merged ONLY when the client asks for web_search.
+        plugins:                           # Inherited by the variants below (same model).
+          - id: web
     variants:
-      - suffix: l
-        params:
-          reasoning:
-            effort: low
-      - suffix: h
-        params:
-          reasoning:
-            effort: high
-      - suffix: am
-        params:
-          reasoning:
-            effort: max
-  - base_name: k27code
-    model: openrouter/moonshotai/kimi-k2.7-code
-  - base_name: muse11
+      l:  { params: { reasoning: { effort: low } } }
+      h:  { params: { reasoning: { effort: high } } }
+      am: { params: { reasoning: { effort: max } } }
+
+  k27code: { model: openrouter/moonshotai/kimi-k2.7-code, search: { extra_body: { plugins: [{ id: web }] } } }
+
+  muse11:
     model: openrouter/meta/muse-spark-1.1
     proxy_url_env: MUSE_SPARK_PROXY_URL
+    search: { extra_body: { plugins: [{ id: web }] } }
     variants:
-      - suffix: mi
-        params:
-          reasoning:
-            effort: minimal
-      - suffix: l
-        params:
-          reasoning:
-            effort: low
-      - suffix: m
-        params:
-          reasoning:
-            effort: medium
-      - suffix: h
-        params:
-          reasoning:
-            effort: high
-      - suffix: xh
-        params:
-          reasoning:
-            effort: xhigh
-  - base_name: ink
+      mi: { params: { reasoning: { effort: minimal } } }
+      l:  { params: { reasoning: { effort: low } } }
+      m:  { params: { reasoning: { effort: medium } } }
+      h:  { params: { reasoning: { effort: high } } }
+      xh: { params: { reasoning: { effort: xhigh } } }
+
+  ink:
     model: openrouter/thinkingmachines/inkling
+    search: { extra_body: { plugins: [{ id: web }] } }
     variants:
-      - suffix: n
-        params:
-          reasoning:
-            effort: none
-      - suffix: mi
-        params:
-          reasoning:
-            effort: minimal
-      - suffix: l
-        params:
-          reasoning:
-            effort: low
-      - suffix: m
-        params:
-          reasoning:
-            effort: medium
-      - suffix: h
-        params:
-          reasoning:
-            effort: high
-      - suffix: am
-        params:
-          reasoning:
-            effort: max
-  - base_name: nem3u
+      n:  { params: { reasoning: { effort: none } } }
+      mi: { params: { reasoning: { effort: minimal } } }
+      l:  { params: { reasoning: { effort: low } } }
+      m:  { params: { reasoning: { effort: medium } } }
+      h:  { params: { reasoning: { effort: high } } }
+      am: { params: { reasoning: { effort: max } } }
+
+  nem3u:
     model: openrouter/nvidia/nemotron-3-ultra-550b-a55b
+    params: { reasoning: { enabled: true } }
+    search: { extra_body: { plugins: [{ id: web }] } }
+  glm52:    { model: openrouter/z-ai/glm-5.2 }  # search omitted: broken independent of search, see above
+  m3:       { model: openrouter/minimax/minimax-m3, search: { extra_body: { plugins: [{ id: web }] } } }
+  mimo25:   { model: openrouter/xiaomi/mimo-v2.5-pro:nitro, search: { extra_body: { plugins: [{ id: web }] } } }
+
+  # One-off reuses of a base model for a different purpose (not an effort family) — `extends`
+  # still fits these: no repeated model string, and each needs its OWN api/params shape.
+  rsynth: { extends: oai56s, api: responses, params: { reasoning: { effort: low } } }
+  oai-dr: # deep-research: forced browsing tool + medium reasoning (see the drmom ensemble)
+    extends: oai56s
+    api: responses
     params:
-      reasoning:
-        enabled: true
-  - base_name: glm52
-    model: openrouter/z-ai/glm-5.2
-  - base_name: ernie45t
-    model: openrouter/baidu/ernie-4.5-300b-a47b
-  - base_name: m3
-    model: openrouter/minimax/minimax-m3
-  # - base_name: oaio4mdr-o
-  #   model: openai/o4-mini-deep-research-2025-06-26
-  #   params:
-  #     reasoning_effort: medium
-  #     tools:
-  #     - type: web_search_preview
-  - base_name: plx-snrp-o
-    model: openrouter/perplexity/sonar-pro-search
-  - base_name: plx-snrrp-o
-    model: openrouter/perplexity/sonar-reasoning-pro
-  - base_name: plx-dr-o
-    model: openrouter/perplexity/sonar-deep-research
-  - base_name: mimo25
-    model: openrouter/xiaomi/mimo-v2.5-pro:nitro
-prompt_definitions:
-  - name: "synth_default"
-    content: |
-      You are the concluding model of a multi-model ensemble. A user message above contains several candidate responses to the user's original request, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. The candidates were produced independently by different models; they are not your own prior output. Your job is to produce the one answer the user actually receives.
+      tools: [{ type: web_search_preview }]
+      reasoning: { effort: medium }
+  gem-dr: # deep-research: Google Search grounding + high reasoning (see the drmom ensemble)
+    extends: g31p
+    params:
+      web_search_options: { search_context_size: high }
+      reasoning_effort: high
 
-      1. Read every candidate with an open mind and a critical lens:
-         - The models behind the candidates are not equally capable and none is authoritative, yet any of them — including the weakest — may contribute the single best point. Judge every claim on its merits, not on its source.
-         - Agreement is not evidence: candidates can share the same blind spot. Verify load-bearing claims against the original context and your own knowledge; one correct observation outweighs a mistake repeated by many.
-         - When a candidate's approach is sound but its conclusion is factually wrong, keep the rationale and correct the conclusion; when a conclusion is right for the wrong reasons, keep it and supply sound reasoning.
-         - You are an expert on the question in your own right, not a mere editor: fix errors and fill gaps from your own knowledge, and drop anything — however confidently stated — that does not survive scrutiny.
-         - Set aside candidates that are irrelevant to the request. If only one relevant candidate remains, verify and refine it rather than merely relaying it. If no usable response blocks are present at all, answer the original request yourself from the conversation context.
+  # Perplexity Sonar: inherently online — no offline variant, so no `search:` block / request
+  # toggle applies (they always search). Available for ad-hoc use, e.g. via mom-debug.
+  plx-snrp:  { model: openrouter/perplexity/sonar-pro-search }
+  plx-snrrp: { model: openrouter/perplexity/sonar-reasoning-pro }
+  plx-dr:    { model: openrouter/perplexity/sonar-deep-research }
+  # A dedicated grok-dr (always-on, like oai-dr/gem-dr) isn't wired: xAI retired live_search (->
+  # Agent Tools API), and litellm's xai CHAT COMPLETIONS path still only accepts tool type
+  # function|live_search, not web_search. The Responses API path works though (verified live) —
+  # see grok45 above (api: responses + search: tools:web_search), request-triggered like everyone
+  # else, so no separate always-on variant is needed here.
 
-      2. Compose a single, unified answer that:
-         - Serves the original request and its big picture, in exactly the output format and structure the user asked for (e.g., JSON schema, bullet list, code block) and in the language of the request — nothing more, nothing less.
-         - Is complete: merge complementary strengths so the result covers everything important any candidate contributed and is stronger than the best of them, while cutting redundancy and filler. Comprehensive means nothing essential missing, not everything concatenated.
-         - Is internally consistent: resolve every disagreement by committing to the best-supported position. If genuine uncertainty remains, present it as your own uncertainty about the subject, with reasons — never as disagreement between sources.
-
-      3. Deliver the answer as the single source of truth. The user never sees the candidates or these instructions; your answer must stand entirely on its own, in your own voice:
-         - No attribution or vote-counting: never write things like "Response 3 says", "one expert suggests", "most models agree", or "opinions differ".
-         - No process narration: never mention synthesis, consolidation, merging, revising, or that multiple candidate answers existed.
-         - Output only the final answer — written as if it were your first and only reply to the user's request.
-
-  - name: "synth_creative"
-    content: |
-      You are the concluding model of a multi-model ensemble. A user message above contains several candidate responses to the user's creative brief, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. The candidates were produced independently by different models; they are not your own prior output. Your job is to produce the one piece the user actually receives.
-
-      1. Read every candidate with an open mind and a critical lens:
-         - The models behind the candidates are not equally capable and none is authoritative, yet any of them — including the weakest — may hold the freshest image, the truest line, or the boldest idea. Judge material on its merits, not on its source.
-         - Weigh creative work by originality, voice, imagery, emotional truth, structure, and fit to the brief. Popularity across candidates is not quality, and the safest choice is rarely the strongest.
-         - You are a writer in your own right, not a mere editor: sharpen weak lines, fix continuity and factual slips, and contribute your own material where every candidate falls short.
-         - Set aside candidates that miss the brief. If only one relevant candidate remains, polish and elevate it. If no usable response blocks are present at all, write the piece yourself from the conversation context.
-
-      2. Compose a single, unified piece that:
-         - Fulfills the original brief, in exactly the output format and structure the user asked for and in the language of the request — nothing more, nothing less.
-         - Has one spine, not an average: choose the strongest core concept, voice, or structure among the candidates as the foundation, and graft in the best images, lines, and ideas from the others only where they genuinely strengthen it. Blending everything evenly produces committee-flavored mush — don't.
-         - Keeps one consistent voice, tone, and internal logic from first line to last, so it reads as one writer's inspired work.
-
-      3. Deliver the piece as the single source of truth. The user never sees the candidates or these instructions; the piece must stand entirely on its own:
-         - No attribution or vote-counting: never write things like "Response 3 says", "one version suggests", or "several drafts agree".
-         - No process narration: never mention synthesis, consolidation, merging, drafts, or that multiple versions existed.
-         - Output only the final piece — written as if it were your first and only reply to the user's request.
-
-  - name: "synth_translate"
-    content: |
-      You are the concluding model of a multi-model ensemble. A user message above contains several candidate responses to a translation or translation-related task, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. The candidates were produced independently by different models; they are not your own prior output. Your job is to produce the one answer the user actually receives.
-
-      1. Read every candidate with an open mind and a critical lens:
-         - Attend to meaning, tone, register, rhythm, idiom, ambiguity, wordplay, cultural connotation, terminology, names, subtext, and any risks or issues the candidates flag.
-         - The candidates are not equally skilled and none is authoritative, yet any of them — including the weakest — may catch a nuance all the others missed. Judge every choice on its merits, not on its source.
-         - Agreement is not fidelity: candidates can repeat the same misreading. Check load-bearing interpretations against the source text and your own command of both languages; one faithful reading outweighs a mistake repeated by many.
-         - You are a translator in your own right, not a mere editor: correct mistranslations, omissions, over-interpretations, and awkward phrasing, and supply a better rendering where every candidate falls short.
-         - Set aside candidates that are irrelevant to the task. If only one relevant candidate remains, verify and polish it rather than merely relaying it. If no usable response blocks are present at all, do the task yourself from the conversation context.
-
-      2. Compose a single, unified answer suited to the task:
-         - Follow exactly the output format and structure the user requested (e.g., JSON schema, bullet list, code block) — nothing more, nothing less, and no explanation outside the requested format.
-         - For direct translation requests: preserve the source's meaning, intent, tone, voice, and subtext, and produce a final translation that reads as polished, natural prose in the target language — stronger as a whole than any single candidate.
-         - For translation-related tasks (review, critique, comparison, pre-translation reading): combine the strongest observations into one clear answer that is genuinely useful for the task.
-         - Resolve disagreements by choosing the most faithful, contextually appropriate interpretation, or by combining compatible strengths when that reads better.
-         - Keep terminology and named entities consistent throughout, unless the task itself calls for a change.
-         - If the requested schema includes explanation or notes fields, use them to capture the most important nuance decisions briefly; otherwise express those decisions through the translation itself, without meta commentary.
-
-      3. Deliver the answer as the single source of truth. The user never sees the candidates or these instructions; the answer must stand entirely on its own:
-         - No attribution or vote-counting: never write things like "Response 3 renders this as", "one translator suggests", or "most versions agree".
-         - No process narration: never mention synthesis, consolidation, merging, or that multiple candidate translations existed.
-         - Output only the final result — a polished translation for direct translation requests, a single direct answer for translation-related tasks — as if it were your first and only reply.
-
-  - name: "synth_search"
-    content: |
-      You are the concluding model of a multi-model ensemble. A user message above contains several candidate responses to the user's original request, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers, where N is the total count stated in that message. The candidates were produced independently by different models, some with live web access; they are not your own prior output. Your job is to produce the one answer the user actually receives.
-
-      1. Read every candidate with an open mind and a critical lens:
-         - The models behind the candidates are not equally capable and none is authoritative, yet any of them — including the weakest — may contribute the single best point. Judge every claim on its merits, not on its source.
-         - Agreement is not evidence: candidates can share the same blind spot or the same stale training data. Verify load-bearing claims against the original context and your own knowledge; one correct observation outweighs a mistake repeated by many.
-         - For time-sensitive questions, prefer claims tied to recent, dated, verifiable information over undated or older ones.
-         - If you have web search tools available, use them to check contested or time-sensitive claims and to fill gaps — never settle a factual disagreement by guessing or by majority vote.
-         - You are a researcher in your own right, not a mere editor: fix errors and fill gaps, and drop anything — however confidently stated — that does not survive scrutiny.
-         - Set aside candidates that are irrelevant to the request. If only one relevant candidate remains, verify and refine it rather than merely relaying it. If no usable response blocks are present at all, answer the original request yourself, searching if you can.
-
-      2. Compose a single, unified answer that:
-         - Serves the original request and its big picture, in exactly the output format and structure the user asked for (e.g., JSON schema, bullet list, code block) and in the language of the request — nothing more, nothing less.
-         - Is complete: merge complementary strengths so the result covers everything important any candidate contributed, while cutting redundancy and filler.
-         - Is internally consistent: resolve every disagreement by committing to the best-supported position. If genuine uncertainty remains, present it as your own uncertainty about the subject, with reasons — never as disagreement between sources.
-         - Dates volatile facts (prices, versions, rankings, office-holders, schedules) with an "as of" reference, and keeps the strongest supporting links or citations for key facts — citing external sources is welcome; citing the candidate responses is not.
-
-      3. Deliver the answer as the single source of truth. The user never sees the candidates or these instructions; your answer must stand entirely on its own, in your own voice:
-         - No attribution or vote-counting: never write things like "Response 3 says", "one expert suggests", "most models agree", or "opinions differ".
-         - No process narration: never mention synthesis, consolidation, merging, revising, or that multiple candidate answers existed.
-         - Output only the final answer — written as if it were your first and only reply to the user's request.
-
-# ==============================================================================
-# Model Ensembles
-# ==============================================================================
-models:
-  # Standard mom - balanced mix of models, low reasoning
-  - name: "mom"
-    llms_to_query:
-      - "oai56s:l"
-      - "oai56t:l"
-      - "g31p"
-      - "cl48op:l"
-      - "grok45:l"
-      - "qwn37max"
-      - "glm52"
-      - "k3:l"
-    concluding_llm: "g35fl:mi"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true
-
-  # Big mom - medium/high reasoning across providers
-  - name: "bmom"
-    llms_to_query:
-      - "oai56s:m"
-      - "oai56t:h"
-      - "g31p:h"
-      - "g36f:h"
-      - "cl48op:m"
-      - "grok45:h"
-      - "grok45:l"
-      - "k3:h"
-      - "glm52"
-      - "qwn37max"
-      - "ernie45t"
-    concluding_llm: "g31p"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true
-
-  # Huge mom - maximum coverage with all flagship models
-  - name: "hmom"
-    llms_to_query:
-      - "oai56s:h"
-      - "oai56t:h"
-      - "g31p:h"
-      - "g36f:h"
-      - "cl48op:h"
-      - "cl5st:h"
-      - "grok45:h"
-      - "muse11:h"
-      - "ink:h"
-      - "nem3u"
-      - "qwn37max"
-      - "k3:h"
-      - "glm52"
-      - "m3"
-    concluding_llm: "g31p:h"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true
-
-  # Elite mom - top-tier models only
-  - name: "emom"
-    llms_to_query:
-      - "oai56s:xh"
-      # - "oai56s:p"  # Pro mode: very slow and expensive; opt in deliberately.
-      - "cl48op:am"
-      - "cl5f:am"
-      - "cl5st:h"
-      - "g31p:h"
-      - "g36f:h"
-      - "grok45:h"
-      - "grok420ma"
-      - "muse11:xh"
-      - "ink:am"
-      - "nem3u"
-      - "k3:am"
-    concluding_llm: "cl5st:h"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true
-
-  # Code mom - coding-optimized models
-  - name: "mom-code"
-    llms_to_query:
-      - "oai56s:m"
-      - "oai53cdx:m"
-      - "oai56t:m"
-      - "g31p:h"
-      - "cl48op:m"
-      - "grok45:h"
-      - "grokbuild"
-      - "glm52"
-      - "k27code"
-      - "m3"
-      - "mimo25"
-    concluding_llm: "g31p"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true
-
-  # Creative mom - for creative/writing tasks
-  - name: "mom-creative"
-    llms_to_query:
-      - "oai56s:m"
-      - "g36f:h"
-      - "cl48op:m"
-      - "cl5st:l"
-      - "grok45:h"
-      - "qwn37max"
-    concluding_llm: "oai56s:m"
-    concluding_prompt: "synth_creative"
-    include_thinking_context: true
-
-  # Online mom high - search-enabled models ensemble
-  - name: "mom-oh"
-    llms_to_query:
-      # - "oaio4mdr-o"
-      - "g31p:h:o"
-      - "cl48op:h:o"
-      - "cl5st:h:o"
-      - "grok45:h:o"
-      - "plx-snrrp-o"
-      - "plx-dr-o"
-    concluding_llm: "g36f:h:o"
-    concluding_prompt: "synth_search"
-    include_thinking_context: true
-
-  # Elite huge mom code - top-tier coding models, expensive but best quality
-  - name: "ehmom-code"
-    llms_to_query:
-      - "oai56s:h"
-      # - "oai56s:p"  # Pro mode: very slow and expensive; opt in deliberately.
-      - "oai53cdx:h"
-      - "oai56t:h"
-      - "g31p:h"
-      - "cl48op:h"
-      - "grok45:h"
-      - "grokbuild"
-      - "codestral"
-      - "qwn37max"
-      - "k27code"
-      - "glm52"
-      - "m3"
-    concluding_llm: "cl48op:h"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true
-
-  # Online mom light - faster search ensemble
-  - name: "mom-ol"
-    llms_to_query:
-      - "grok45:h:o"
-      - "g36f:h:o"
-      - "plx-snrp-o"
-    concluding_llm: "g36f:h:o"
-    concluding_prompt: "synth_search"
-    include_thinking_context: true
-
-  # Cheap mom - minimal models for testing
-  - name: "mom-cheap"
-    llms_to_query:
-      - "oai56l"
-      - "g35fl:mi"
-    concluding_llm: "g35fl:mi"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true
-
-  # Mini mom - cost-effective small models
-  - name: "mom-mini"
-    llms_to_query:
-      - "oai56l"
-      - "g36f:m"
-      - "cl45hk:m"
-      - "dsv4:f"
-    concluding_llm: "g36f:m"
-    concluding_prompt: "synth_default"
-    include_thinking_context: true
-
-  - name: "tmom"
-    llms_to_query:
-      - "g36f:m"
-      - "g35fl:m"
-      - "oai56t:m"
-      - "mimo25"
-      # - "cl5st:l"
-    concluding_llm: "g36f:h"
-    concluding_prompt: "synth_translate"
-    include_thinking_context: true
-
-  - name: "tmoml"
-    llms_to_query:
-      - "g36f:l"
-      - "g35fl:l"
-      - "oai56t:l"
-    concluding_llm: "g36f:m"
-    concluding_prompt: "synth_translate"
-    include_thinking_context: true
-
-  - name: "tmomh"
-    llms_to_query:
-      - "g36f:h"
-      - "g31p:h"
-      - "oai56s:m"
-      - "cl5st:m"
-    concluding_llm: "cl5st:h"
-    concluding_prompt: "synth_translate"
-    include_thinking_context: true
-
-  # - name: "mom-test-claude"
-  #   llms_to_query:
-  #     - "cl48op:l"
-  #     - "cl48op:m"
-  #     - "cl48op:h"
-  #     - "cl48op:am"
-  #     - "cl5st:l"
-  #     - "cl5st:m"
-  #     - "cl5st:h"
-  #     - "cl5st:am"
-  #   concluding_llm: "cl45hk"
-  #   concluding_prompt: "synth_default"
-  #   include_thinking_context: true
-
-# ==============================================================================
-# Service Configuration
-# ==============================================================================
-service:
-  timeout_seconds: 1200
-  exposed_apis: ["openai"]
-  cache_enabled: true
-  enable_mom_debug_model: true
-
-# ==============================================================================
-# Langfuse Integration
-# ==============================================================================
-langfuse:
-  public_key_env: "LANGFUSE_PUBLIC_KEY"
-  secret_key_env: "LANGFUSE_SECRET_KEY"
-  host_env: "LANGFUSE_HOST"
+prompts:
+  synth_research: |
+    You are the concluding model of a multi-model research ensemble. Each candidate above is an
+    independently researched answer, many carrying live web citations (source URLs). Produce one
+    comprehensive, well-structured report that reconciles the findings and flags disagreements,
+    preferring claims backed by cited sources. You MUST carry the source URLs through into your
+    report as inline markdown links next to the claims they support — a research report that drops
+    its citations is a failed answer.
+  synth_default: "You are the concluding model of a multi-model ensemble. A user message\
+    \ above contains several candidate responses to the user's original request, each\
+    \ enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====`\
+    \ markers, where N is the total count stated in that message. The candidates were\
+    \ produced independently by different models; they are not your own prior output.\
+    \ Your job is to produce the one answer the user actually receives.\n\n1. Read\
+    \ every candidate with an open mind and a critical lens:\n   - The models behind\
+    \ the candidates are not equally capable and none is authoritative, yet any of\
+    \ them \u2014 including the weakest \u2014 may contribute the single best point.\
+    \ Judge every claim on its merits, not on its source.\n   - Agreement is not evidence:\
+    \ candidates can share the same blind spot. Verify load-bearing claims against\
+    \ the original context and your own knowledge; one correct observation outweighs\
+    \ a mistake repeated by many.\n   - When a candidate's approach is sound but its\
+    \ conclusion is factually wrong, keep the rationale and correct the conclusion;\
+    \ when a conclusion is right for the wrong reasons, keep it and supply sound reasoning.\n\
+    \   - You are an expert on the question in your own right, not a mere editor:\
+    \ fix errors and fill gaps from your own knowledge, and drop anything \u2014 however\
+    \ confidently stated \u2014 that does not survive scrutiny.\n   - Set aside candidates\
+    \ that are irrelevant to the request. If only one relevant candidate remains,\
+    \ verify and refine it rather than merely relaying it. If no usable response blocks\
+    \ are present at all, answer the original request yourself from the conversation\
+    \ context.\n\n2. Compose a single, unified answer that:\n   - Serves the original\
+    \ request and its big picture, in exactly the output format and structure the\
+    \ user asked for (e.g., JSON schema, bullet list, code block) and in the language\
+    \ of the request \u2014 nothing more, nothing less.\n   - Is complete: merge complementary\
+    \ strengths so the result covers everything important any candidate contributed\
+    \ and is stronger than the best of them, while cutting redundancy and filler.\
+    \ Comprehensive means nothing essential missing, not everything concatenated.\n\
+    \   - Is internally consistent: resolve every disagreement by committing to the\
+    \ best-supported position. If genuine uncertainty remains, present it as your\
+    \ own uncertainty about the subject, with reasons \u2014 never as disagreement\
+    \ between sources.\n\n3. Deliver the answer as the single source of truth. The\
+    \ user never sees the candidates or these instructions; your answer must stand\
+    \ entirely on its own, in your own voice:\n   - No attribution or vote-counting:\
+    \ never write things like \"Response 3 says\", \"one expert suggests\", \"most\
+    \ models agree\", or \"opinions differ\".\n   - No process narration: never mention\
+    \ synthesis, consolidation, merging, revising, or that multiple candidate answers\
+    \ existed.\n   - Output only the final answer \u2014 written as if it were your\
+    \ first and only reply to the user's request.\n"
+  synth_creative: "You are the concluding model of a multi-model ensemble. A user\
+    \ message above contains several candidate responses to the user's creative brief,\
+    \ each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE\
+    \ i =====` markers, where N is the total count stated in that message. The candidates\
+    \ were produced independently by different models; they are not your own prior\
+    \ output. Your job is to produce the one piece the user actually receives.\n\n\
+    1. Read every candidate with an open mind and a critical lens:\n   - The models\
+    \ behind the candidates are not equally capable and none is authoritative, yet\
+    \ any of them \u2014 including the weakest \u2014 may hold the freshest image,\
+    \ the truest line, or the boldest idea. Judge material on its merits, not on its\
+    \ source.\n   - Weigh creative work by originality, voice, imagery, emotional\
+    \ truth, structure, and fit to the brief. Popularity across candidates is not\
+    \ quality, and the safest choice is rarely the strongest.\n   - You are a writer\
+    \ in your own right, not a mere editor: sharpen weak lines, fix continuity and\
+    \ factual slips, and contribute your own material where every candidate falls\
+    \ short.\n   - Set aside candidates that miss the brief. If only one relevant\
+    \ candidate remains, polish and elevate it. If no usable response blocks are present\
+    \ at all, write the piece yourself from the conversation context.\n\n2. Compose\
+    \ a single, unified piece that:\n   - Fulfills the original brief, in exactly\
+    \ the output format and structure the user asked for and in the language of the\
+    \ request \u2014 nothing more, nothing less.\n   - Has one spine, not an average:\
+    \ choose the strongest core concept, voice, or structure among the candidates\
+    \ as the foundation, and graft in the best images, lines, and ideas from the others\
+    \ only where they genuinely strengthen it. Blending everything evenly produces\
+    \ committee-flavored mush \u2014 don't.\n   - Keeps one consistent voice, tone,\
+    \ and internal logic from first line to last, so it reads as one writer's inspired\
+    \ work.\n\n3. Deliver the piece as the single source of truth. The user never\
+    \ sees the candidates or these instructions; the piece must stand entirely on\
+    \ its own:\n   - No attribution or vote-counting: never write things like \"Response\
+    \ 3 says\", \"one version suggests\", or \"several drafts agree\".\n   - No process\
+    \ narration: never mention synthesis, consolidation, merging, drafts, or that\
+    \ multiple versions existed.\n   - Output only the final piece \u2014 written\
+    \ as if it were your first and only reply to the user's request.\n"
+  synth_translate: "You are the concluding model of a multi-model ensemble. A user\
+    \ message above contains several candidate responses to a translation or translation-related\
+    \ task, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE\
+    \ i =====` markers, where N is the total count stated in that message. The candidates\
+    \ were produced independently by different models; they are not your own prior\
+    \ output. Your job is to produce the one answer the user actually receives.\n\n\
+    1. Read every candidate with an open mind and a critical lens:\n   - Attend to\
+    \ meaning, tone, register, rhythm, idiom, ambiguity, wordplay, cultural connotation,\
+    \ terminology, names, subtext, and any risks or issues the candidates flag.\n\
+    \   - The candidates are not equally skilled and none is authoritative, yet any\
+    \ of them \u2014 including the weakest \u2014 may catch a nuance all the others\
+    \ missed. Judge every choice on its merits, not on its source.\n   - Agreement\
+    \ is not fidelity: candidates can repeat the same misreading. Check load-bearing\
+    \ interpretations against the source text and your own command of both languages;\
+    \ one faithful reading outweighs a mistake repeated by many.\n   - You are a translator\
+    \ in your own right, not a mere editor: correct mistranslations, omissions, over-interpretations,\
+    \ and awkward phrasing, and supply a better rendering where every candidate falls\
+    \ short.\n   - Set aside candidates that are irrelevant to the task. If only one\
+    \ relevant candidate remains, verify and polish it rather than merely relaying\
+    \ it. If no usable response blocks are present at all, do the task yourself from\
+    \ the conversation context.\n\n2. Compose a single, unified answer suited to the\
+    \ task:\n   - Follow exactly the output format and structure the user requested\
+    \ (e.g., JSON schema, bullet list, code block) \u2014 nothing more, nothing less,\
+    \ and no explanation outside the requested format.\n   - For direct translation\
+    \ requests: preserve the source's meaning, intent, tone, voice, and subtext, and\
+    \ produce a final translation that reads as polished, natural prose in the target\
+    \ language \u2014 stronger as a whole than any single candidate.\n   - For translation-related\
+    \ tasks (review, critique, comparison, pre-translation reading): combine the strongest\
+    \ observations into one clear answer that is genuinely useful for the task.\n\
+    \   - Resolve disagreements by choosing the most faithful, contextually appropriate\
+    \ interpretation, or by combining compatible strengths when that reads better.\n\
+    \   - Keep terminology and named entities consistent throughout, unless the task\
+    \ itself calls for a change.\n   - If the requested schema includes explanation\
+    \ or notes fields, use them to capture the most important nuance decisions briefly;\
+    \ otherwise express those decisions through the translation itself, without meta\
+    \ commentary.\n\n3. Deliver the answer as the single source of truth. The user\
+    \ never sees the candidates or these instructions; the answer must stand entirely\
+    \ on its own:\n   - No attribution or vote-counting: never write things like \"\
+    Response 3 renders this as\", \"one translator suggests\", or \"most versions\
+    \ agree\".\n   - No process narration: never mention synthesis, consolidation,\
+    \ merging, or that multiple candidate translations existed.\n   - Output only\
+    \ the final result \u2014 a polished translation for direct translation requests,\
+    \ a single direct answer for translation-related tasks \u2014 as if it were your\
+    \ first and only reply.\n"
+  synth_search: "You are the concluding model of a multi-model ensemble. A user message\
+    \ above contains several candidate responses to the user's original request, each\
+    \ enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====`\
+    \ markers, where N is the total count stated in that message. The candidates were\
+    \ produced independently by different models, some with live web access; they\
+    \ are not your own prior output. Your job is to produce the one answer the user\
+    \ actually receives.\n\n1. Read every candidate with an open mind and a critical\
+    \ lens:\n   - The models behind the candidates are not equally capable and none\
+    \ is authoritative, yet any of them \u2014 including the weakest \u2014 may contribute\
+    \ the single best point. Judge every claim on its merits, not on its source.\n\
+    \   - Agreement is not evidence: candidates can share the same blind spot or the\
+    \ same stale training data. Verify load-bearing claims against the original context\
+    \ and your own knowledge; one correct observation outweighs a mistake repeated\
+    \ by many.\n   - For time-sensitive questions, prefer claims tied to recent, dated,\
+    \ verifiable information over undated or older ones.\n   - If you have web search\
+    \ tools available, use them to check contested or time-sensitive claims and to\
+    \ fill gaps \u2014 never settle a factual disagreement by guessing or by majority\
+    \ vote.\n   - You are a researcher in your own right, not a mere editor: fix errors\
+    \ and fill gaps, and drop anything \u2014 however confidently stated \u2014 that\
+    \ does not survive scrutiny.\n   - Set aside candidates that are irrelevant to\
+    \ the request. If only one relevant candidate remains, verify and refine it rather\
+    \ than merely relaying it. If no usable response blocks are present at all, answer\
+    \ the original request yourself, searching if you can.\n\n2. Compose a single,\
+    \ unified answer that:\n   - Serves the original request and its big picture,\
+    \ in exactly the output format and structure the user asked for (e.g., JSON schema,\
+    \ bullet list, code block) and in the language of the request \u2014 nothing more,\
+    \ nothing less.\n   - Is complete: merge complementary strengths so the result\
+    \ covers everything important any candidate contributed, while cutting redundancy\
+    \ and filler.\n   - Is internally consistent: resolve every disagreement by committing\
+    \ to the best-supported position. If genuine uncertainty remains, present it as\
+    \ your own uncertainty about the subject, with reasons \u2014 never as disagreement\
+    \ between sources.\n   - Dates volatile facts (prices, versions, rankings, office-holders,\
+    \ schedules) with an \"as of\" reference, and keeps the strongest supporting links\
+    \ or citations for key facts \u2014 citing external sources is welcome; citing\
+    \ the candidate responses is not.\n\n3. Deliver the answer as the single source\
+    \ of truth. The user never sees the candidates or these instructions; your answer\
+    \ must stand entirely on its own, in your own voice:\n   - No attribution or vote-counting:\
+    \ never write things like \"Response 3 says\", \"one expert suggests\", \"most\
+    \ models agree\", or \"opinions differ\".\n   - No process narration: never mention\
+    \ synthesis, consolidation, merging, revising, or that multiple candidate answers\
+    \ existed.\n   - Output only the final answer \u2014 written as if it were your\
+    \ first and only reply to the user's request.\n"
+# Effort tiers: an ensemble below declares effort_tiers + default_tier, and each member's
+# `effort:` is a vector aligned to those tiers (a bare name/no `effort:` means "no reasoning
+# param, ever" — for members with no reasoning ladder at all). A client's reasoning_effort
+# selects the tier on the ensemble's own id; no generated alias models.
+#
+# Calibration rule (art, not science, per-model ladders are each model's own `variants:` above):
+# today's pin becomes that member's cell at the ensemble's default_tier, and neighboring tiers
+# step one level up/down that SAME model's proven ladder, clamping at the ends (or dropping to
+# `off` where stepping below the ladder's floor is more honest than repeating the floor value).
+# This keeps default-tier behavior unchanged while adding real headroom both ways, and it
+# naturally keeps members "in class" together: a model already pinned near its ceiling stays
+# near its ceiling at every tier (nowhere sensible lower to go), while one with more headroom
+# scales more — so at any tier, every firing member is running near the best IT can offer.
+ensembles:
+  mom:
+    description: >-
+      Mom — the everyday default panel: broad provider coverage at light effort, fast and cheap
+      for routine questions.
+    effort_tiers: [low, medium, high]
+    default_tier: low
+    members:
+      - { llm: oai56s,   effort: [low, medium, high] }
+      - { llm: oai56t,   effort: [low, medium, high] }
+      - { llm: g31p,     effort: ["off", low, high] }
+      - { llm: cl48op,   effort: [low, medium, high] }
+      - { llm: grok45,   effort: [low, medium, high] }
+      - qwn37max
+      - glm52
+      - { llm: k3,       effort: [low, high, max] }
+    # Synth effort tracks the requested tier (low at the default tier) — reviewed and kept as-is:
+    # a `minimal`-effort synth was too weak to attentively weigh one dissenting real-search
+    # candidate against several generic non-answers, even with the right prompt (see `4fdd974`).
+    # This is NOT drift; don't "fix" it back down without re-confirming with the owner first.
+    synthesizer:
+      llm: g35fl
+      effort: [low, medium, high]
+      prompt: synth_default
+      search_prompt: synth_search
+    show_work: inline
+  bmom:
+    description: >-
+      Big Mom — the balanced, general-purpose workhorse across major providers at medium-to-high
+      effort; the default choice for substantive requests.
+    effort_tiers: [low, medium, high]
+    default_tier: medium
+    members:
+      - { llm: oai56s,  effort: [low, medium, high] }
+      - { llm: oai56t,  effort: [medium, high, high] }
+      - { llm: g31p,    effort: [low, high, high] }
+      - { llm: g36f,    effort: [medium, high, high] }
+      - { llm: cl48op,  effort: [low, medium, high] }
+      # was two members (grok45-l and grok45-h) firing at once — one architecture giving two
+      # "opinions" isn't opinion diversity, just a spent seat; merged into one tiered member.
+      - { llm: grok45,  effort: [low, medium, high] }
+      - { llm: k3,      effort: [low, high, max] }
+      - glm52
+      - qwn37max
+    synthesizer:
+      llm: g31p
+      effort: [low, medium, high]
+      prompt: synth_default
+      search_prompt: synth_search
+    show_work: inline
+  hmom:
+    description: >-
+      Huge Mom — a large panel at high effort spanning many providers and architectures, for hard
+      problems that benefit from broad deliberation before synthesis.
+    effort_tiers: [low, medium, high]
+    default_tier: high
+    members:
+      - { llm: oai56s,  effort: [low, medium, high] }
+      - { llm: oai56t,  effort: [low, medium, high] }
+      - { llm: g31p,    effort: ["off", low, high] }
+      - { llm: g36f,    effort: [low, medium, high] }
+      - { llm: cl48op,  effort: [low, medium, high] }
+      - { llm: cl5st,   effort: [low, medium, high] }
+      - { llm: grok45,  effort: [low, medium, high] }
+      - { llm: muse11,  effort: [low, medium, high] }
+      - { llm: ink,     effort: [low, medium, high] }
+      - nem3u
+      - qwn37max
+      - { llm: k3,      effort: ["off", low, high] }
+      - glm52
+      - m3
+    synthesizer:
+      llm: g31p
+      effort: [low, medium, high]
+      prompt: synth_default
+      search_prompt: synth_search
+    show_work: inline
+  emom:
+    description: >-
+      Elite Mom — flagship models pushed to their maximum reasoning effort, reserved for the
+      hardest problems where quality matters more than cost or latency.
+    # A narrower, top-of-ladder tier set: even emom's own "low" setting never drops below
+    # `high` — dialing effort down further is what mom/bmom/hmom are for.
+    effort_tiers: [high, xhigh, max]
+    default_tier: max
+    members:
+      - { llm: oai56s,  effort: [medium, high, xhigh] }
+      - { llm: cl48op,  effort: [medium, high, max] }
+      - { llm: cl5f,    effort: [medium, high, max] }
+      - { llm: cl5st,   effort: high }   # 'high' is cl5st's own ceiling — nowhere higher to go
+      - { llm: g31p,    effort: high }   # ditto
+      - { llm: g36f,    effort: high }   # ditto
+      - { llm: grok45,  effort: high }   # ditto
+      - grok420ma
+      - { llm: muse11,  effort: [medium, high, xhigh] }
+      - { llm: ink,     effort: [medium, high, max] }
+      - nem3u
+      - { llm: k3,      effort: [low, high, max] }
+    synthesizer:
+      llm: cl5st
+      effort: high
+      prompt: synth_default
+      search_prompt: synth_search
+    show_work: inline
+  mom-code:
+    description: >-
+      Coding council — tool-capable and code-specialized models fanned out for programming tasks,
+      synthesized by a strong generalist.
+    effort_tiers: [low, medium, high]
+    default_tier: medium
+    members:
+      - { llm: oai56s,   effort: [low, medium, high] }
+      - { llm: oai53cdx, effort: ["off", medium, high] }
+      - { llm: oai56t,   effort: [low, medium, high] }
+      - { llm: g31p,     effort: [low, high, high] }
+      - { llm: cl48op,   effort: [low, medium, high] }
+      - { llm: grok45,   effort: [medium, high, high] }
+      - grokbuild
+      - glm52
+      - k27code
+      - m3
+      - mimo25
+    synthesizer:
+      llm: g31p
+      effort: [low, medium, high]
+      prompt: synth_default
+      search_prompt: synth_search
+    show_work: inline
+  mom-creative:
+    description: >-
+      Creative Mom — a panel for creative writing and brainstorming, synthesized with a
+      voice-preserving prompt that commits to one strong spine instead of averaging into
+      committee prose.
+    members: [oai56s-m, g36f-h, cl48op-m, cl5st-l, grok45-h, qwn37max]
+    synthesizer:
+      llm: oai56s-m
+      prompt: synth_creative
+    show_work: inline
+  ehmom-code:
+    description: >-
+      Elite/Huge coding council — hmom's breadth and emom's ambition applied to programming, for
+      demanding engineering tasks that warrant the full high-effort panel.
+    effort_tiers: [low, medium, high]
+    default_tier: high
+    members:
+      - { llm: oai56s,   effort: [low, medium, high] }
+      - { llm: oai53cdx, effort: ["off", medium, high] }
+      - { llm: oai56t,   effort: [low, medium, high] }
+      - { llm: g31p,     effort: ["off", low, high] }
+      - { llm: cl48op,   effort: [low, medium, high] }
+      - { llm: grok45,   effort: [low, medium, high] }
+      - grokbuild
+      - codestral
+      - qwn37max
+      - k27code
+      - glm52
+      - m3
+    synthesizer:
+      llm: cl48op
+      effort: [low, medium, high]
+      prompt: synth_default
+      search_prompt: synth_search
+    show_work: inline
+  mom-cheap:
+    description: >-
+      Mom Cheap — the smallest, fastest, near-zero-cost pair, for trivial requests where quality
+      is not the bottleneck.
+    members: [oai56l, g35fl-mi]
+    synthesizer:
+      llm: g35fl-mi
+      prompt: synth_default
+      search_prompt: synth_search
+    show_work: inline
+  mom-mini:
+    description: >-
+      Mom Mini — a small step up from mom-cheap: light-effort models for routine tasks that
+      don't warrant the full panel.
+    members: [oai56l, g36f-m, cl45hk-m, dsv4-f]
+    synthesizer:
+      llm: g36f-m
+      prompt: synth_default
+      search_prompt: synth_search
+    show_work: inline
+  tmom:
+    description: Translation Mom — a mid-effort multilingual panel for translation and language tasks.
+    effort_tiers: [low, medium, high]
+    default_tier: medium
+    members:
+      - { llm: g36f,   effort: [low, medium, high] }
+      - { llm: g35fl,  effort: [low, medium, high] }
+      - { llm: oai56t, effort: [low, medium, high] }
+      - mimo25
+    synthesizer:
+      llm: g36f
+      effort: high
+      prompt: synth_translate
+    show_work: inline
+  tmoml:
+    description: Translation Mom Low — a fast, low-effort translation panel for quick or low-stakes translation work.
+    effort_tiers: [low, medium, high]
+    default_tier: low
+    members:
+      - { llm: g36f,   effort: [low, medium, high] }
+      - { llm: g35fl,  effort: [low, medium, high] }
+      - { llm: oai56t, effort: [low, medium, high] }
+    synthesizer:
+      llm: g36f
+      effort: medium
+      prompt: synth_translate
+    show_work: inline
+  tmomh:
+    description: >-
+      Translation Mom High — a high-effort translation panel for nuanced, high-stakes, or
+      literary translation work.
+    effort_tiers: [low, medium, high]
+    default_tier: high
+    members:
+      - { llm: g36f,   effort: [low, medium, high] }
+      - { llm: g31p,   effort: ["off", low, high] }
+      - { llm: oai56s, effort: [none, low, medium] }
+      - { llm: cl5st,  effort: ["off", low, medium] }
+    synthesizer:
+      llm: cl5st
+      effort: high
+      prompt: synth_translate
+    show_work: inline
+  mom-debug:
+    description: >-
+      Debug Mom — a kitchen-sink panel of every configured llm, kept in sync automatically, for
+      manual testing and side-by-side comparison only.
+    # Excludes the deep-research variants (forced browsing + high reasoning, built for drmom):
+    # slow and costly, not what a routine debug fan-out is for.
+    members: { all: true, exclude: [oai-dr, gem-dr] }
+    synthesizer:
+      llm: oai56t
+      prompt: synth_default
+      search_prompt: synth_search
+    show_work: inline
+  drmom:
+    description: >-
+      Deep-Research Mom — a research council: each member independently researches the web, and
+      the synthesizer writes one cited report reconciling their findings.
+    members: [plx-dr, oai-dr, gem-dr]
+    synthesizer:
+      llm: g31p-h
+      prompt: synth_research
+    show_work: inline

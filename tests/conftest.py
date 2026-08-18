@@ -1,158 +1,48 @@
-"""
-Pytest configuration and shared fixtures for MoM Service tests
+"""Shared test fixtures.
+
+Hermetic environment: a developer's local ``.env`` (or litellm's import-time ``load_dotenv()``,
+which reads the CWD ``.env`` into ``os.environ`` the first time any test imports litellm) must not
+leak secrets/config into tests. CI has no ``.env``; this keeps local runs identical to CI.
 """
 
-from unittest.mock import MagicMock
+from __future__ import annotations
+
+import os
 
 import pytest
 
 
+# Ambient names a `.env` might inject (legacy/unprefixed) that could perturb tests.
+_AMBIENT_VARS = (
+    "API_TOKEN",
+    "REDIS_URL",
+    "MOM_CONFIG_PATH",
+    "LITELLM_VERBOSE",
+    "ALLOWED_CORS_ORIGINS",
+    "MUSE_SPARK_PROXY_URL",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "MISTRAL_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "OPENROUTER_API_KEY",
+    "PERPLEXITY_API_KEY",
+    "XAI_API_KEY",
+    "QWEN_API_KEY",
+    "GROQ_API_KEY",
+    "COHERE_API_KEY",
+    "LANGFUSE_PUBLIC_KEY",
+    "LANGFUSE_SECRET_KEY",
+    "LANGFUSE_HOST",
+)
+
+
 @pytest.fixture(autouse=True)
-def setup_default_env(monkeypatch):
-    """
-    Autouse fixture that sets up default environment variables for all tests.
-    Individual tests can override these values using monkeypatch if needed.
-    """
-    # Set default API_TOKEN if not already set
-    import os
-
-    if not os.getenv("API_TOKEN"):
-        monkeypatch.setenv("API_TOKEN", "test-token-default-12345")
-    # Set default OPENAI_API_KEY if not already set
-    if not os.getenv("OPENAI_API_KEY"):
-        monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key-default")
-    yield
-
-
-@pytest.fixture
-def mock_langfuse_client():
-    """Fixture providing a mocked Langfuse client"""
-    mock_client = MagicMock()
-    mock_trace = MagicMock()
-    mock_generation = MagicMock()
-
-    mock_client.start_observation.return_value = mock_trace
-    mock_trace.start_observation.return_value = mock_generation
-
-    return mock_client
-
-
-@pytest.fixture
-def sample_llm_definition():
-    """Fixture providing a sample LLM definition"""
-    from mom_service.config import LLMDefinition
-
-    return LLMDefinition(
-        name="test-llm",
-        model="gpt-3.5-turbo",
-        api_key_env="OPENAI_API_KEY",
-        params={"temperature": 0.7},
-    )
-
-
-@pytest.fixture
-def sample_mom_config():
-    """Fixture providing a sample MoM configuration"""
-    from mom_service.config import LLMDefinition, ModelConfig, MoMConfig, ServiceConfig
-
-    return MoMConfig(
-        llm_definitions=[
-            LLMDefinition(name="gpt4", model="gpt-4", api_key_env="OPENAI_API_KEY", params={}),
-            LLMDefinition(
-                name="gpt35", model="gpt-3.5-turbo", api_key_env="OPENAI_API_KEY", params={}
-            ),
-        ],
-        models=[
-            ModelConfig(
-                name="test-mom-model",
-                llms_to_query=["gpt4", "gpt35"],
-                concluding_llm="gpt4",
-                include_thinking_context=True,
-            )
-        ],
-        service=ServiceConfig(timeout_seconds=30, cache_enabled=False, max_llm_retries=2),
-    )
-
-
-@pytest.fixture
-def sample_request_messages():
-    """Fixture providing sample chat messages"""
-    return [{"role": "user", "content": "What is the capital of France?"}]
-
-
-@pytest.fixture
-def mock_litellm_response():
-    """Fixture providing a mocked LiteLLM response"""
-    from litellm.utils import Choices, Message, ModelResponse, Usage
-
-    return ModelResponse(
-        id="test-response-id",
-        choices=[
-            Choices(
-                finish_reason="stop",
-                index=0,
-                message=Message(content="Paris is the capital of France.", role="assistant"),
-            )
-        ],
-        created=1234567890,
-        model="gpt-4",
-        usage=Usage(prompt_tokens=10, completion_tokens=20, total_tokens=30),
-        object="chat.completion",
-    )
-
-
-@pytest.fixture
-def temp_config_file(tmp_path):
-    """Fixture creating a temporary config file"""
-    config_content = """
-llm_definitions:
-  - name: test-gpt4
-    model: gpt-4
-    api_key_env: OPENAI_API_KEY
-    params:
-      temperature: 0.7
-
-models:
-  - name: test-model
-    llms_to_query:
-      - test-gpt4
-    concluding_llm: test-gpt4
-    include_thinking_context: false
-
-service:
-  timeout_seconds: 30
-  cache_enabled: false
-  max_llm_retries: 2
-"""
-    config_file = tmp_path / "test_config.yaml"
-    config_file.write_text(config_content)
-    return str(config_file)
-
-
-@pytest.fixture
-def mock_env_vars(monkeypatch):
-    """Fixture setting mock environment variables"""
-    monkeypatch.setenv("API_TOKEN", "test-token-123")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
-    monkeypatch.setenv("ALLOWED_CORS_ORIGINS", "*")
-    return {
-        "API_TOKEN": "test-token-123",
-        "OPENAI_API_KEY": "test-openai-key",
-    }
-
-
-@pytest.fixture
-def temp_metrics_db(tmp_path):
-    """Fixture creating a temporary metrics database"""
-    db_path = tmp_path / "test_metrics.db"
-    # Patch the METRICS_DB_PATH before importing metrics_db
-    from mom_service import metrics_db
-
-    original_path = metrics_db.METRICS_DB_PATH
-    metrics_db.METRICS_DB_PATH = str(db_path)
-    metrics_db.init_metrics_db()
-
-    yield str(db_path)
-
-    # Cleanup
-    metrics_db.METRICS_DB_PATH = original_path
+def _hermetic_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear ambient secrets/config before each test (tests that need a var set it themselves)."""
+    for var in _AMBIENT_VARS:
+        monkeypatch.delenv(var, raising=False)
+    for key in list(os.environ):
+        if key.startswith("MOM_"):
+            monkeypatch.delenv(key, raising=False)

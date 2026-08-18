@@ -1,10 +1,13 @@
 .claude
 .serena
 .vscode
-config.yaml
 *.db
 data/
 scripts/
+# Deployment-local config overlay (MOM_CONFIG_OVERLAY) — deployment-specific values (real
+# domains, etc.) that have no business in the tracked config.yaml. See docs/CONFIGURATION.md.
+config.local.yaml
+*.local.yaml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

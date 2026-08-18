@@ -1,141 +1,182 @@
-[tool.black]
-line-length = 100
-target-version = ['py39', 'py310', 'py311']
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | venv
-  | _build
-  | buck-out
-  | build
-  | dist
-  | \.pytest_cache
-  | __pycache__
-)/
-'''
+[project]
+name = "mom-llm"
+version = "2.0.0"
+description = "A Mixture-of-Models OpenAI/Anthropic-compatible LLM gateway that fans out to a panel of models and synthesizes one answer."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Arash Behmand" }]
+keywords = ["llm", "openai", "anthropic", "gateway", "litellm", "mixture-of-models"]
 
-[tool.ruff]
-# Set the maximum line length
-line-length = 100
-
-# Assume Python 3.9+
-target-version = "py39"
-
-# Exclude common directories
-exclude = [
-    ".bzr",
-    ".direnv",
-    ".eggs",
-    ".git",
-    ".git-rewrite",
-    ".hg",
-    ".mypy_cache",
-    ".nox",
-    ".pants.d",
-    ".pytype",
-    ".ruff_cache",
-    ".svn",
-    ".tox",
-    ".venv",
-    "__pypackages__",
-    "_build",
-    "buck-out",
-    "build",
-    "dist",
-    "node_modules",
-    "venv",
+# Runtime dependencies. litellm is the provider transport (quarantined to
+# adapters/litellm_client); langfuse backs the optional tracer.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "structlog>=24.1",
+    "aiosqlite>=0.20",
+    "platformdirs>=4.2",
+    "litellm>=1.55",
+    "langfuse>=3.0",
 ]
+
+# Optional feature deps, imported lazily so a base install never requires them:
+#   redis -> the cross-process progress event bus (settings.redis_url)
+#   otel  -> the OpenTelemetry/OTLP tracer (observability.otel.enabled); grpc users also install
+#            opentelemetry-exporter-otlp-proto-grpc and set protocol: grpc
+[project.optional-dependencies]
+redis = ["redis>=5.0"]
+otel = [
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
+]
+
+[project.scripts]
+mom = "mom.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/arashbehmand/mom-llm"
+Repository = "https://github.com/arashbehmand/mom-llm"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mom"]
+
+# PEP 735 dependency groups (installed with `uv sync --group <name>`).
+[dependency-groups]
+test = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "pytest-randomly>=3.15",
+    "pytest-socket>=0.7",
+    "httpx>=0.27",
+    "hypothesis>=6.100",
+    # Official SDKs, for in-the-loop wire-format contract tests (parse our real ASGI streams).
+    "openai>=1.40",
+    "anthropic>=0.40",
+    # Optional-feature backends, exercised hermetically (no network / real broker) in the suite.
+    "redis>=5.0",
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
+]
+dev = [
+    { include-group = "test" },
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pre-commit>=3.7",
+    "import-linter>=2.0",
+    "types-pyyaml>=6.0",
+]
+
+# ----------------------------------------------------------------------------------------------
+# Ruff — the single linter + formatter.
+# ----------------------------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src"]
 
 [tool.ruff.lint]
-# Enable pycodestyle (`E`), Pyflakes (`F`), isort (`I`), and other useful rules
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # Pyflakes
-    "I",   # isort
-    "N",   # pep8-naming
-    "UP",  # pyupgrade
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "SIM", # flake8-simplify
+    "E", "W", "F", "I", "N", "UP", "B", "C4", "SIM",
+    "S",     # flake8-bandit (this is an auth gateway)
+    "ASYNC", # blocking-call-in-async — v1's worst runtime bug class
+    "DTZ",   # naive datetimes
+    "PT",    # pytest style
+    "RET", "ARG", "PERF", "LOG", "G", "RUF",
 ]
-
-# Ignore specific rules
 ignore = [
-    "E501",   # Line too long (handled by Black)
-    "B008",   # Do not perform function call in argument defaults
-    "B904",   # Within an except clause, raise exceptions with `raise ... from err`
-    "SIM108", # Use ternary operator (sometimes less readable)
+    "B008",   # function call in argument defaults (FastAPI/Typer idiom)
 ]
-
-# Allow autofix for all enabled rules (when `--fix` is provided)
 fixable = ["ALL"]
-unfixable = []
-
-# Allow unused variables when underscore-prefixed
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.lint.per-file-ignores]
-# Ignore import rules in __init__.py files
 "__init__.py" = ["F401"]
-# Allow print statements in tests
-"tests/*" = ["T201"]
+"tests/*" = ["S101", "S105", "S106", "S107", "ARG"]  # asserts + dummy secrets + unused fixture args are fine in tests
+"src/mom/domain/errors.py" = ["N818"]  # domain error vocabulary; base is MomError
 
 [tool.ruff.lint.mccabe]
-# Set maximum complexity
-max-complexity = 15
+max-complexity = 10
 
 [tool.ruff.lint.isort]
-known-first-party = ["mom_service"]
-force-single-line = false
-lines-after-imports = 2
+known-first-party = ["mom"]
 force-sort-within-sections = true
+lines-after-imports = 2
 
 [tool.ruff.format]
-# Use double quotes for strings
 quote-style = "double"
-
-# Indent with spaces, rather than tabs
-indent-style = "space"
-
-# Respect magic trailing commas
-skip-magic-trailing-comma = false
-
-# Format docstrings
 docstring-code-format = true
 
+# ----------------------------------------------------------------------------------------------
+# mypy — strict, scoped to the mom package.
+# ----------------------------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+files = ["src/mom"]
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["litellm", "litellm.*"]
+ignore_missing_imports = true
+
+# Optional feature deps, imported lazily; treat as untyped so a base checkout type-checks too.
+[[tool.mypy.overrides]]
+module = ["redis.*", "opentelemetry.*"]
+ignore_missing_imports = true
+
+# ----------------------------------------------------------------------------------------------
+# pytest
+# ----------------------------------------------------------------------------------------------
 [tool.pytest.ini_options]
-minversion = "7.0"
-addopts = "-ra -q --strict-markers"
+minversion = "8.0"
+addopts = "-ra -q --strict-markers --strict-config --disable-socket --allow-hosts=127.0.0.1,::1"
 testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-markers = [
-    "asyncio: mark test as async",
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-]
+pythonpath = ["src"]
+asyncio_mode = "auto"
 
 [tool.coverage.run]
-source = ["mom_service"]
-omit = [
-    "*/tests/*",
-    "*/test_*.py",
-]
+# Gate the core logic; api/runtime/store/cli are exercised but not chased to a number.
+source = ["mom.domain", "mom.engine", "mom.adapters", "mom.config"]
+branch = true
+omit = ["*/tests/*"]
 
 [tool.coverage.report]
+fail_under = 88
 exclude_lines = [
     "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
     "@abstractmethod",
+    "raise NotImplementedError",
+    'if __name__ == .__main__.:',
 ]
+
+# ----------------------------------------------------------------------------------------------
+# import-linter — enforce the layered architecture (grows as domain/ports/adapters land).
+# Lower layers must not import higher ones: runtime cannot import api; api cannot import cli.
+# ----------------------------------------------------------------------------------------------
+[tool.importlinter]
+root_package = "mom"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = ["mom.cli", "mom.api", "mom.runtime"]
+
+[[tool.importlinter.contracts]]
+name = "Domain is pure"
+type = "forbidden"
+source_modules = ["mom.domain"]
+forbidden_modules = ["mom.api", "mom.runtime", "mom.store", "mom.config", "mom.cli"]

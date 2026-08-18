@@ -1,0 +1,33 @@
+# Hooks run through the project's own tools (via uv) so versions match CI exactly.
+# The functional hooks are `local` and delegate to uv — no isolated hook envs to drift.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff (lint)
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: true
+      - id: ruff-format
+        name: ruff (format)
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: true
+      - id: mypy
+        name: mypy (strict, src/mom)
+        entry: uv run mypy
+        language: system
+        pass_filenames: false
+        files: ^src/mom/
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=512"]

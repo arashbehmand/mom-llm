@@ -1,141 +1,45 @@
+# MoM v2 deployment. One app service; Redis is opt-in via the `redis` profile.
+# Run from the repo root: `docker compose up --build`.
 services:
-  mom-service:
+  mom:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mom-service
+    image: mom-llm:latest
     ports:
       - "8000:8000"
-    volumes:
-      # Mount configuration files
-      - ./config.yaml:/app/config.yaml:ro
-      # Mount data directory for databases (cache and metrics)
-      - ./data:/app/data
-    # Optional: add .env files
-    env_file:
-      - .env
     environment:
-      # API authentication token
-      - API_TOKEN=${API_TOKEN:-your-secret-token-here}
-      # Langfuse configuration (optional)
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
-      # Redis for events
-      - REDIS_URL=redis://redis:6379
-      - REPORTING_SERVICE_URL=http://localhost:8001
-      # LLM provider API keys
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - UVICORN_APP=mom_service.main:app
-      - UVICORN_PORT=8000
-      - UVICORN_RELOAD=true
-      # Add other provider keys as needed
-      # - AZURE_API_KEY=${AZURE_API_KEY:-}
-      # - COHERE_API_KEY=${COHERE_API_KEY:-}
+      MOM_CONFIG: /app/config.yaml
+      MOM_DATA_DIR: /data
+      # Fail fast if the token is not set (no insecure default).
+      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env}
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Mounts a v2 config as /app/config.yaml. Defaults to the shareable example so
+      # `docker compose up` boots out-of-the-box; point MOM_CONFIG_FILE at your own v2 config
+      # (path relative to the repo root, or absolute) to serve your real setup.
+      - ${MOM_CONFIG_FILE:-./config.example.yaml}:/app/config.yaml:ro
+      - mom-data:/data
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import requests; requests.get('http://localhost:8000/health', timeout=5)",
-        ]
+      test: ["CMD", "mom", "healthcheck"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
+      start_period: 10s
       retries: 3
-      start_period: 5s
     restart: unless-stopped
-    depends_on:
-      - redis
-    networks:
-      - mom-network
-
-  mom-reporting:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mom-reporting
-    ports:
-      - "8001:8001"
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./data:/app/data
-    env_file:
-      - .env
-    environment:
-      - REDIS_URL=redis://redis:6379
-      - API_TOKEN=${API_TOKEN:-your-secret-token-here}
-      - UVICORN_APP=mom_service.reporting.main:app
-      - UVICORN_PORT=8001
-      - UVICORN_RELOAD=true
-    restart: unless-stopped
-    depends_on:
-      - redis
-    networks:
-      - mom-network
 
   redis:
     image: redis:7-alpine
-    container_name: mom-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
+    profiles: ["redis"]
+    # Internal only — not published to the host.
+    expose:
+      - "6379"
     volumes:
-      - redis_data:/data
-    networks:
-      - mom-network
-
-  # Optional: SQLite browser for database inspection during development
-  # Uncomment to enable
-  # sqlite-browser:
-  #   image: coleifer/sqlite-web
-  #   container_name: mom-sqlite-browser
-  #   ports:
-  #     - "8080:8080"
-  #   volumes:
-  #     - ./data:/data
-  #   command: ["/data/llm_cache.db", "/data/metrics.db"]
-  #   networks:
-  #     - mom-network
-  #   depends_on:
-  #     - mom-service
-
-  # Optional: Langfuse self-hosted instance for tracing
-  # Uncomment to enable local Langfuse deployment
-  # langfuse-server:
-  #   image: langfuse/langfuse:latest
-  #   container_name: langfuse-server
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     - DATABASE_URL=postgresql://postgres:postgres@langfuse-db:5432/langfuse
-  #     - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-change-me-in-production}
-  #     - NEXTAUTH_URL=http://localhost:3000
-  #     - SALT=${LANGFUSE_SALT:-change-me-in-production}
-  #   depends_on:
-  #     - langfuse-db
-  #   networks:
-  #     - mom-network
-
-  # langfuse-db:
-  #   image: postgres:15-alpine
-  #   container_name: langfuse-db
-  #   environment:
-  #     - POSTGRES_USER=postgres
-  #     - POSTGRES_PASSWORD=postgres
-  #     - POSTGRES_DB=langfuse
-  #   volumes:
-  #     - langfuse-db-data:/var/lib/postgresql/data
-  #   networks:
-  #     - mom-network
-
-networks:
-  mom-network:
-    driver: bridge
+      - redis-data:/data
+    restart: unless-stopped
 
 volumes:
-  redis_data:
-  # Uncomment if using Langfuse database
-  # langfuse-db-data:
+  mom-data:
+  redis-data:
