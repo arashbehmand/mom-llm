@@ -1,6 +1,6 @@
-# Contributing to MoM Service
+# Contributing to MoM
 
-Thank you for considering contributing to the MoM (Mixture of Models) Service! This document provides guidelines and instructions for contributing to the project.
+Thank you for considering contributing to MoM (Mixture of Models)! This document provides guidelines and instructions for contributing to the project.
 
 ## 📋 Table of Contents
 
@@ -45,7 +45,8 @@ Look for issues labeled:
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.12 or higher
+- [uv](https://docs.astral.sh/uv/) — it manages the virtualenv, the lockfile, and the Python toolchain
 - Git
 - Docker (optional, for testing containerization)
 
@@ -58,42 +59,43 @@ Look for issues labeled:
    cd mom-llm
    ```
 
-2. **Create Virtual Environment**
+2. **Install Dependencies**
    ```bash
-   # Using venv
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-   # Or using conda
-   conda create -n mom-service python=3.9
-   conda activate mom-service
+   make install            # == uv sync --group dev; creates ./.venv from uv.lock
+   source .venv/bin/activate
    ```
 
-3. **Install Dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+   The `make` targets call the tools in `./.venv` directly, so activating is optional for
+   them — but it is what makes a bare `pytest`, `ruff`, `mypy`, or `mom` resolve to the
+   project's pinned versions.
 
-4. **Set Up Environment Variables**
+3. **Set Up Environment Variables**
    ```bash
    cp .env.example .env
    # Edit .env with your API keys and configuration
    ```
 
-5. **Set Up Configuration**
+4. **Set Up Configuration**
    ```bash
    cp config.example.yaml config.yaml
-   # Edit config.yaml to define your test LLMs
+   # Edit config.yaml to define your test LLMs and ensembles
    ```
 
-6. **Verify Setup**
+5. **Verify Setup**
    ```bash
-   # Run tests to ensure everything works
-   pytest
+   # Validate the config you just wrote (exits non-zero on any problem)
+   mom config validate config.yaml
 
-   # Start the service in development mode
-   uvicorn mom_service.main:app --reload
+   # Run the test suite
+   make test
+
+   # Start the server in development mode (http://127.0.0.1:8000)
+   make run                # == mom serve --reload
+   curl localhost:8000/health
    ```
+
+   `mom serve` reads `MOM_CONFIG` (see `.env.example`) for the config path and
+   `MOM_API_TOKEN` for the bearer token clients must present.
 
 ## 📏 Code Standards
 
@@ -101,7 +103,7 @@ Look for issues labeled:
 
 This project follows PEP 8 style guidelines with some modifications:
 
-- **Line Length**: Maximum 100 characters (soft limit), 120 (hard limit)
+- **Line Length**: 100 characters (enforced by Ruff)
 - **Quotes**: Use double quotes for strings
 - **Imports**: Organized in three groups (standard library, third-party, local)
 - **Type Hints**: Use type hints for function signatures
@@ -109,24 +111,37 @@ This project follows PEP 8 style guidelines with some modifications:
 
 ### Code Formatting
 
-We use automated tools for code formatting:
+Ruff is the single linter *and* formatter; mypy runs in strict mode over `src/mom`:
 
 ```bash
-# Format code with Black
-black mom_service/ tests/
+# Format + autofix (ruff)
+make fmt
 
-# Lint with Ruff
-ruff check mom_service/ tests/
+# Lint (ruff) + layered-architecture contracts (import-linter)
+make lint
 
-# Type check with mypy (optional)
-mypy mom_service/
+# Type check (mypy --strict)
+make typecheck
+
+# Everything CI runs, in one shot
+make check
+```
+
+`make lint` also runs `lint-imports`, which enforces the layering declared in `pyproject.toml`:
+`mom.cli` -> `mom.api` -> `mom.runtime` may only depend downwards, and `mom.domain` must stay
+pure (no imports from `api`, `runtime`, `store`, `config`, or `cli`).
+
+Optionally, install the git hooks so this runs on every commit:
+
+```bash
+pre-commit install
 ```
 
 ### Code Quality Checklist
 
 Before submitting:
-- ✅ Code is formatted with Black
-- ✅ No linting errors from Ruff
+- ✅ Code is formatted with Ruff (`make fmt-check` passes)
+- ✅ No linting errors from Ruff, and `lint-imports` passes
 - ✅ Type hints are present and accurate
 - ✅ Functions have docstrings
 - ✅ No commented-out code
@@ -139,16 +154,16 @@ Before submitting:
 
 ```bash
 # Run all tests
-pytest
+make test                     # == pytest
 
-# Run with coverage
-pytest --cov=mom_service --cov-report=html
+# Run with coverage (the gate CI enforces; source set in pyproject)
+make cov                      # == pytest --cov --cov-report=term-missing
 
 # Run specific test file
-pytest tests/test_endpoints.py
+pytest tests/test_chat_api.py
 
 # Run specific test
-pytest tests/test_endpoints.py::TestOpenAIEndpoints::test_get_models_success
+pytest tests/test_chat_api.py::test_non_streaming_completion
 
 # Run with verbose output
 pytest -v
@@ -157,53 +172,60 @@ pytest -v
 pytest -s
 ```
 
+The suite is hermetic: `pytest-socket` blocks the network (only `127.0.0.1` is allowed, for the
+in-process ASGI transport), `conftest.py` strips ambient `MOM_*` and provider keys so a local
+`.env` cannot leak in, and `pytest-randomly` shuffles test order — so tests must not depend on
+each other. Coverage must stay at or above the `fail_under` in `[tool.coverage.report]`.
+
 ### Writing Tests
 
 - **Location**: Place tests in the `tests/` directory
 - **Naming**: Test files should start with `test_`
 - **Fixtures**: Use pytest fixtures from `tests/conftest.py`
 - **Coverage**: Aim for 80%+ coverage on new code
-- **Mocking**: Use `unittest.mock` for external dependencies
+- **Async**: `asyncio_mode = "auto"`, so an `async def test_...` needs no marker
+- **Doubles**: Prefer the shipped fakes in `mom.testing` (`FakeLLM`, `ManualClock`,
+  `SequentialIds`, `RecordingTracer`) over `unittest.mock` — they implement the real ports
 
 #### Test Structure Example
 
 ```python
-"""
-Tests for new feature X
-"""
+"""Tests for new feature X."""
+
+from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, patch
 
-from mom_service.my_module import my_function
+from mom.my_module import my_function
+from mom.testing import FakeLLM
 
 
-class TestMyFeature:
-    """Tests for my new feature"""
+def test_basic_functionality():
+    """Test the basic use case."""
+    assert my_function("input") == "expected"
 
-    def test_basic_functionality(self, sample_config):
-        """Test the basic use case"""
-        result = my_function(sample_config)
-        assert result == expected_value
 
-    @pytest.mark.asyncio
-    async def test_async_functionality(self):
-        """Test async operations"""
-        result = await my_async_function()
-        assert result is not None
+async def test_async_functionality():
+    """Test async operations (asyncio_mode = auto — no marker needed)."""
+    result = await my_async_function(FakeLLM(replies={"a": "hi"}))
+    assert result is not None
 
-    def test_error_handling(self):
-        """Test error cases"""
-        with pytest.raises(ValueError):
-            my_function(invalid_input)
+
+def test_error_handling():
+    """Test error cases."""
+    with pytest.raises(ValueError):
+        my_function(invalid_input)
 ```
 
 ### Integration Testing
 
 For changes affecting:
-- LLM API calls: Use the `respx` library to mock HTTP responses
-- Database: Use temporary SQLite databases (see `conftest.py`)
-- Endpoints: Use FastAPI's `TestClient`
+- LLM API calls: use `mom.testing.FakeLLM` — it implements the `LLMClient` port, so no HTTP is
+  mocked and no network is needed (see `tests/test_engine.py`)
+- Database: open the SQLite stores under pytest's `tmp_path` (see `tests/test_store_metrics.py`)
+- Endpoints: build the app with `create_app()` and drive it over `httpx.ASGITransport`
+  (see `tests/test_app.py`); `tests/test_sdk_openai.py` and `tests/test_sdk_anthropic.py` do the
+  same through the official SDKs to keep the wire formats honest
 
 ## 📤 Submitting Changes
 
@@ -298,7 +320,7 @@ Include:
 - **Actual Behavior**: What actually happens
 - **Environment**:
   - OS (Windows/macOS/Linux)
-  - Python version
+  - Python version and `mom --version`
   - Relevant package versions
 - **Logs**: Error messages and stack traces
 - **Configuration**: Sanitized config.yaml (remove API keys!)
@@ -339,9 +361,7 @@ Include:
 
 4. **Run Tests**
    ```bash
-   pytest
-   black mom_service/ tests/
-   ruff check mom_service/ tests/
+   make check      # fmt-check + lint + typecheck + test
    ```
 
 5. **Commit Changes**
@@ -371,6 +391,9 @@ git push origin main
 
 ## 📚 Resources
 
+- [Architecture overview](docs/ARCHITECTURE.md) — the layers `lint-imports` enforces
+- [Configuration reference](docs/CONFIGURATION.md)
+- [uv Documentation](https://docs.astral.sh/uv/)
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [LiteLLM Documentation](https://docs.litellm.ai/)
 - [Pytest Documentation](https://docs.pytest.org/)
@@ -389,4 +412,4 @@ Contributors will be:
 - Credited in the repository
 - Mentioned in significant feature announcements
 
-Thank you for contributing to MoM Service! 🎉
+Thank you for contributing to MoM! 🎉
