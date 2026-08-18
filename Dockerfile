@@ -1,5 +1,6 @@
-# MoM v2 image — uv-based, multi-stage, non-root. Built from the repo root
-# (`docker build -f docker/Dockerfile .`). The dependency layer is cached from the lockfile.
+# MoM v2 image — uv-based, multi-stage, non-root. Built from the repo root (`docker build .`);
+# published to ghcr.io/arashbehmand/mom-llm on release. The dependency layer is cached from
+# the lockfile.
 FROM python:3.13-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /bin/uv

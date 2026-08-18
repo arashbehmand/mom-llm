@@ -6,7 +6,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Published container image** at `ghcr.io/arashbehmand/mom-llm`, built for `linux/amd64` and
+  `linux/arm64` and tagged on release with the full version, `major.minor`, `major`, and `latest`.
+- **PyPI releases** — `pip install mom-llm`, published from the release workflow via PyPI trusted
+  publishing (OIDC, no stored API token).
 
 ## [2.0.0] - 2026-08-18
 

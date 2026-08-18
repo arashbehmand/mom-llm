@@ -66,16 +66,20 @@ Streaming and non-streaming are two consumers of the *same* events, so they can 
 Requires Python 3.12+ and an API key for at least one provider.
 
 ```bash
-uv sync                        # install into .venv
-export MOM_CONFIG=config.example.yaml
+pip install mom-llm            # or: uv sync, to work from a checkout
+export MOM_CONFIG=config.example.yaml   # this repo's example; or point at your own
 export MOM_API_TOKEN=dev-secret
 export OPENAI_API_KEY=sk-...   # plus any other providers your config uses
 mom serve                      # http://127.0.0.1:8000
 ```
 
-Or with Docker:
+Or with Docker — the published image, or a build from the checkout:
 
 ```bash
+docker run -p 8000:8000 -e MOM_API_TOKEN=dev-secret -e MOM_CONFIG=/config.yaml \
+  -v "$PWD/config.example.yaml:/config.yaml:ro" -v mom-data:/data \
+  ghcr.io/arashbehmand/mom-llm:latest
+
 docker compose up              # reads .env for secrets and MOM_CONFIG
 ```
 
