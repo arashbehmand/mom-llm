@@ -18,7 +18,7 @@ failure with an honest attempt count.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import replace
 import os
 import re
@@ -34,9 +34,9 @@ from mom.runtime.logging import get_logger
 logger = get_logger("mom.litellm")
 
 
-# Set before litellm is ever imported (lazily, below): use the bundled model-cost map instead of
-# fetching it over the network at import time (which is slow, and pytest-socket would block it).
-os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+# The model-cost map is pinned to litellm's bundled catalog in mom/__init__.py — early enough
+# that no import order can defeat it. Doing it here would be too late if anything ever imported
+# litellm before this module.
 
 
 def _first_int(*values: Any) -> int:
@@ -120,6 +120,56 @@ def _cost_from_usage(model: str, usage: Usage) -> float | None:
         return None
     total = float(prompt_cost or 0.0) + float(completion_cost or 0.0)
     return total or None
+
+
+def unknown_anthropic_models(models: Iterable[str]) -> list[str]:
+    """Configured Anthropic models that litellm's pinned catalog has no entry for.
+
+    Most providers tolerate a model litellm has never heard of — it forwards the id and lets the
+    provider decide. Anthropic is the exception, and it fails *silently* in two ways at once,
+    which is why this check is narrow rather than catalog-wide (a third of the configured
+    OpenRouter/xAI models are legitimately absent and work fine):
+
+    - ``max_tokens`` is mandatory on Anthropic's API, so litellm substitutes a 4096-token
+      default for a model it can't size.
+    - whether the model still accepts ``temperature``/``top_p`` is read from the catalog, and
+      falls back to a hardcoded model-name list when the entry is missing.
+
+    Both bit us live on 2026-08-19: the pinned litellm's catalog predated ``claude-opus-5``, so
+    every Opus 5 answer came back empty at exactly 4096 tokens (adaptive thinking spends that
+    budget before writing any prose) and the client's ``top_p`` was forwarded to a model that
+    400s on it, killing synthesis. Nothing in the request looked wrong; the only tell was the
+    token count. Hence the startup warning — raise the litellm floor in pyproject.toml.
+
+    The test is an EXACT catalog key, deliberately, because a near-miss is the dangerous case
+    rather than the safe one: litellm pattern-matches a plausible-but-unknown ``claude-*`` id to
+    a generalized entry and answers with *someone else's* limits (``claude-opus-6`` resolves to a
+    64000-token cap and no sampling-support flag today). That is quieter than the 4096 default
+    and just as wrong, so "litellm produced an answer" is not evidence it knows the model.
+    """
+    import litellm
+
+    unknown: list[str] = []
+    for model in models:
+        if _provider_of(model) != "anthropic":
+            continue
+        # Config ids carry the provider prefix ("anthropic/claude-opus-5"); catalog keys are bare.
+        _, _, bare = model.rpartition("/")
+        if model not in litellm.model_cost and bare not in litellm.model_cost:
+            unknown.append(model)
+    return sorted(set(unknown))
+
+
+def _provider_of(model: str) -> str | None:
+    """litellm's routing decision for a model id; ``None`` when it can't route it at all (an
+    unroutable id fails loudly on its first call — not something to diagnose at startup)."""
+    import litellm
+
+    try:
+        _, provider, _, _ = litellm.get_llm_provider(model)
+    except Exception:
+        return None
+    return str(provider)
 
 
 def _responses_usage(raw: Any) -> Usage:

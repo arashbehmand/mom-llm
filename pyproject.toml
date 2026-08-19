@@ -10,6 +10,15 @@ keywords = ["llm", "openai", "anthropic", "gateway", "litellm", "mixture-of-mode
 
 # Runtime dependencies. litellm is the provider transport (quarantined to
 # adapters/litellm_client); langfuse backs the optional tracer.
+#
+# The litellm floor is a MODEL-CATALOG floor, not an API one. mom reads the catalog litellm
+# bundles (see mom/__init__.py), so a model missing from it gets litellm's unknown-model
+# defaults rather than its real limits — silently, with no error. Live on 2026-08-19: the
+# catalog bundled with 1.93 predated claude-opus-5, so every Opus 5 call was capped at
+# litellm's 4096-token default (all of it spent on thinking -> empty answers) and had the
+# client's `top_p` forwarded to a model that rejects it (400, killing synthesis). 1.97 is the
+# first release whose bundled catalog carries claude-opus-5. Raise this floor whenever
+# config.yaml adopts a model newer than the pinned catalog knows.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -20,7 +29,7 @@ dependencies = [
     "structlog>=24.1",
     "aiosqlite>=0.20",
     "platformdirs>=4.2",
-    "litellm>=1.55",
+    "litellm>=1.97",
     "langfuse>=3.0",
 ]
 

@@ -10,7 +10,11 @@ import platformdirs
 
 from mom.adapters.caching import CachingClient
 from mom.adapters.eventbus import InMemoryEventBus, RedisEventBus
-from mom.adapters.litellm_client import LiteLLMClient, LiteLLMTokenEstimator
+from mom.adapters.litellm_client import (
+    LiteLLMClient,
+    LiteLLMTokenEstimator,
+    unknown_anthropic_models,
+)
 from mom.adapters.observability import (
     CompositeTracer,
     LangfuseTracer,
@@ -120,11 +124,29 @@ def resolve_data_dir(settings: Settings, catalog: ResolvedCatalog) -> Path:
     return Path(platformdirs.user_data_dir("mom-llm"))
 
 
+def _warn_stale_model_catalog(catalog: ResolvedCatalog) -> None:
+    """Warn when config.yaml names an Anthropic model the pinned litellm has never heard of.
+
+    A warning, not a startup failure: one unknown model must not take the whole gateway down,
+    and every other member of the panel is still fine. See ``unknown_anthropic_models`` for what
+    goes wrong silently when this fires.
+    """
+    unknown = unknown_anthropic_models(llm.model for llm in catalog.llms.values())
+    if unknown:
+        logger.warning(
+            "anthropic models missing from litellm's model catalog: calls will be capped at "
+            "litellm's 4096-token default and may forward sampling params the model rejects "
+            "— raise the litellm floor in pyproject.toml",
+            models=unknown,
+        )
+
+
 async def build_container(settings: Settings) -> tuple[Container, Callable[[], Awaitable[None]]]:
     """Load config, open stores, wire adapters. Returns the container and an async cleanup."""
     if settings.config_file is None:
         raise RuntimeError("MOM_CONFIG must point to a config file to serve")
     catalog = load_config(settings.config_file, overlay=settings.config_overlay)
+    _warn_stale_model_catalog(catalog)
     clock = SystemClock()
     data_dir = resolve_data_dir(settings, catalog)
 

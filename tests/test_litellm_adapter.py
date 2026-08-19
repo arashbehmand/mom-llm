@@ -29,6 +29,7 @@ from mom.adapters.litellm_client import (
     _tool_call_dict,
     _tool_call_fragment,
     _usage,
+    unknown_anthropic_models,
 )
 from mom.domain.errors import UpstreamError
 from mom.domain.ports import CallSpec
@@ -649,3 +650,71 @@ def test_retry_after_seconds_none_when_malformed() -> None:
 def test_retry_after_seconds_ignores_negative_values() -> None:
     exc = NS(response=NS(headers={"retry-after": "-5"}))
     assert _retry_after_seconds(exc) is None
+
+
+# --------------------------------------------------------------------------------------------
+# Stale-catalog guard. mom reads the model catalog litellm bundles, so adopting a model newer
+# than the pinned litellm knows leaves Anthropic calls silently mis-sized and mis-parameterized
+# (2026-08-19: claude-opus-5 on litellm 1.93 -> 4096-token cap, forwarded top_p).
+# --------------------------------------------------------------------------------------------
+
+
+def _install_catalog(module: ModuleType, known: set[str]) -> None:
+    """Fake litellm's routing plus a catalog holding exactly ``known`` (bare, unprefixed keys)."""
+
+    def get_llm_provider(model: str) -> tuple[str, str, None, None]:
+        if "/" not in model:
+            raise ValueError(f"unroutable: {model}")
+        provider, _, rest = model.partition("/")
+        return rest, provider, None, None
+
+    module.get_llm_provider = get_llm_provider  # type: ignore[attr-defined]
+    module.model_cost = {key: {"max_output_tokens": 128000} for key in known}  # type: ignore[attr-defined]
+
+
+def test_unknown_anthropic_models_flags_a_model_the_catalog_predates(
+    litellm_module: ModuleType,
+) -> None:
+    _install_catalog(litellm_module, known={"claude-sonnet-5"})
+    flagged = unknown_anthropic_models(["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"])
+    assert flagged == ["anthropic/claude-opus-5"]
+
+
+def test_unknown_anthropic_models_ignores_other_providers(litellm_module: ModuleType) -> None:
+    """Most of the configured panel is absent from litellm's catalog and works fine — only
+    Anthropic substitutes a token cap and gates sampling params on the entry being there."""
+    _install_catalog(litellm_module, known=set())
+    assert unknown_anthropic_models(["openrouter/moonshotai/kimi-k3:nitro", "xai/grok-4.6"]) == []
+
+
+def test_unknown_anthropic_models_skips_unroutable_ids(litellm_module: ModuleType) -> None:
+    _install_catalog(litellm_module, known=set())
+    assert unknown_anthropic_models(["not-a-routable-id"]) == []
+
+
+def test_unknown_anthropic_models_is_quiet_when_the_catalog_is_current(
+    litellm_module: ModuleType,
+) -> None:
+    _install_catalog(litellm_module, known={"claude-opus-5"})
+    assert unknown_anthropic_models(["anthropic/claude-opus-5"]) == []
+
+
+def test_unknown_anthropic_models_wants_an_exact_entry_not_a_near_miss(
+    litellm_module: ModuleType,
+) -> None:
+    """The realistic drift is a plausible new id, which litellm resolves to a *generalized*
+    entry — someone else's limits, quietly. Only an exact catalog key counts as known."""
+    _install_catalog(litellm_module, known={"claude-opus-5"})
+    assert unknown_anthropic_models(["anthropic/claude-opus-6"]) == ["anthropic/claude-opus-6"]
+
+
+def test_model_cost_map_is_pinned_before_litellm_can_be_imported() -> None:
+    """The pin lives in ``mom/__init__.py`` precisely so no import order can defeat it: importing
+    any mom module at all must already have set it. Asserting it here (rather than in the adapter)
+    is the regression test for moving it back somewhere that only wins the race by luck."""
+    import os
+
+    import mom
+
+    assert mom.__name__ == "mom"  # the import above is the point, not the attribute
+    assert os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"

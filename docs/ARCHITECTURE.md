@@ -209,8 +209,16 @@ the provider SDK is fully quarantined. The adapter's jobs:
 - **Safety.** Raw provider exception text never propagates; failures become a generic
   `UpstreamError`, and the operator sees the detail only in logs.
 
-`LITELLM_LOCAL_MODEL_COST_MAP=True` is set before litellm is imported, so the cost map is read
-locally instead of fetched over the network at import time.
+`LITELLM_LOCAL_MODEL_COST_MAP=True` is set in `mom/__init__.py` — the one place guaranteed to run
+before anything can import litellm — so the cost map is read from litellm's bundled catalog
+instead of fetched over the network at import time.
+
+That makes the pinned litellm version a *model-catalog* dependency, not just an API one: adopting
+a model newer than the bundled catalog knows gives it litellm's unknown-model defaults instead of
+its real limits. On Anthropic that is silent and damaging (a 4096-token cap, plus sampling params
+forwarded to models that reject them), so `build_container` warns at startup when a configured
+Anthropic model is missing from the catalog. The fix is to raise the litellm floor in
+`pyproject.toml`; `LITELLM_LOCAL_MODEL_COST_MAP=False` forces the network fetch as a stopgap.
 
 ---
 
