@@ -29,7 +29,7 @@ from mom.adapters.litellm_client import (
     _tool_call_dict,
     _tool_call_fragment,
     _usage,
-    unknown_anthropic_models,
+    uncatalogued_models,
 )
 from mom.domain.errors import UpstreamError
 from mom.domain.ports import CallSpec
@@ -653,9 +653,9 @@ def test_retry_after_seconds_ignores_negative_values() -> None:
 
 
 # --------------------------------------------------------------------------------------------
-# Stale-catalog guard. mom reads the model catalog litellm bundles, so adopting a model newer
-# than the pinned litellm knows leaves Anthropic calls silently mis-sized and mis-parameterized
-# (2026-08-19: claude-opus-5 on litellm 1.93 -> 4096-token cap, forwarded top_p).
+# Stale-catalog guard. mom reads the model catalog litellm bundles, so adopting a model the
+# pinned litellm predates costs sizing, sampling-param gating, and pricing at once — on every
+# provider, not just the one where it broke loudly (2026-08-19: claude-opus-5 on litellm 1.93).
 # --------------------------------------------------------------------------------------------
 
 
@@ -672,40 +672,51 @@ def _install_catalog(module: ModuleType, known: set[str]) -> None:
     module.model_cost = {key: {"max_output_tokens": 128000} for key in known}  # type: ignore[attr-defined]
 
 
-def test_unknown_anthropic_models_flags_a_model_the_catalog_predates(
+def test_uncatalogued_models_flags_a_model_the_catalog_predates(
     litellm_module: ModuleType,
 ) -> None:
     _install_catalog(litellm_module, known={"claude-sonnet-5"})
-    flagged = unknown_anthropic_models(["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"])
-    assert flagged == ["anthropic/claude-opus-5"]
+    gaps = uncatalogued_models(["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"])
+    assert gaps == {"anthropic": ["anthropic/claude-opus-5"]}
 
 
-def test_unknown_anthropic_models_ignores_other_providers(litellm_module: ModuleType) -> None:
-    """Most of the configured panel is absent from litellm's catalog and works fine — only
-    Anthropic substitutes a token cap and gates sampling params on the entry being there."""
-    _install_catalog(litellm_module, known=set())
-    assert unknown_anthropic_models(["openrouter/moonshotai/kimi-k3:nitro", "xai/grok-4.6"]) == []
-
-
-def test_unknown_anthropic_models_skips_unroutable_ids(litellm_module: ModuleType) -> None:
-    _install_catalog(litellm_module, known=set())
-    assert unknown_anthropic_models(["not-a-routable-id"]) == []
-
-
-def test_unknown_anthropic_models_is_quiet_when_the_catalog_is_current(
+def test_uncatalogued_models_covers_every_provider_not_just_anthropic(
     litellm_module: ModuleType,
 ) -> None:
-    _install_catalog(litellm_module, known={"claude-opus-5"})
-    assert unknown_anthropic_models(["anthropic/claude-opus-5"]) == []
+    """A missing entry costs sizing, sampling gating, and price everywhere. Gemini and xAI models
+    billed to $0.00 across hundreds of live calls for exactly this reason, so reporting only the
+    provider whose calls broke loudly would leave the accounting hole invisible."""
+    _install_catalog(litellm_module, known=set())
+    gaps = uncatalogued_models(
+        ["gemini/gemini-3.7-flash", "xai/grok-4.6", "openrouter/moonshotai/kimi-k3:nitro"]
+    )
+    assert gaps == {
+        "gemini": ["gemini/gemini-3.7-flash"],
+        "openrouter": ["openrouter/moonshotai/kimi-k3:nitro"],
+        "xai": ["xai/grok-4.6"],
+    }
 
 
-def test_unknown_anthropic_models_wants_an_exact_entry_not_a_near_miss(
+def test_uncatalogued_models_skips_unroutable_ids(litellm_module: ModuleType) -> None:
+    _install_catalog(litellm_module, known=set())
+    assert uncatalogued_models(["not-a-routable-id"]) == {}
+
+
+def test_uncatalogued_models_is_quiet_when_the_catalog_is_current(
+    litellm_module: ModuleType,
+) -> None:
+    _install_catalog(litellm_module, known={"claude-opus-5", "grok-4.6"})
+    assert uncatalogued_models(["anthropic/claude-opus-5", "xai/grok-4.6"]) == {}
+
+
+def test_uncatalogued_models_wants_an_exact_entry_not_a_near_miss(
     litellm_module: ModuleType,
 ) -> None:
     """The realistic drift is a plausible new id, which litellm resolves to a *generalized*
     entry — someone else's limits, quietly. Only an exact catalog key counts as known."""
     _install_catalog(litellm_module, known={"claude-opus-5"})
-    assert unknown_anthropic_models(["anthropic/claude-opus-6"]) == ["anthropic/claude-opus-6"]
+    gaps = uncatalogued_models(["anthropic/claude-opus-6"])
+    assert gaps == {"anthropic": ["anthropic/claude-opus-6"]}
 
 
 def test_model_cost_map_is_pinned_before_litellm_can_be_imported() -> None:

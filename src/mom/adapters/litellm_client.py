@@ -122,42 +122,48 @@ def _cost_from_usage(model: str, usage: Usage) -> float | None:
     return total or None
 
 
-def unknown_anthropic_models(models: Iterable[str]) -> list[str]:
-    """Configured Anthropic models that litellm's pinned catalog has no entry for.
+def uncatalogued_models(models: Iterable[str]) -> dict[str, list[str]]:
+    """Configured models litellm's pinned catalog has no exact entry for, grouped by provider.
 
-    Most providers tolerate a model litellm has never heard of — it forwards the id and lets the
-    provider decide. Anthropic is the exception, and it fails *silently* in two ways at once,
-    which is why this check is narrow rather than catalog-wide (a third of the configured
-    OpenRouter/xAI models are legitimately absent and work fine):
+    The catalog is not just a price list — litellm reads three things out of it, and a model
+    that isn't in it loses all three at once, quietly:
 
-    - ``max_tokens`` is mandatory on Anthropic's API, so litellm substitutes a 4096-token
-      default for a model it can't size.
-    - whether the model still accepts ``temperature``/``top_p`` is read from the catalog, and
-      falls back to a hardcoded model-name list when the entry is missing.
+    - **output sizing.** ``max_tokens`` is mandatory on Anthropic's API, so litellm substitutes
+      a 4096-token default for a model it can't size (other providers leave it unset).
+    - **sampling support.** Whether a model still accepts ``temperature``/``top_p`` is a catalog
+      flag, and it is consulted for OpenAI and Anthropic alike; with no entry the params are
+      forwarded to models that now reject them.
+    - **price.** With no entry there is no cost-per-token, so a call is recorded at $0 unless
+      the provider self-reports a cost (OpenRouter does) or config declares ``pricing:``.
 
-    Both bit us live on 2026-08-19: the pinned litellm's catalog predated ``claude-opus-5``, so
+    All three bit this deployment. The catalog pinned in litellm 1.93 predated ``claude-opus-5``:
     every Opus 5 answer came back empty at exactly 4096 tokens (adaptive thinking spends that
-    budget before writing any prose) and the client's ``top_p`` was forwarded to a model that
-    400s on it, killing synthesis. Nothing in the request looked wrong; the only tell was the
-    token count. Hence the startup warning — raise the litellm floor in pyproject.toml.
+    budget before writing prose), the client's ``top_p`` was forwarded to a model that 400s on
+    it, and 14 of 16 calls recorded $0. Meanwhile ``gemini-3.7-flash`` and the two xAI models
+    have been billing to $0.00 across hundreds of live calls for the same reason.
 
     The test is an EXACT catalog key, deliberately, because a near-miss is the dangerous case
     rather than the safe one: litellm pattern-matches a plausible-but-unknown ``claude-*`` id to
     a generalized entry and answers with *someone else's* limits (``claude-opus-6`` resolves to a
-    64000-token cap and no sampling-support flag today). That is quieter than the 4096 default
-    and just as wrong, so "litellm produced an answer" is not evidence it knows the model.
+    64000-token cap and no sampling-support flag today). "litellm produced an answer" is not
+    evidence that it knows the model.
+
+    Grouping by provider is what lets the caller rank these: the same missing entry is fatal on
+    Anthropic (4096-token answers), an accounting hole on Gemini/xAI, and close to harmless on
+    OpenRouter, which prices its own responses.
     """
     import litellm
 
-    unknown: list[str] = []
+    grouped: dict[str, set[str]] = {}
     for model in models:
-        if _provider_of(model) != "anthropic":
+        provider = _provider_of(model)
+        if provider is None:
             continue
         # Config ids carry the provider prefix ("anthropic/claude-opus-5"); catalog keys are bare.
         _, _, bare = model.rpartition("/")
         if model not in litellm.model_cost and bare not in litellm.model_cost:
-            unknown.append(model)
-    return sorted(set(unknown))
+            grouped.setdefault(provider, set()).add(model)
+    return {provider: sorted(models) for provider, models in sorted(grouped.items())}
 
 
 def _provider_of(model: str) -> str | None:

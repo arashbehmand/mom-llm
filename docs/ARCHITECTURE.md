@@ -213,12 +213,26 @@ the provider SDK is fully quarantined. The adapter's jobs:
 before anything can import litellm — so the cost map is read from litellm's bundled catalog
 instead of fetched over the network at import time.
 
-That makes the pinned litellm version a *model-catalog* dependency, not just an API one: adopting
-a model newer than the bundled catalog knows gives it litellm's unknown-model defaults instead of
-its real limits. On Anthropic that is silent and damaging (a 4096-token cap, plus sampling params
-forwarded to models that reject them), so `build_container` warns at startup when a configured
-Anthropic model is missing from the catalog. The fix is to raise the litellm floor in
-`pyproject.toml`; `LITELLM_LOCAL_MODEL_COST_MAP=False` forces the network fetch as a stopgap.
+That makes the pinned litellm version a *model-catalog* dependency, not just an API one. litellm
+reads three things out of that catalog, and a model with no entry loses all three at once: output
+sizing (Anthropic requires `max_tokens`, so litellm substitutes 4096 — a thinking model spends
+that budget before writing prose and returns empty), whether the model still accepts
+`temperature`/`top_p` (a catalog flag, consulted for OpenAI and Anthropic alike), and price
+(no cost-per-token means the call records at $0).
+
+Two checks cover this, at the two points where each is knowable:
+
+- **Startup** — `build_container` reports configured models with no exact catalog entry, grouped
+  by provider. Anthropic gaps are a warning (predictably fatal); the rest are info, since their
+  only consequence is a $0 price and most are covered by the provider reporting its own cost.
+- **First call** — `_warn_once_if_free` warns, once per model, when a real call burns tokens and
+  still prices at $0. Whether a provider self-reports cost is a runtime fact no config can state
+  (OpenRouter does, Gemini and xAI do not), so this names the models that really are free rather
+  than the ones that might be.
+
+Fix by raising the litellm floor in `pyproject.toml`, or by declaring `pricing:` for a model the
+upstream catalog does not carry at all. `LITELLM_LOCAL_MODEL_COST_MAP=False` forces the network
+fetch as a stopgap.
 
 ---
 

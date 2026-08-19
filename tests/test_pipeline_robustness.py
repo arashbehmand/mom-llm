@@ -19,11 +19,13 @@ from mom.domain.ports import CallSpec, Completion, CompletionChunk
 from mom.domain.request import ChatRequestIR, MessageIR
 from mom.domain.results import Usage
 from mom.engine.pipeline import (
+    _FREE_MODELS_REPORTED,
     PipelineDeps,
     _cause_text,
     _fan_out,
     _record_member,
     _run_member,
+    _warn_once_if_free,
     collect,
     run_ensemble,
 )
@@ -530,3 +532,52 @@ async def test_metrics_recorder_survives_insert_error():
     await recorder.stop()
     assert store.calls >= 2  # the worker kept running after the first failure
     assert len(store.written) >= 1
+
+
+# --------------------------------------------------------------------------------------------
+# Unpriced-model detection. A model missing from litellm's catalog has no cost-per-token, so its
+# spend records as $0 — silently, unless the provider self-reports one. Observed live: Gemini and
+# xAI members had billed to $0.00 across 230 calls, and Opus 5 joined them while its catalog entry
+# was missing. Whether a provider self-reports is a runtime fact, so this check runs on the result.
+# --------------------------------------------------------------------------------------------
+
+
+def _clear_free_model_reports() -> None:
+    _FREE_MODELS_REPORTED.clear()
+
+
+def test_zero_cost_call_that_burned_tokens_is_reported() -> None:
+    _clear_free_model_reports()
+    with structlog.testing.capture_logs() as logs:
+        _warn_once_if_free(
+            "gemini/gemini-3.7-flash", Usage(prompt_tokens=500, completion_tokens=9), 0.0
+        )
+    assert [entry for entry in logs if entry["log_level"] == "warning"]
+    assert logs[0]["model"] == "gemini/gemini-3.7-flash"
+
+
+def test_zero_cost_is_reported_once_per_model_not_once_per_call() -> None:
+    """Spend is a per-model property; repeating the line every call would bury it."""
+    _clear_free_model_reports()
+    usage = Usage(prompt_tokens=10, completion_tokens=1)
+    with structlog.testing.capture_logs() as logs:
+        for _ in range(5):
+            _warn_once_if_free("xai/grok-4.6", usage, 0.0)
+    assert len(logs) == 1
+
+
+def test_priced_call_is_not_reported() -> None:
+    _clear_free_model_reports()
+    with structlog.testing.capture_logs() as logs:
+        _warn_once_if_free(
+            "anthropic/claude-opus-5", Usage(prompt_tokens=10, completion_tokens=1), 0.42
+        )
+    assert logs == []
+
+
+def test_token_free_call_is_not_reported() -> None:
+    """A call that used no tokens costing nothing is arithmetic, not a missing catalog entry."""
+    _clear_free_model_reports()
+    with structlog.testing.capture_logs() as logs:
+        _warn_once_if_free("openrouter/some/model", Usage(), 0.0)
+    assert logs == []

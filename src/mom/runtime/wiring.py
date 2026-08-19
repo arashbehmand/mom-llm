@@ -13,7 +13,7 @@ from mom.adapters.eventbus import InMemoryEventBus, RedisEventBus
 from mom.adapters.litellm_client import (
     LiteLLMClient,
     LiteLLMTokenEstimator,
-    unknown_anthropic_models,
+    uncatalogued_models,
 )
 from mom.adapters.observability import (
     CompositeTracer,
@@ -125,20 +125,58 @@ def resolve_data_dir(settings: Settings, catalog: ResolvedCatalog) -> Path:
 
 
 def _warn_stale_model_catalog(catalog: ResolvedCatalog) -> None:
-    """Warn when config.yaml names an Anthropic model the pinned litellm has never heard of.
+    """Report configured models the pinned litellm has no catalog entry for.
 
-    A warning, not a startup failure: one unknown model must not take the whole gateway down,
-    and every other member of the panel is still fine. See ``unknown_anthropic_models`` for what
-    goes wrong silently when this fires.
+    Reported for every provider, because the gap costs something everywhere (see
+    ``uncatalogued_models``) — but at two volumes, because only one of the two is knowable here.
+
+    Anthropic's missing entry is *predictably* fatal: litellm substitutes a 4096-token cap and a
+    thinking model returns empty. That is a warning, before a single call is made.
+
+    Everywhere else the consequence is a $0 price, and whether it actually lands depends on
+    something startup cannot see — whether the provider reports its own cost. OpenRouter does,
+    which is why 26 of this config's 29 uncatalogued models are genuinely fine; Gemini and xAI
+    do not, which is why three of them had billed to $0.00 across hundreds of live calls. So the
+    prediction goes out at info, and ``_warn_once_if_free`` raises the warning from the observed
+    call, naming the models that really are free rather than the ones that might be. A startup
+    list of 29 names, mostly healthy, teaches the operator to skip the line — which is how the
+    Opus 5 breakage stayed invisible for a day in the first place.
+
+    Never a startup failure: one uncatalogued model must not take the gateway down, and the rest
+    of the panel is unaffected. Config ``pricing:`` covers the cost half for a model; the sizing
+    half needs a newer litellm.
     """
-    unknown = unknown_anthropic_models(llm.model for llm in catalog.llms.values())
-    if unknown:
+    gaps = uncatalogued_models(llm.model for llm in catalog.llms.values())
+    if not gaps:
+        return
+    capped = gaps.pop("anthropic", [])
+    if capped:
         logger.warning(
-            "anthropic models missing from litellm's model catalog: calls will be capped at "
-            "litellm's 4096-token default and may forward sampling params the model rejects "
+            "anthropic models missing from litellm's model catalog: their answers will be "
+            "capped at litellm's 4096-token default (thinking models return empty), they may "
+            "forward sampling params the model rejects, and they price at $0 "
             "— raise the litellm floor in pyproject.toml",
-            models=unknown,
+            models=capped,
         )
+    unpriced = {
+        provider: models
+        for provider, models in gaps.items()
+        if not all(_has_declared_pricing(catalog, model) for model in models)
+    }
+    if unpriced:
+        logger.info(
+            "models missing from litellm's model catalog: they price at $0 unless the provider "
+            "reports a cost of its own (OpenRouter does), and litellm cannot tell whether they "
+            "still accept sampling params. Any that really do go free are named in a warning on "
+            "their first call — declare `pricing:` in config or raise the litellm floor",
+            by_provider=unpriced,
+        )
+
+
+def _has_declared_pricing(catalog: ResolvedCatalog, model: str) -> bool:
+    """Whether config prices this model itself, which is the supported way to cover a model
+    litellm's catalog does not carry (``compute_cost`` prefers it over litellm's map anyway)."""
+    return any(llm.pricing is not None for llm in catalog.llms.values() if llm.model == model)
 
 
 async def build_container(settings: Settings) -> tuple[Container, Callable[[], Awaitable[None]]]:

@@ -287,6 +287,7 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
         cost = compute_cost(completion.usage, member.pricing)
     else:
         cost = completion.cost_usd or 0.0
+        _warn_once_if_free(member.spec.model, completion.usage, cost)
     return ModelOutcome(
         **common,  # type: ignore[arg-type]
         status=status,
@@ -299,6 +300,38 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
         tool_calls=completion.tool_calls,
         finish_reason=completion.finish_reason,
         attempts=completion.attempts,
+    )
+
+
+# Models already reported as unpriced. Spend is per-model, so one line per model is the whole
+# signal; repeating it every call would bury it.
+_FREE_MODELS_REPORTED: set[str] = set()
+
+
+def _warn_once_if_free(model: str, usage: Usage, cost: float) -> None:
+    """Report a real call that burned tokens and priced at $0 — once per model.
+
+    The startup catalog check predicts this; here it is *observed*, which is what makes it exact.
+    A model missing from litellm's catalog has no cost-per-token, so its spend silently records
+    as zero — unless the provider returns a cost of its own, and whether it does is a runtime
+    fact no config can state (OpenRouter does; Gemini and xAI do not). Rather than guess from a
+    provider name, price the call and see.
+
+    Live at the time of writing: gemini-3.7-flash and both xAI models had billed to $0.00 across
+    230 calls, and Opus 5 joined them while its catalog entry was missing. Every metric, budget,
+    and cost report over that window undercounted, with nothing anywhere saying so. Fix by
+    declaring ``pricing:`` for the model or raising the litellm floor.
+    """
+    if cost or not usage.total_tokens or model in _FREE_MODELS_REPORTED:
+        return
+    _FREE_MODELS_REPORTED.add(model)
+    logger.warning(
+        "model priced at $0 for a real call: litellm has no cost-per-token for it and the "
+        "provider reported none, so its spend is invisible to metrics and budgets — declare "
+        "`pricing:` for it in config, or raise the litellm floor so its catalog entry exists",
+        model=model,
+        prompt_tokens=usage.prompt_tokens,
+        completion_tokens=usage.completion_tokens,
     )
 
 
@@ -682,6 +715,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             synth_cost = compute_cost(usage, plan.synth.pricing)
         else:
             synth_cost = synth_llm_cost or 0.0
+            _warn_once_if_free(plan.synth.model, usage, synth_cost)
         _record_synth(
             deps, plan, usage, synth_cost, turn_type, finish_reason=finish, attempts=synth_attempts
         )
