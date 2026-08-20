@@ -97,6 +97,10 @@ class ExecutionPlan:
     # When true, in-flight members are NOT cancelled if the request is torn down (client
     # disconnect); they finish and cache in the background so a retry of the turn hits cache.
     detach_on_disconnect: bool = False
+    # When true, an identical concurrent turn attaches to this run instead of starting its own
+    # fan-out. Defaults to `server.dedupe.enabled`; a `<<SYSTEM>> dedupe:` directive overrides it
+    # per request, in both directions.
+    dedupe: bool = False
 
 
 def _effort_param(token: str, client_effort: str | None) -> dict[str, object]:
@@ -234,6 +238,34 @@ def _apply_sampling(params: dict[str, object], sampling: Sampling) -> None:
         params["stop"] = list(sampling.stop)
     if sampling.seed is not None:
         params["seed"] = sampling.seed
+
+
+_DEDUPE_ON = frozenset({"on", "true", "yes", "1"})
+_DEDUPE_OFF = frozenset({"off", "false", "no", "0"})
+
+
+def _resolve_dedupe(configured: bool, directives: SystemDirectives | None) -> bool:
+    """``server.dedupe.enabled`` unless a ``<<SYSTEM>> dedupe:`` directive says otherwise.
+
+    Overriding in *both* directions is the point. Turning it on for one turn is how you opt a
+    known-duplicating client into coalescing without committing the whole deployment to it;
+    turning it off is how you force a genuinely fresh run when an identical turn is already in
+    flight (re-rolling a panel you didn't like, or reproducing a result rather than joining it).
+
+    Accepts the usual on/off spellings rather than only one, because this is typed by hand into a
+    chat box — but rejects anything else, matching the module's rule that a mistyped directive
+    must fail loudly instead of silently doing nothing.
+    """
+    if directives is None or directives.dedupe is None:
+        return configured
+    if directives.dedupe in _DEDUPE_ON:
+        return True
+    if directives.dedupe in _DEDUPE_OFF:
+        return False
+    raise InvalidRequestError(
+        f"invalid <<SYSTEM>> dedupe: {directives.dedupe!r} "
+        f"(expected {', '.join(sorted(_DEDUPE_ON))} or {', '.join(sorted(_DEDUPE_OFF))})"
+    )
 
 
 def _select_members(
@@ -386,6 +418,8 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
             )
         show_work = directives.show_work
 
+    dedupe = _resolve_dedupe(catalog.config.server.dedupe.enabled, directives)
+
     # vote/first make members the deciders: they get the real tool schemas so they can propose
     # structured calls. In arbitrate mode members stay advisory — a schema-free summary only (they
     # cannot invoke tools; the synthesizer owns the client-visible call).
@@ -485,4 +519,5 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         fanout_deadline=fanout.deadline.total_seconds() if fanout.deadline else None,
         min_results=fanout.min_results,
         detach_on_disconnect=fanout.detach_on_disconnect,
+        dedupe=dedupe,
     )

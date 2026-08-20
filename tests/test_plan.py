@@ -217,6 +217,41 @@ def test_invalid_show_work_directive_is_a_400():
         resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>show_work: verbose<</SYSTEM>>"))
 
 
+def test_dedupe_defaults_to_the_server_config():
+    # `server.dedupe.enabled` is false in the test catalog, so a plain request does not coalesce.
+    assert resolve_plan(_catalog(), _ir()).dedupe is False
+
+
+def test_dedupe_directive_turns_coalescing_on_for_one_turn():
+    """The point of the override: opt a duplicate-prone client into coalescing without committing
+    the deployment to it."""
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>dedupe: on<</SYSTEM>>"))
+    assert plan.dedupe is True
+
+
+def test_dedupe_directive_can_force_a_fresh_run():
+    """And the other direction: re-roll a panel instead of joining the identical run in flight."""
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>dedupe: off<</SYSTEM>>"))
+    assert plan.dedupe is False
+
+
+def test_dedupe_directive_accepts_the_usual_spellings():
+    for value in ("on", "true", "yes", "1"):
+        assert resolve_plan(
+            _catalog(), _ir_with_block(f"<<SYSTEM>>dedupe: {value}<</SYSTEM>>")
+        ).dedupe
+    for value in ("off", "false", "no", "0"):
+        assert not resolve_plan(
+            _catalog(), _ir_with_block(f"<<SYSTEM>>dedupe: {value}<</SYSTEM>>")
+        ).dedupe
+
+
+def test_invalid_dedupe_directive_is_a_400():
+    """A mistyped directive must fail loudly, not silently fan out twice."""
+    with pytest.raises(InvalidRequestError, match="dedupe"):
+        resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>dedupe: maybe<</SYSTEM>>"))
+
+
 def test_synth_directive_retargets_the_synthesizer():
     plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>synth: synth2<</SYSTEM>>"))
     assert plan.synth.llm_name == "synth2"

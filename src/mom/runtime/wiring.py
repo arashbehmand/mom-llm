@@ -104,12 +104,16 @@ def build_bus(
     return memory_bus, memory_bus.aclose
 
 
-def build_coalesce(catalog: ResolvedCatalog) -> CoalesceRegistry | None:
-    """Build the in-flight request coalescing registry, or ``None`` when ``server.dedupe`` is
-    off (the default) — a disabled feature must cost nothing and change nothing."""
+def build_coalesce(catalog: ResolvedCatalog) -> CoalesceRegistry:
+    """Build the in-flight request coalescing registry.
+
+    Always built, even when ``server.dedupe.enabled`` is false — the config flag is now the
+    *default* policy rather than the on/off switch, since a `<<SYSTEM>> dedupe: on` directive
+    has to be able to coalesce one turn on a deployment that leaves it off. An unused registry
+    is an empty dict and a lock: a disabled feature still costs nothing, because whether a given
+    run attaches is decided per request by ``plan.dedupe``.
+    """
     dedupe = catalog.config.server.dedupe
-    if not dedupe.enabled:
-        return None
     return CoalesceRegistry(
         orphan_grace_seconds=dedupe.orphan_grace.total_seconds(),
         max_buffer_chars=dedupe.max_buffer,

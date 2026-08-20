@@ -506,6 +506,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
     """Run an ensemble, emitting a typed event stream. Never raises — failures are events."""
     turn_type: TurnType = "relay" if plan.skip_reason == "tool_continuation" else "ensemble"
     terminal_published = False
+    run_started = deps.clock.now()
     # True only once the REAL synthesizer call is under way (not the vote/first short-circuit's
     # synthetic SynthesisStarted, which never calls an LLM) — gates the failure-recording below so
     # a fan-out-stage error is never mistakenly recorded as a synthesis failure.
@@ -793,6 +794,18 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             _publish(
                 deps,
                 ProgressEvent(kind="failed", ensemble=plan.ensemble, detail="client disconnected"),
+            )
+            # Log it too, with how long the client actually waited. A disconnect is invisible in
+            # the metrics DB (the turn records no synthesis row — it simply stops), so without
+            # this the only trace is a progress event that ages out of the bus within the hour.
+            # The elapsed number is the diagnostic: it is a client/proxy read-timeout, and which
+            # one is a question of *which* value it lands on, every time, across requests.
+            logger.warning(
+                "run torn down before it finished — client disconnected",
+                request_id=deps.request_id,
+                ensemble=plan.ensemble,
+                elapsed_seconds=round(deps.clock.now() - run_started, 1),
+                reached_synthesis=synthesizing,
             )
 
 

@@ -235,6 +235,21 @@ def test_only_and_show_work_and_synth_all_parse():
     )
 
 
+def test_dedupe_parses_alongside_the_other_directives():
+    body = "dedupe: on\nshow_work: off\n"
+    messages = _msgs(MessageIR(role="user", content=f"<<SYSTEM>>{body}<</SYSTEM>>"))
+    _, directives = extract_system_block(messages)
+    assert directives == SystemDirectives(instruction=None, show_work="off", dedupe="on")
+
+
+def test_dedupe_value_is_lowercased_and_last_one_wins():
+    body = "dedupe: ON\ndedupe: Off\n"
+    messages = _msgs(MessageIR(role="user", content=f"<<SYSTEM>>{body}<</SYSTEM>>"))
+    _, directives = extract_system_block(messages)
+    assert directives is not None
+    assert directives.dedupe == "off"
+
+
 def test_opening_tag_on_its_own_line_still_parses_the_directive_header():
     # This is how a human actually types the block (press Enter after `<<SYSTEM>>`, then write
     # directives) and exactly how the README documents it — must not be confused with the real

@@ -8,6 +8,7 @@ auto-indentation would mangle)::
     only: oai56s, cl48op
     exclude: k3
     show_work: off
+    dedupe: on
     Answer as a terse bullet list, no preamble.
     <</SYSTEM>>
 
@@ -44,7 +45,7 @@ _CONCLUDING_RE = re.compile(
 )
 
 _KEY_LINE_RE = re.compile(r"^([A-Za-z_]+):\s*(.*)$")
-_FILTER_KEYS = frozenset({"exclude", "only", "show_work", "synth"})
+_FILTER_KEYS = frozenset({"exclude", "only", "show_work", "synth", "dedupe"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +62,9 @@ class SystemDirectives:
     only: tuple[str, ...] = ()
     show_work: str | None = None
     synth: str | None = None
+    # Raw, un-validated like ``show_work`` — ``engine/plan.py`` owns the vocabulary check so every
+    # directive reports a bad value the same way.
+    dedupe: str | None = None
 
 
 def _split_values(raw: str) -> tuple[str, ...]:
@@ -115,12 +119,14 @@ def _parse_body(body: str, *, legacy: bool) -> SystemDirectives:
     only = _merged("only")
     show_work_lines = collected.get("show_work", [])
     synth_lines = collected.get("synth", [])
+    dedupe_lines = collected.get("dedupe", [])
     return SystemDirectives(
         instruction=instruction,
         exclude=exclude,
         only=only,
         show_work=(show_work_lines[-1].lower() or None) if show_work_lines else None,
         synth=(synth_lines[-1].lower() or None) if synth_lines else None,
+        dedupe=(dedupe_lines[-1].lower() or None) if dedupe_lines else None,
     )
 
 

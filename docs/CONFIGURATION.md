@@ -118,6 +118,10 @@ server:
   from [`cache.coalesce`](#cache), which dedupes identical *member calls* within/across ensembles
   at the LLM-call layer — `server.dedupe` operates one layer up, at the whole-request layer, and
   also catches a client's own retry-because-it-looked-stuck (the classic cause of doubled spend).
+  `enabled` is the *default* policy rather than a hard switch: a `<<SYSTEM>> dedupe: on\|off`
+  directive overrides it per request in both directions, so you can opt one duplicate-prone client
+  into coalescing without committing the whole deployment, or force a genuinely fresh run when an
+  identical turn is already in flight (re-rolling a panel rather than joining it).
   In-flight only: a run is dropped the instant it completes, so a deliberate regenerate afterward
   always starts fresh. `orphan_grace` is how long a run keeps going with zero attached
   subscribers (covers the gap between one client dropping and either a new one attaching or the

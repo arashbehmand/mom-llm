@@ -12,10 +12,11 @@ from mom.api.auth import require_api_key
 from mom.api.deps import Container, ContainerDep
 from mom.api.encoders.anthropic import build_message, encode_sse
 from mom.api.reqid import REQUEST_ID_HEADER, resolve_request_id, response_headers
+from mom.api.runs import resolve_events
 from mom.api.schemas.anthropic import AnthropicMessage, CountTokensRequest, MessagesRequest
 from mom.api.sse import sse_response
 from mom.config.resolve import ResolvedCatalog
-from mom.engine.pipeline import PipelineDeps, collect, run_ensemble
+from mom.engine.pipeline import collect
 from mom.engine.plan import resolve_plan
 
 
@@ -29,22 +30,15 @@ async def messages(req: MessagesRequest, container: ContainerDep, http_request: 
     ir = messages_request_to_ir(req, stream=req.stream)
     plan = resolve_plan(container.catalog, ir)
     request_id = resolve_request_id(http_request.headers.get(REQUEST_ID_HEADER), container.ids)
-    headers = response_headers(http_request, request_id, container)
-    deps = PipelineDeps(
-        client=container.client,
-        clock=container.clock,
-        recorder=container.metrics,
-        tracer=container.tracer,
-        bus=container.bus,
-        request_id=request_id,
-        ids=container.ids,
-        custody=container.custody,
-    )
+    events, leader_request_id = resolve_events(container, plan, ir, request_id)
+    headers = response_headers(http_request, leader_request_id, container)
+    if leader_request_id != request_id:
+        headers["X-MoM-Coalesced"] = "1"
     message_id = container.ids.new_id("msg")
     input_tokens = _input_tokens(container, req)
     if req.stream:
         stream = encode_sse(
-            run_ensemble(plan, deps),
+            events,
             message_id=message_id,
             model=ir.model,
             input_tokens=input_tokens,
@@ -52,7 +46,7 @@ async def messages(req: MessagesRequest, container: ContainerDep, http_request: 
         heartbeat = container.catalog.config.server.stream_heartbeat
         heartbeat_seconds = heartbeat.total_seconds() if heartbeat is not None else None
         return sse_response(stream, headers=headers, heartbeat_seconds=heartbeat_seconds)
-    result = await collect(run_ensemble(plan, deps))
+    result = await collect(events)
     return JSONResponse(
         build_message(result, message_id=message_id, model=ir.model, input_tokens=input_tokens),
         headers=headers,

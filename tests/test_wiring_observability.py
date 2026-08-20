@@ -113,8 +113,11 @@ def _catalog_with_server(server: str) -> object:
     return resolve_catalog(Config.model_validate(yaml.safe_load(text)))
 
 
-def test_build_coalesce_is_none_by_default():
-    assert wiring.build_coalesce(_catalog()) is None
+def test_build_coalesce_builds_a_registry_even_when_dedupe_defaults_off():
+    """The registry is always built: `server.dedupe.enabled` is the *default* policy, not the
+    on/off switch, so a `<<SYSTEM>> dedupe: on` turn can coalesce on a deployment that leaves
+    dedupe off. Whether a given run attaches is `plan.dedupe`, decided per request."""
+    assert wiring.build_coalesce(_catalog()) is not None
 
 
 def test_build_coalesce_builds_a_registry_when_enabled():

@@ -110,3 +110,67 @@ async def test_dedupe_disabled_by_default_never_coalesces_even_when_concurrent()
     assert len(fake.completions) == 4  # each request ran its own independent fan-out
     assert len(fake.streams) == 2
     assert resp_1.headers["x-request-id"] != resp_2.headers["x-request-id"]
+
+
+# --------------------------------------------------------------------------------------------
+# `<<SYSTEM>> dedupe:` — the config flag is the default, the directive is the per-turn override,
+# and it works on every request surface (lobe-chat, the client that motivated coalescing, talks
+# to /v1/responses — which could not dedupe at all while this lived in the chat router alone).
+# --------------------------------------------------------------------------------------------
+
+
+async def _post_with(client: httpx.AsyncClient, block: str, *, path: str = "/v1/chat/completions"):
+    body = {"model": "e", "messages": [{"role": "user", "content": f"{block}\nhi"}]}
+    if path == "/v1/responses":
+        body = {"model": "e", "input": f"{block}\nhi"}
+    return await client.post(path, json=body)
+
+
+async def test_dedupe_directive_coalesces_on_a_deployment_that_leaves_it_off():
+    fake = FakeLLM(delays={"a": 0.05})
+    block = "<<SYSTEM>>dedupe: on<</SYSTEM>>"
+    async with _client(fake, config=_DISABLED_CONFIG) as client:
+        resp_1, resp_2 = await asyncio.wait_for(
+            asyncio.gather(_post_with(client, block), _post_with(client, block)), timeout=5.0
+        )
+    assert resp_1.status_code == resp_2.status_code == 200
+    assert len(fake.completions) == 2  # one fan-out, not two
+    assert len(fake.streams) == 1
+    assert {resp_1.headers.get("x-mom-coalesced"), resp_2.headers.get("x-mom-coalesced")} == {
+        "1",
+        None,
+    }
+
+
+async def test_dedupe_off_directive_forces_a_fresh_run_where_config_says_on():
+    """Re-rolling a panel you didn't like must not silently join the run already in flight."""
+    fake = FakeLLM(delays={"a": 0.05})
+    block = "<<SYSTEM>>dedupe: off<</SYSTEM>>"
+    async with _client(fake) as client:
+        resp_1, resp_2 = await asyncio.wait_for(
+            asyncio.gather(_post_with(client, block), _post_with(client, block)), timeout=5.0
+        )
+    assert resp_1.status_code == resp_2.status_code == 200
+    assert len(fake.completions) == 4  # two independent fan-outs
+    assert len(fake.streams) == 2
+    assert resp_1.headers["x-request-id"] != resp_2.headers["x-request-id"]
+
+
+async def test_responses_surface_coalesces_too():
+    fake = FakeLLM(delays={"a": 0.05})
+    block = "<<SYSTEM>>dedupe: on<</SYSTEM>>"
+    async with _client(fake, config=_DISABLED_CONFIG) as client:
+        resp_1, resp_2 = await asyncio.wait_for(
+            asyncio.gather(
+                _post_with(client, block, path="/v1/responses"),
+                _post_with(client, block, path="/v1/responses"),
+            ),
+            timeout=5.0,
+        )
+    assert resp_1.status_code == resp_2.status_code == 200
+    assert len(fake.completions) == 2
+    assert len(fake.streams) == 1
+    assert {resp_1.headers.get("x-mom-coalesced"), resp_2.headers.get("x-mom-coalesced")} == {
+        "1",
+        None,
+    }

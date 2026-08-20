@@ -197,6 +197,7 @@ exclude: k3, glm52
 only: oai56s, cl48op
 show_work: off
 synth: cl48op
+dedupe: on
 Weigh whichever response cites real sources most heavily.
 <</SYSTEM>>
 ```
@@ -207,6 +208,7 @@ Weigh whichever response cites real sources most heavily.
 | `only: a, b` | run *just* these member identities (combine with `exclude` to remove some of those) |
 | `show_work: off\|inline\|native` | override the ensemble's configured `show_work` for this turn |
 | `synth: llm-name` | run synthesis on a different configured `llm` for this turn |
+| `dedupe: on\|off` | override [`server.dedupe`](docs/CONFIGURATION.md#server) for this turn: `on` attaches an identical concurrent turn to the run already in flight, `off` forces a fresh one |
 
 Identities are the `as:`/`llm` names shown in the think block and the progress dashboard. An
 unknown identity, an exclusion that empties the panel below the ensemble's quorum, or an unknown
