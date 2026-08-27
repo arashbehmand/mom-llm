@@ -361,12 +361,21 @@ leaked token can already chat, and must not be able to destroy state.
 | `list_llms` | — | every catalog llm (bases and variants) with model string, capabilities, pricing and its `pricing_source` |
 | `list_ensembles` | — | the resolved ensembles: members, effort tiers, synthesizer, advertised capabilities |
 | `consult` | `prompt`, then either `ensemble` or `panel` + `synthesizer`; optional `effort`, `system`, `tools`, `include_member_answers` | one synthesized answer with a per-member cost breakdown (below) |
-| `runs` | optional `request_id`, `limit` | in-flight runs and recent finished ones, per-member status and cost |
-| `usage` | `days` (0 = all time), optional `ensemble` | the same aggregation `mom metrics usage` prints, grouped by ensemble and by llm |
+| `runs` | optional `request_id`, `limit` (clamped to 1–200) | in-flight, just-finished and recent runs, per-member status and cost |
+| `usage` | `days` (0 or less = all time), optional `ensemble` | the same aggregation `mom metrics usage` prints, grouped by ensemble and by member |
 | `cache_stats` | — | response-cache entry count, size, hits |
 
-`consult` reports progress per member while it runs (fan-out completions, then synthesis), so a
-client can see a slow panel working rather than guessing whether it has hung.
+`consult` reports progress as each member is asked, as each one answers (with the running cost),
+and again when synthesis begins — so a client can watch a slow panel work instead of guessing
+whether the call has hung.
+
+`effort` only applies to an ensemble that declares effort tiers. Passing it to one that doesn't —
+including any inline panel, which is always tierless — is rejected rather than ignored, so an
+agent never believes it bought deeper reasoning than it did.
+
+`list_llms` reads capabilities and pricing from config first and litellm's bundled catalog
+behind it, which is the same order the gateway uses at call time. Config declares those blocks
+only to *override* litellm, so most deployments get their numbers from the catalog.
 
 ### Inline panels
 
@@ -390,14 +399,23 @@ One envelope for every outcome, discriminated by `status`:
 | `status` | Meaning | Shape |
 | --- | --- | --- |
 | `ok` | The panel answered | `answer` holds the synthesized text |
-| `tool_calls` | The panel answered with a tool call instead of prose | `answer` empty, `tool_calls` populated (OpenAI wire shape), `finish_reason: "tool_calls"`. Executing the call is the caller's job — there is no tool continuation over MCP |
-| `failed` | The run died upstream (quorum not met, synthesis failure, timeout) | `error: {code, message, http_status}`, and the members that *did* complete are still listed with what they cost |
+| `tool_calls` | The panel returned tool calls to execute | `tool_calls` populated (OpenAI wire shape); executing them is the caller's job, as there is no tool continuation over MCP. `answer` still holds any prose the model wrote alongside them |
+| `failed` | The run died upstream (quorum not met, synthesis failure, timeout) | `error: {code, message, http_status}`, and the members that *did* complete are still listed with the tokens and money they spent |
+
+`status` is decided by whether there are tool calls, not by `finish_reason` — a provider can
+report `tool_calls` having emitted none we could parse, and that is an answer, not an empty
+result. `finish_reason` is reported verbatim either way.
 
 Every result also carries `ensemble`, `request_id`, `coalesced`, `progress_url`, `total_cost_usd`,
-`usage`, and `members[]` with each member's `identity`, `status`, `cost_usd`, `duration_ms`,
-`cached` and client-safe `error`. A member the fan-out deadline passed by appears with status
-`abandoned` rather than vanishing from the list. Member text is omitted unless you ask for
-`include_member_answers`.
+`usage`, `reasoning` (the synthesizer's, when it produced any), and `members[]` with each member's
+`identity`, `status`, `cost_usd`, `duration_ms`, `cached` and client-safe `error`. A member the
+fan-out deadline passed by appears with status `abandoned` rather than vanishing from the list.
+`include_member_answers` adds each member's own text and reasoning; the synthesized answer and its
+reasoning come back either way.
+
+On a `failed` result the cost and token figures are a floor: they cover the members observed
+before the failure, and a synthesizer that streamed and then failed emits nothing to count.
+`usage` and `runs` remain the authority on what a run finally cost.
 
 `progress_url` is `null` over stdio unless `server.public_url` is set (there is no request to
 derive a host from). Unlike the `X-MoM-Progress-Url` response header, it never embeds the API
@@ -405,22 +423,29 @@ token: a tool result is data that lands in a model's context and travels with th
 transcript, and a stdio caller never presented a token in the first place. With `auth: bearer`
 the link therefore needs your own token attached to open — an HTTP MCP client already has one.
 
-A `failed` result is returned as an MCP `isError` result **with the payload attached**, not as a
-protocol error — the model should be able to read what failed and what it cost and decide whether
-to retry or pick a different panel. Protocol errors are reserved for calls the agent got wrong
-(both or neither of `ensemble`/`panel`, an unknown llm, a panel with no synthesizer); those spend
-nothing.
+Both a failed run and a malformed call come back as MCP `isError` results, and the difference is
+what rides along: a **failed run** carries the full `ConsultResult` as structured content, so the
+model can read what failed and what it cost and decide whether to retry or pick a different panel.
+A **caller mistake** (both or neither of `ensemble`/`panel`, an unknown llm, a panel with no
+synthesizer, an `effort` the ensemble has no tiers for) carries only a message, because nothing
+ran and there is nothing to report; those spend nothing.
 
 ### What `runs` can and cannot see
 
-`recent` comes from the metrics ledger: durable, shared across processes, but a call only lands
-there after it finishes. `in_flight` comes from the event bus and is **process-local** — a
-multi-worker gateway reports the worker that answered, and `mom mcp` sees only consults it ran
-itself. A Redis-backed bus retains no history at all, so `in_flight` is empty and
-`in_flight_visibility` says `"none"` rather than implying nothing is running.
+Two sources, because neither knows the whole story. `recent` comes from the metrics ledger:
+durable and shared across processes, but a call only lands there once the recorder's queue
+drains. `in_flight` and `just_finished` come from an index the gateway keeps as progress events
+pass through it — that index is what covers the window where a run has finished but the ledger
+has not caught up, and it is the only place a still-running fan-out's spend is visible at all.
 
-Both are a lower bound on spend: metrics are recorded off the hot path and dropped rather than
-allowed to block a call (`GET /health` reports `metrics_dropped`).
+The index is **process-local**: a multi-worker gateway reports the worker that answered, and
+`mom mcp` sees only consults it ran itself. It wraps whichever bus is configured, Redis included,
+so this view survives a multi-process deployment for the process you asked. Only a gateway built
+without one reports `in_flight_visibility: "none"`, which says "cannot tell" rather than letting
+an empty list imply nothing is running.
+
+Spend figures here are a lower bound: metrics are recorded off the hot path and dropped rather
+than allowed to block a call (`GET /health` reports `metrics_dropped`).
 
 Running `mom mcp` beside a live gateway is supported — SQLite is in WAL mode with a busy timeout,
 so both processes read and write the same databases. The one unguarded case is two processes

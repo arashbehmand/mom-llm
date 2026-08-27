@@ -15,6 +15,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
+from mom.adapters.litellm_client import capabilities_for, pricing_for
 from mom.api.mcp import projections
 from mom.api.mcp.consult import run_consult
 from mom.api.mcp.schemas import (
@@ -82,7 +83,11 @@ def build_mcp_server(get_container: Callable[[], Container | None]) -> MCPServer
     def list_llms() -> list[LlmInfo]:
         catalog = current_container().catalog
         return [
-            projections.llm_info(llm, catalogue_pricing=_catalogue_pricing(llm.model))
+            projections.llm_info(
+                llm,
+                catalogue_pricing=_from_catalogue(pricing_for, llm.model),
+                catalogue_capabilities=_from_catalogue(capabilities_for, llm.model),
+            )
             for llm in catalog.llms.values()
         ]
 
@@ -127,7 +132,9 @@ def build_mcp_server(get_container: Callable[[], Container | None]) -> MCPServer
             "text; executing it is the caller's job (no continuation over MCP).",
         ] = None,
         include_member_answers: Annotated[
-            bool, "Include each member's own answer, not just its status and cost."
+            bool,
+            "Include each member's own answer and reasoning, not just its status and cost. The "
+            "synthesized answer and its reasoning come back either way.",
         ] = False,
     ) -> Annotated[CallToolResult, ConsultResult]:
         result = await run_consult(
@@ -162,16 +169,24 @@ def build_mcp_server(get_container: Callable[[], Container | None]) -> MCPServer
         limit = max(1, min(limit, _MAX_RUNS))
         current = current_container()
         bus = current.bus
-        # A bus that keeps no index (Redis pub/sub) can't answer "what is running" at all; the
-        # report says so rather than returning an empty list that reads as "nothing is".
+        # Only a bus without an index (a hand-built container; wiring always wraps one) cannot
+        # answer "what is running". Saying so beats an empty list that reads as "nothing is".
         indexed = isinstance(bus, RunIndex)
         summaries: list[RunSummary] = bus.snapshot(request_id) if isinstance(bus, RunIndex) else []
+        # Terminal entries are reported too, not just live ones. A run's metrics rows are written
+        # by a queue the recorder drains off the hot path, so between a consult returning and
+        # that flush the ledger has nothing — and the index is the only thing that can say the
+        # run existed, let alone what it cost.
         in_flight = [projections.in_flight_run(s) for s in summaries if s.in_flight]
+        just_finished = [projections.in_flight_run(s) for s in summaries if not s.in_flight]
+
         reader = current.metrics_reader
         recent: list[RecentRun] = []
         calls: list[RunCall] | None = None
         if reader is not None:
             if request_id is not None:
+                # For one run the ledger answers in full detail, per call; `recent` is the
+                # listing view and has nothing to add that `calls` doesn't say better.
                 calls = [projections.run_call(row) for row in await reader.run_calls(request_id)]
             else:
                 recent = [
@@ -179,6 +194,7 @@ def build_mcp_server(get_container: Callable[[], Container | None]) -> MCPServer
                 ]
         return RunsReport(
             in_flight=in_flight,
+            just_finished=just_finished,
             recent=recent,
             calls=calls,
             in_flight_visibility="process" if indexed else "none",
@@ -233,15 +249,13 @@ def build_mcp_server(get_container: Callable[[], Container | None]) -> MCPServer
     return mcp
 
 
-def _catalogue_pricing(model: str) -> dict[str, float] | None:
-    """litellm's list price for a model, or None. Best-effort: a listing must not fail because
-    the pricing catalog could not be consulted."""
+def _from_catalogue[T](lookup: Callable[[str], T | None], model: str) -> T | None:
+    """What litellm's catalog says about a model, or None. Best-effort: a listing must not fail
+    because a third-party catalog read did."""
     try:
-        from mom.adapters.litellm_client import pricing_for
-
-        return pricing_for(model)
+        return lookup(model)
     except Exception:  # pragma: no cover - defensive around a third-party catalog read
-        logger.debug("pricing lookup failed", model=model, exc_info=True)
+        logger.debug("model catalogue lookup failed", model=model, exc_info=True)
         return None
 
 
@@ -278,12 +292,27 @@ def _consult_tool_result(result: ConsultResult) -> CallToolResult:
 
 
 def _text_summary(result: ConsultResult) -> str:
+    """The text block, for a client that reads `content` rather than `structuredContent`.
+
+    On a failure that is the whole story it gets, so the breakdown the envelope preserves — who
+    ran, how they ended, what it cost — is spelled out here too rather than left to a field the
+    reader may never look at.
+    """
     if result.status == "failed":
         error = result.error
-        return f"{error.code}: {error.message}" if error else "the panel failed"
+        headline = f"{error.code}: {error.message}" if error else "the panel failed"
+        if not result.members:
+            return headline
+        ran = ", ".join(f"{m.identity} {m.status}" for m in result.members)
+        return (
+            f"{headline} — {len(result.members)} member(s) ran ({ran}), "
+            f"${result.total_cost_usd:.4f} spent"
+        )
     if result.status == "tool_calls":
-        names = _tool_call_names(result.tool_calls)
-        return f"[panel ended in {len(result.tool_calls)} tool call(s): {', '.join(names)}]"
+        names = ", ".join(_tool_call_names(result.tool_calls))
+        called = f"[panel called {len(result.tool_calls)} tool(s): {names}]"
+        # A model may write prose *and* call a tool; neither half is dropped.
+        return f"{result.answer}\n\n{called}" if result.answer else called
     return result.answer
 
 

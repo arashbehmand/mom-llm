@@ -166,25 +166,32 @@ def uncatalogued_models(models: Iterable[str]) -> dict[str, list[str]]:
     return {provider: sorted(models) for provider, models in sorted(grouped.items())}
 
 
-def pricing_for(model: str) -> dict[str, float] | None:
-    """Per-1M-token USD rates from litellm's pinned catalog, or ``None`` when it has no entry.
+def catalogue_entry(model: str) -> dict[str, Any] | None:
+    """What litellm's pinned catalog knows about a model, or ``None`` when it has no entry.
 
-    Catalogue lookup only — this is what a *listing* (the MCP ``list_llms`` tool) shows when
-    config declares no ``pricing:`` block, which is the common case since litellm prices calls at
-    runtime. Costing a real call still goes through ``compute_cost``/``_cost_from_usage``; nothing
-    here feeds spend accounting.
+    Catalogue lookup only, for *listings* (the MCP ``list_llms`` tool). Config almost never
+    declares ``pricing:`` or ``capabilities:`` — it doesn't have to, because litellm supplies both
+    at call time — so without this a listing would report nulls for every model it has. Costing a
+    real call still goes through ``compute_cost``/``_cost_from_usage``; nothing here feeds spend
+    accounting.
 
     Exact key then bare id, the same two-step ``uncatalogued_models`` uses, and for the same
-    reason: a near-miss would quote someone else's prices.
+    reason: a near-miss would describe (and price) someone else's model.
 
-    Returns plain floats rather than a ``Pricing`` so this module keeps importing nothing from
+    Returns plain dicts rather than domain types so this module keeps importing nothing from
     ``mom.config``/``mom.domain.cost`` — litellm stays sealed in here (invariant #4).
     """
     import litellm
 
     _, _, bare = model.rpartition("/")
     entry = litellm.model_cost.get(model) or litellm.model_cost.get(bare)
-    if not isinstance(entry, dict):
+    return entry if isinstance(entry, dict) else None
+
+
+def pricing_for(model: str) -> dict[str, float] | None:
+    """Per-1M-token USD rates from litellm's catalog (see :func:`catalogue_entry`)."""
+    entry = catalogue_entry(model)
+    if entry is None:
         return None
     rates = {
         "input_per_1m": entry.get("input_cost_per_token"),
@@ -195,6 +202,25 @@ def pricing_for(model: str) -> dict[str, float] | None:
     }
     priced = {k: float(v) * 1_000_000 for k, v in rates.items() if isinstance(v, (int, float))}
     return priced or None
+
+
+def capabilities_for(model: str) -> dict[str, Any] | None:
+    """What a model can do, per litellm's catalog (see :func:`catalogue_entry`).
+
+    Only the axes mom itself reasons about: vision and tools gate which members a request can
+    use, and the token limits size the panel's advertised window.
+    """
+    entry = catalogue_entry(model)
+    if entry is None:
+        return None
+    known = {
+        "vision": entry.get("supports_vision"),
+        "tools": entry.get("supports_function_calling"),
+        "context_length": entry.get("max_input_tokens"),
+        "max_output_tokens": entry.get("max_output_tokens"),
+    }
+    found = {k: v for k, v in known.items() if v is not None}
+    return found or None
 
 
 def _provider_of(model: str) -> str | None:

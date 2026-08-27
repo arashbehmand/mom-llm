@@ -92,28 +92,51 @@ async def test_list_llms_projects_the_catalog():
     assert llms["b"]["web_search"] is True  # a `search:` block, not a capability flag
 
 
-async def test_list_llms_falls_back_to_the_litellm_price_list(monkeypatch: pytest.MonkeyPatch):
+def _catalogue(monkeypatch: pytest.MonkeyPatch, *, pricing=None, capabilities=None) -> None:
+    """Stand in for litellm's bundled catalog (the real one is version-dependent)."""
     from mom.api.mcp import server as server_module
 
-    monkeypatch.setattr(
-        server_module, "_catalogue_pricing", lambda model: {"input_per_1m": 1.5} if model else None
-    )
+    monkeypatch.setattr(server_module, "pricing_for", lambda model: pricing)
+    monkeypatch.setattr(server_module, "capabilities_for", lambda model: capabilities)
+
+
+async def test_list_llms_falls_back_to_the_litellm_price_list(monkeypatch: pytest.MonkeyPatch):
+    _catalogue(monkeypatch, pricing={"input_per_1m": 1.5})
     result = await _server(_container()).call_tool("list_llms", {})
     entry = result.structured_content["result"][0]
-    assert entry["pricing"] == {
-        "input_per_1m": 1.5,
-        "output_per_1m": None,
-        "reasoning_per_1m": None,
-        "cache_read_per_1m": None,
-        "cache_write_per_1m": None,
-    }
+    assert entry["pricing"]["input_per_1m"] == 1.5
     assert entry["pricing_source"] == "litellm"
 
 
-async def test_list_llms_prefers_configured_pricing(monkeypatch: pytest.MonkeyPatch):
-    from mom.api.mcp import server as server_module
+async def test_list_llms_falls_back_to_the_litellm_capabilities(monkeypatch: pytest.MonkeyPatch):
+    """Config declares `capabilities:` only to *override* litellm — on a normal deployment no
+    llm declares any, so reading config alone would report null for every model."""
+    _catalogue(monkeypatch, capabilities={"tools": True, "context_length": 200_000})
+    result = await _server(_container()).call_tool("list_llms", {})
+    entry = next(e for e in result.structured_content["result"] if e["name"] == "b")
+    assert entry["tools"] is True
+    assert entry["context_length"] == 200_000
 
-    monkeypatch.setattr(server_module, "_catalogue_pricing", lambda model: {"input_per_1m": 99.0})
+
+async def test_list_llms_prefers_configured_capabilities(monkeypatch: pytest.MonkeyPatch):
+    _catalogue(monkeypatch, capabilities={"context_length": 999, "tools": True})
+    result = await _server(_container()).call_tool("list_llms", {})
+    entry = next(e for e in result.structured_content["result"] if e["name"] == "a")
+    assert entry["context_length"] == 128000  # the config override, not litellm's number
+    assert entry["vision"] is False  # explicitly disabled in config
+
+
+async def test_list_llms_treats_an_unlisted_model_as_able_to_see(monkeypatch: pytest.MonkeyPatch):
+    """Same rule the capability card uses: vision is on unless something says otherwise, so an
+    llm neither config nor litellm describes isn't quietly dropped from a vision panel."""
+    _catalogue(monkeypatch)
+    result = await _server(_container()).call_tool("list_llms", {})
+    entry = next(e for e in result.structured_content["result"] if e["name"] == "b")
+    assert entry["vision"] is True
+
+
+async def test_list_llms_prefers_configured_pricing(monkeypatch: pytest.MonkeyPatch):
+    _catalogue(monkeypatch, pricing={"input_per_1m": 99.0})
     priced = CONFIG.replace(
         "a: { model: openai/a,", "a: { model: openai/a, pricing: { input_per_1m: 2.0 },"
     )
@@ -248,6 +271,87 @@ async def test_consult_reports_an_upstream_failure_with_the_spend_it_incurred():
     assert all(m["status"] == "error" for m in payload["members"])
 
 
+def _ensemble_result(**overrides):
+    from mom.domain.results import EnsembleResult, Usage
+
+    base = {
+        "text": "",
+        "outcomes": (),
+        "usage": Usage(),
+        "total_cost_usd": 0.0,
+        "finish_reason": "stop",
+        "tool_calls": (),
+    }
+    return EnsembleResult(**{**base, **overrides})
+
+
+def _envelope(result):
+    from mom.api.mcp.projections import consult_success
+
+    return consult_success(
+        result,
+        ensemble="e",
+        request_id="r",
+        coalesced=False,
+        progress_url=None,
+        members=[],
+    )
+
+
+def test_consult_keeps_the_prose_a_tool_calling_model_also_wrote():
+    """A model that says "I'll look that up" *and* calls a tool wrote both. `status` is the
+    discriminator, not a licence to drop the answer."""
+    envelope = _envelope(
+        _ensemble_result(
+            text="I'll look that up",
+            finish_reason="tool_calls",
+            tool_calls=({"id": "c1", "function": {"name": "lookup", "arguments": "{}"}},),
+        )
+    )
+    assert envelope.status == "tool_calls"
+    assert envelope.answer == "I'll look that up"
+
+    from mom.api.mcp.server import _text_summary
+
+    summary = _text_summary(envelope)
+    assert "I'll look that up" in summary  # a text-only client sees both halves
+    assert "lookup" in summary
+
+
+def test_a_finish_reason_of_tool_calls_without_any_is_still_an_answer():
+    """A provider can report `tool_calls` having emitted none we could parse — a truncated or
+    filtered call. Trusting `finish_reason` over the calls themselves would answer `tool_calls`
+    with an empty list and throw the synthesized text away."""
+    envelope = _envelope(_ensemble_result(text="the real answer", finish_reason="tool_calls"))
+    assert envelope.status == "ok"
+    assert envelope.answer == "the real answer"
+    assert envelope.finish_reason == "tool_calls"  # verbatim, just not the discriminator
+
+
+async def test_the_synthesizer_reasoning_does_not_depend_on_member_answers():
+    """`include_member_answers` is about the panel; the synthesized reasoning belongs to the
+    answer. Coupling them forced a caller to pull every member's full text to get it."""
+    container = _container(client=FakeLLM(synth_reasoning=("because ", "reasons")))
+    result = await _server(container).call_tool("consult", {"prompt": "hi", "ensemble": "e"})
+    payload = result.structured_content
+    assert payload["reasoning"] == "because reasons"
+    assert all(m["reasoning"] is None for m in payload["members"])
+
+
+async def test_a_failed_consult_reports_the_tokens_it_burned():
+    container = _container(client=FakeLLM(fail=frozenset({"a"})))
+    quorum = CONFIG.replace("version: 2", "version: 2\ndefaults: { fanout: { min_results: 2 } }")
+    container = _container(config=quorum, client=FakeLLM(fail=frozenset({"a"})))
+    result = await _server(container).call_tool("consult", {"prompt": "hi", "ensemble": "e"})
+    payload = result.structured_content
+
+    assert payload["status"] == "failed"
+    # `collect` raised before it could total anything, so these come from the observed members —
+    # money and tokens are reported together or the accounting is half a story.
+    assert payload["usage"]["prompt_tokens"] > 0
+    assert "member(s) ran" in result.content[0].text  # the text block carries it too
+
+
 async def test_consult_never_leaks_operator_only_error_detail():
     container = _container(client=FakeLLM(fail=frozenset({"a"})))
     result = await _server(container).call_tool("consult", {"prompt": "hi", "ensemble": "e"})
@@ -278,6 +382,54 @@ async def test_consult_rejects_a_malformed_call(arguments: dict, expected: str):
     assert container.client.completions == []  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"prompt": "x", "ensemble": "e", "effort": "high"},
+        {"prompt": "x", "panel": ["a"], "synthesizer": "a", "effort": "high"},
+    ],
+)
+async def test_consult_refuses_an_effort_that_could_not_apply(arguments: dict):
+    """`resolve_plan` only validates effort against an ensemble that declares tiers — for one
+    that doesn't (every inline panel) it neither applies nor rejects it. Accepting an argument
+    that cannot do anything is the wrong answer for a tool an agent calls believing it bought
+    deeper reasoning."""
+    container = _container()
+    with pytest.raises(ToolError, match="effort"):
+        await _server(container).call_tool("consult", arguments)
+    assert container.client.completions == []  # type: ignore[attr-defined]
+
+
+async def test_consult_accepts_effort_on_a_tiered_ensemble():
+    tiered = CONFIG.replace(
+        "members: [{ llm: a }, { llm: b }]",
+        "effort_tiers: [low, high]\n"
+        "    default_tier: low\n"
+        "    members: [{ llm: a, effort: {low: low, high: high} }]",
+    )
+    result = await _server(_container(config=tiered)).call_tool(
+        "consult", {"prompt": "x", "ensemble": "e", "effort": "high"}
+    )
+    assert result.structured_content["status"] == "ok"
+
+
+async def test_runs_reports_a_run_the_ledger_has_not_recorded_yet():
+    """Metrics rows are written by a queue drained off the hot path, so between a consult
+    returning and that flush the ledger is empty — and the index is the only thing that can say
+    the run happened, let alone what it cost."""
+    container = _container()  # no metrics_reader at all: the ledger can never answer
+    server = _server(container)
+    consulted = await server.call_tool("consult", {"prompt": "hi", "ensemble": "e"})
+    request_id = consulted.structured_content["request_id"]
+
+    report = (await server.call_tool("runs", {})).structured_content
+    assert [r["request_id"] for r in report["just_finished"]] == [request_id]
+    assert report["just_finished"][0]["state"] == "completed"
+
+    one = (await server.call_tool("runs", {"request_id": request_id})).structured_content
+    assert [r["request_id"] for r in one["just_finished"]] == [request_id]
+
+
 async def test_consult_reports_progress_per_member():
     container = _container()
     seen: list[tuple[float, float | None, str | None]] = []
@@ -292,8 +444,13 @@ async def test_consult_reports_progress_per_member():
         )
 
     assert [p for p, _, _ in seen] == sorted({p for p, _, _ in seen})  # strictly increasing
-    assert any("a: ok" in (m or "") for _, _, m in seen)
-    assert any("synthesizing" in (m or "") for _, _, m in seen)
+    messages = [m or "" for _, _, m in seen]
+    # Started *and* finished, per the issue: without the start events a client hears nothing
+    # until the first member lands, which is indistinguishable from a hung call.
+    assert any(m.startswith("asking a ") for m in messages)
+    assert any(m.startswith("asking b ") for m in messages)
+    assert any("a: ok" in m for m in messages)
+    assert any("synthesizing" in m for m in messages)
     # Synthesis is usually the longest wait; the bar must not sit at 100% through it.
     assert all(progress < (total or 0) for progress, total, _ in seen)
 

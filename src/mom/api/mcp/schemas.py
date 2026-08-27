@@ -200,11 +200,20 @@ class RunsReport(BaseModel):
             "the worker that answered, and `mom mcp` reports only consults it ran itself."
         ),
     )
+    just_finished: list[InFlightRun] = Field(
+        default_factory=list,
+        description=(
+            "Runs this process finished recently, with their final state and cost. Covers the "
+            "window before the metrics recorder flushes, where `recent` cannot see them yet; "
+            "the same run appears in both once it has."
+        ),
+    )
     recent: list[RecentRun] = Field(
         default_factory=list,
         description=(
             "Finished runs from the metrics ledger, newest first. Durable and shared across "
-            "processes, but a call only lands here after it completes."
+            "processes, but a call only lands here after it completes. Omitted when a "
+            "`request_id` is given — `calls` covers that run in more detail."
         ),
     )
     calls: list[RunCall] | None = Field(

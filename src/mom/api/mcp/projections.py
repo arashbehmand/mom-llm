@@ -32,10 +32,27 @@ from mom.domain.ports import RunSummary
 from mom.domain.results import EnsembleResult, ModelOutcome, Usage
 
 
-def llm_info(llm: ResolvedLlm, *, catalogue_pricing: dict[str, float] | None) -> LlmInfo:
-    """One catalog llm, with config pricing preferred over litellm's map (that is billing order:
-    ``compute_cost`` uses a declared ``pricing:`` block and falls back to litellm)."""
+def llm_info(
+    llm: ResolvedLlm,
+    *,
+    catalogue_pricing: dict[str, float] | None,
+    catalogue_capabilities: dict[str, Any] | None,
+) -> LlmInfo:
+    """One catalog llm, config first and litellm's catalog behind it — for both pricing and
+    capabilities, and in that order because it is the order ``compute_cost`` and the provider
+    adapter actually use.
+
+    The fallback is what makes this tool worth calling: config declares ``pricing:`` and
+    ``capabilities:`` only to *override* litellm, so a listing that read config alone would
+    report nulls for every model on a normal deployment.
+    """
     caps = llm.capabilities
+    catalogue_capabilities = catalogue_capabilities or {}
+
+    def capability(attr: str) -> Any:
+        configured = getattr(caps, attr, None)
+        return configured if configured is not None else catalogue_capabilities.get(attr)
+
     pricing = _pricing_from_config(llm.pricing)
     source: Literal["config", "litellm", "unknown"] = "config"
     if pricing is None and catalogue_pricing is not None:
@@ -47,12 +64,14 @@ def llm_info(llm: ResolvedLlm, *, catalogue_pricing: dict[str, float] | None) ->
         name=llm.name,
         model=llm.model,
         api=llm.api,
-        vision=getattr(caps, "vision", None),
-        tools=getattr(caps, "tools", None),
-        reasoning=getattr(caps, "reasoning", None),
+        # `vision` follows the runtime rule the capability card uses: a model can see unless
+        # something says otherwise, so an unlisted model is not quietly dropped from a panel.
+        vision=capability("vision") is not False,
+        tools=capability("tools"),
+        reasoning=capability("reasoning"),
         web_search=llm.search is not None,
-        context_length=getattr(caps, "context_length", None),
-        max_output_tokens=getattr(caps, "max_output_tokens", None),
+        context_length=capability("context_length"),
+        max_output_tokens=capability("max_output_tokens"),
         max_input_tokens=llm.max_input_tokens,
         timeout_seconds=llm.timeout.total_seconds() if llm.timeout is not None else None,
         pricing=pricing,
@@ -157,15 +176,18 @@ def consult_success(
     coalesced: bool,
     progress_url: str | None,
     members: list[MemberReport],
-    include_answers: bool,
 ) -> ConsultResult:
-    """A completed run: text, or a tool call the caller is expected to execute."""
+    """A completed run: text, a tool call the caller is expected to execute, or both."""
     tool_calls = [dict(call) for call in result.tool_calls]
-    ended_in_tools = bool(tool_calls) or result.finish_reason == "tool_calls"
     return ConsultResult(
-        status="tool_calls" if ended_in_tools else "ok",
-        answer="" if ended_in_tools else result.text,
-        reasoning=result.reasoning if include_answers else "",
+        # Discriminated on the calls themselves, never on `finish_reason`: a provider can report
+        # `tool_calls` having emitted none we could parse (a truncated or filtered call), and
+        # answering "tool_calls" with an empty list would leave the caller nothing to act on.
+        status="tool_calls" if tool_calls else "ok",
+        # Kept whatever the status: a model that says "I'll look that up" *and* calls a tool
+        # wrote both, and `status` is the discriminator — not a licence to drop a field.
+        answer=result.text,
+        reasoning=result.reasoning,
         finish_reason=result.finish_reason,
         tool_calls=tool_calls,
         ensemble=ensemble,
@@ -186,9 +208,15 @@ def consult_failure(
     coalesced: bool,
     progress_url: str | None,
     members: list[MemberReport],
+    usage: Usage,
 ) -> ConsultResult:
-    """A run that died upstream. Members and cost are whatever completed first — spend that
-    really happened is reported even though there is no answer to show for it."""
+    """A run that died upstream. Members, tokens and cost are whatever completed first — spend
+    that really happened is reported even though there is no answer to show for it.
+
+    A floor, not a total: these come from the members observed before the failure, and a
+    synthesizer that streamed and *then* failed emits no terminal event to count. The ledger
+    (``usage``, ``runs``) remains the authority on what a run finally cost.
+    """
     return ConsultResult(
         status="failed",
         finish_reason="error",
@@ -198,6 +226,7 @@ def consult_failure(
         coalesced=coalesced,
         progress_url=progress_url,
         total_cost_usd=sum(m.cost_usd for m in members),
+        usage=usage_info(usage),
         members=members,
     )
 

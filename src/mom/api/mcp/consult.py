@@ -8,8 +8,9 @@ progress notifications plus one structured result afterwards.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 import contextlib
+from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
@@ -30,13 +31,14 @@ from mom.config.resolve import ResolvedCatalog, resolve_ensemble
 from mom.config.schema import EnsembleConfig
 from mom.domain.errors import ConfigError, MomError
 from mom.domain.events import (
+    FanoutStarted,
     MemberAbandoned,
     MemberCompleted,
     StreamEvent,
     SynthesisStarted,
 )
 from mom.domain.request import ChatRequestIR, MessageIR, ToolSpec
-from mom.domain.results import ModelOutcome
+from mom.domain.results import ModelOutcome, Usage
 from mom.engine.pipeline import collect
 from mom.engine.plan import resolve_plan
 from mom.runtime.container import Container
@@ -143,6 +145,15 @@ class RunObserver:
     def cost_usd(self) -> float:
         return sum(outcome.cost_usd for outcome in self.outcomes)
 
+    @property
+    def usage(self) -> Usage:
+        """Tokens spent by the members seen so far — what a failed run has to report, since
+        `collect` raised before it could total anything."""
+        total = Usage()
+        for outcome in self.outcomes:
+            total = total + outcome.usage
+        return total
+
     def reports(self, *, include_answers: bool) -> list[MemberReport]:
         """Every member of the panel, whether it answered, failed, or ran out of time."""
         return [
@@ -157,7 +168,7 @@ async def with_progress(
     observer: RunObserver,
     *,
     total: int,
-) -> AsyncIterator[StreamEvent]:
+) -> AsyncGenerator[StreamEvent, None]:
     """Pass the stream through untouched, reporting each milestone to the MCP client.
 
     A fan-out is slow enough that a client with no feedback cannot tell it from a hang, and the
@@ -167,7 +178,13 @@ async def with_progress(
     step = 0
     async for event in events:
         message: str | None = None
-        if isinstance(event, MemberCompleted):
+        if isinstance(event, FanoutStarted):
+            # Reported, not just counted: until the first member lands there is nothing else to
+            # say, and a panel whose slowest seat runs for minutes is otherwise indistinguishable
+            # from a hung tool call — which is what these notifications exist to rule out.
+            step += 1
+            message = f"asking {event.identity} ({event.model})"
+        elif isinstance(event, MemberCompleted):
             observer.outcomes.append(event.outcome)
             step += 1
             message = (
@@ -223,9 +240,21 @@ async def run_consult(
     try:
         plan = resolve_plan(catalog, ir)
     except MomError as exc:
-        # A caller mistake — unknown ensemble, unknown effort tier, a panel the config rejects.
-        # The agent has to change the call, so this is a protocol-level error, not an outcome.
+        # A caller mistake — unknown ensemble, unknown llm, a panel the config rejects. It is
+        # reported as a failed *call* (no result payload) rather than a run outcome, because the
+        # agent has to change the arguments before anything can run.
         raise ToolError(exc.safe_message) from exc
+
+    if effort and plan.tier is None:
+        # `resolve_plan` only validates an effort token against an ensemble that declares tiers;
+        # for one that doesn't — every inline panel, since they are tierless — it neither applies
+        # nor rejects it. Silently accepting an argument that cannot do anything is the wrong
+        # answer for a tool an agent calls believing it bought deeper reasoning.
+        raise ToolError(
+            f"ensemble {name!r} declares no effort tiers, so `effort` would have no effect"
+            if ensemble is not None
+            else "an inline `panel` has no effort tiers; configure an ensemble to use `effort`"
+        )
 
     if name == INLINE_ENSEMBLE:
         # Coalescing keys on the ensemble NAME plus the messages, never the roster, so two
@@ -242,12 +271,18 @@ async def run_consult(
     # already; over stdio it never had one, and must not learn it from here.
     progress_url = progress_url_from_base(base_url, leader_request_id, container, with_token=False)
     observer = RunObserver()
-    # One step per member, one for synthesis starting, and one left unclaimed: synthesis is
-    # usually the longest wait, so a bar that reads 100% the moment it begins is a lie.
-    total = len(plan.members) + 2
+    # Two steps per member (asked, then answered), one for synthesis starting, and one left
+    # unclaimed: synthesis is usually the longest wait, so a bar reading 100% the moment it
+    # begins is a lie.
+    total = len(plan.members) * 2 + 2
 
     try:
-        result = await collect(with_progress(events, ctx, observer, total=total))
+        # `aclosing`, because `collect` raises from inside its own `async for`: without it the
+        # generator chain is left suspended at `yield PipelineFailed(...)`, deferring
+        # `run_ensemble`'s cleanup — which cancels still-pending member calls — to garbage
+        # collection. Abandoned upstream calls would keep running after the tool returned.
+        async with aclosing(with_progress(events, ctx, observer, total=total)) as stream:
+            result = await collect(stream)
     except MomError as exc:
         return consult_failure(
             exc,
@@ -256,6 +291,7 @@ async def run_consult(
             coalesced=coalesced,
             progress_url=progress_url,
             members=observer.reports(include_answers=include_member_answers),
+            usage=observer.usage,
         )
 
     # The observer for both outcomes, not `result.outcomes` here and the observer there: the two
@@ -268,5 +304,4 @@ async def run_consult(
         coalesced=coalesced,
         progress_url=progress_url,
         members=observer.reports(include_answers=include_member_answers),
-        include_answers=include_member_answers,
     )
