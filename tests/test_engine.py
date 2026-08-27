@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from textwrap import dedent
 
 import pytest
@@ -20,7 +21,9 @@ from mom.domain.events import (
     MemberCompleted,
 )
 from mom.domain.metrics import CallMetric
+from mom.domain.ports import CompletionChunk
 from mom.domain.request import ChatRequestIR, MessageIR
+from mom.domain.results import Usage
 from mom.engine.coalesce import CoalesceRegistry
 from mom.engine.pipeline import PipelineDeps, collect, run_ensemble
 from mom.engine.plan import resolve_plan
@@ -334,13 +337,20 @@ async def test_timed_out_member_reports_a_real_duration():
     assert member_metric.duration_ms > 0
 
 
-async def test_internal_error_logs_a_terminal_line():
+async def test_internal_error_logs_a_terminal_line_without_the_exception_message():
     """An unexpected exception becomes a PipelineFailed event rather than propagating, so it never
-    reaches the API error handler — this log line is the only place such a bug is visible."""
+    reaches the API error handler — this log line is the only place such a bug is visible.
+
+    It must not carry `exc_info`. A rendered traceback ends in ``ExceptionType: <message>``, and an
+    exception raised while parsing a provider's chunk carries that provider's text in its message
+    — so a traceback here is an unbounded content channel. Note `capture_logs` does not run
+    `format_exc_info`, so it would show only an `exc_info: True` flag and never the leaked text:
+    asserting the key's *absence* is what actually pins this shut.
+    """
 
     class _BrokenSynth(FakeLLM):
         async def stream(self, spec):
-            raise ValueError("bug in the pipeline")
+            raise ValueError("SECRET-PROVIDER-PAYLOAD")
             yield  # pragma: no cover - makes this an async generator
 
     catalog = _catalog(CONFIG)
@@ -354,7 +364,40 @@ async def test_internal_error_logs_a_terminal_line():
     assert failed["log_level"] == "error"
     assert failed["code"] == "internal_error"
     assert failed["request_id"] == "req-7"
-    assert "bug in the pipeline" not in repr({k: v for k, v in failed.items() if k != "exc_info"})
+    assert "exc_info" not in failed  # the whole point: no traceback rendering, ever
+    assert failed["error_type"] == "ValueError"  # class name locates the bug…
+    assert re.fullmatch(r"\w+\.py:\d+ in \w+", str(failed["error_site"]))  # …so does the frame
+    assert "SECRET" not in repr(logs)
+
+
+async def test_malformed_provider_tool_call_does_not_leak_into_the_log():
+    """The concrete path behind the rule above: `int(call["index"])` on a malformed tool call
+    raises ValueError whose message is the provider's raw value verbatim."""
+
+    class _EvilProvider(FakeLLM):
+        async def stream(self, spec):
+            yield CompletionChunk(
+                tool_call={
+                    "index": "sk-live-SECRET-KEY",  # non-numeric -> int() raises
+                    "id": "c1",
+                    "name": "f",
+                    "arguments": "{}",
+                },
+                usage=Usage(),
+            )
+
+    catalog = _catalog(CONFIG)
+    plan = resolve_plan(catalog, _ir())
+    deps = PipelineDeps(client=_EvilProvider(), clock=ManualClock(), request_id="req-11")
+    with capture_logs() as logs:
+        events = [event async for event in run_ensemble(plan, deps)]
+
+    assert any(type(e).__name__ == "PipelineFailed" for e in events)
+    failed = next(e for e in logs if e["event"] == "run failed")
+    assert failed["error_type"] == "ValueError"
+    # Raised inside the pipeline itself here, so the site names our own module.
+    assert str(failed["error_site"]).startswith("pipeline.py:")
+    assert "sk-live" not in repr(logs)
 
 
 async def test_coalesced_followers_do_not_duplicate_lifecycle_lines():

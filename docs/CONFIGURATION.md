@@ -663,11 +663,16 @@ denominator. A member detached after a client disconnect finishes in the backgro
 costs are; prompts, completions, reasoning, and tool arguments are not.
 
 Provider **error** text is a separate matter. The lifecycle lines above carry only a classified
-`error_kind`, and the client-visible error carries only a safe message. But the operator-facing
-`member call failed` warning deliberately logs the provider's own exception chain so a failure can
-actually be diagnosed, and that text is **not** scrubbed — it can contain API keys, bearer tokens,
-or internal URLs. Treat the log stream as sensitive: it is fine on a host you control, but scrub or
-filter before shipping it to a third-party aggregator.
+`error_kind`, and the client-visible error carries only a safe message. Internal-error lines report
+an exception's type and source location (`pipeline.py:809 in run_ensemble`) rather than a
+traceback, because a traceback's last line embeds the exception message — and an exception raised
+while parsing a provider's response carries that provider's text in it.
+
+The one exception is the operator-facing `member call failed` warning, which deliberately logs the
+provider's own exception chain so a failure can actually be diagnosed. That text is **not**
+scrubbed — it can contain API keys, bearer tokens, or internal URLs. Treat the log stream as
+sensitive: it is fine on a host you control, but scrub or filter before shipping it to a
+third-party aggregator.
 
 **Provider API keys** are read directly from the environment, by the names inferred (or set
 via `api_key_env`) in `llms`:

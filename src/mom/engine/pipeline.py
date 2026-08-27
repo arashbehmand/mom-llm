@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
+import traceback
 from typing import Any
 import uuid
 
@@ -200,6 +202,22 @@ def _record_synth_failure(
             attempts=attempts,
         )
     )
+
+
+def _exc_site(exc: BaseException) -> str:
+    """Where an exception was raised, as ``file:line in function`` — never its message.
+
+    Deliberately not a traceback: a traceback's final line is ``ExceptionType: <message>``, and an
+    exception raised while parsing a provider's chunk carries that provider's text in its message
+    (``int(call["index"])`` on a malformed tool call renders the raw value verbatim). A file name,
+    line number and function name are identifiers from this repo, never provider data — so this
+    still says where to look without putting an unbounded string on stdout.
+    """
+    frames = traceback.extract_tb(exc.__traceback__)
+    if not frames:
+        return "unknown"
+    innermost = frames[-1]
+    return f"{Path(innermost.filename).name}:{innermost.lineno} in {innermost.name}"
 
 
 def _coerce_finish(value: str | None) -> FinishReason:
@@ -895,7 +913,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             elapsed_seconds=round(deps.clock.now() - run_started, 2),
         )
         yield PipelineFailed(code=exc.code, message=exc.safe_message, http_status=exc.http_status)
-    except Exception:
+    except Exception as exc:
         if synthesizing:
             _record_synth_failure(
                 deps,
@@ -911,11 +929,13 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             ProgressEvent(kind="failed", ensemble=plan.ensemble, detail="internal error")
         )
         # An internal bug here yields PipelineFailed without ever reaching the API error handler,
-        # so this is the only place it can be seen. exc_info is operator-only, same as the cause
-        # text on the member warnings above.
-        log.exception(
+        # so this is the only place it can be seen. Type and source location, NOT exc_info: see
+        # _exc_site for why a traceback can't be logged here.
+        log.error(
             "run failed",
             code="internal_error",
+            error_type=type(exc).__name__,
+            error_site=_exc_site(exc),
             elapsed_seconds=round(deps.clock.now() - run_started, 2),
         )
         yield PipelineFailed(code="internal_error", message="Internal server error")
