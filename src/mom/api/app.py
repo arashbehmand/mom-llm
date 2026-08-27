@@ -23,6 +23,7 @@ from mom.api.routers.metrics import router as metrics_router
 from mom.api.routers.models import router as models_router
 from mom.api.routers.progress import router as progress_router
 from mom.api.routers.responses import router as responses_router
+from mom.runtime.logging import configure_logging
 from mom.runtime.settings import Settings
 
 
@@ -38,6 +39,11 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
             return
         from mom.runtime.wiring import build_container
 
+        # Here, not in create_app's body: the lifespan runs in every real serving process
+        # (uvicorn factory mode, --reload children, direct ASGI) while tests with a prebuilt
+        # container return above and never mutate global logging state. Before build_container,
+        # so its startup catalog warnings come out formatted.
+        configure_logging(level=settings.log_level, fmt=settings.log_format)
         built, cleanup = await build_container(settings)
         app.state.container = built
         try:

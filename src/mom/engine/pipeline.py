@@ -134,6 +134,7 @@ def _record_synth(
     *,
     finish_reason: str | None = None,
     attempts: int = 1,
+    duration_ms: float | None = None,
 ) -> None:
     if deps.recorder is None:
         return
@@ -146,6 +147,7 @@ def _record_synth(
             model=plan.synth.model,
             role="synthesis",
             status="ok",
+            duration_ms=duration_ms,
             turn_type=turn_type,
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
@@ -160,6 +162,11 @@ def _record_synth(
     )
 
 
+def _elapsed_ms(deps: PipelineDeps, started: float | None) -> float | None:
+    """Milliseconds since ``started``, or None if the stage never began."""
+    return None if started is None else (deps.clock.now() - started) * 1000.0
+
+
 def _record_synth_failure(
     deps: PipelineDeps,
     plan: ExecutionPlan,
@@ -169,6 +176,7 @@ def _record_synth_failure(
     error_kind: ErrorKind,
     error_detail: str | None,
     attempts: int,
+    duration_ms: float | None = None,
 ) -> None:
     """A failed synthesis call used to be recorded nowhere — the metrics DB simply had no row for
     it, so a repeatedly-failing (and repeatedly-retried, per this session's own retry-loop fix)
@@ -184,6 +192,7 @@ def _record_synth_failure(
             model=plan.synth.model,
             role="synthesis",
             status="error",
+            duration_ms=duration_ms,
             turn_type=turn_type,
             error=error,
             error_kind=error_kind,
@@ -228,11 +237,15 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
         timeout = member.spec.timeout_seconds
         completion = await asyncio.wait_for(deps.client.complete(member.spec), timeout=timeout)
     except TimeoutError:
+        # Elapsed on every failure path too, not just success: a member that timed out or errored
+        # otherwise reports duration_ms=0 (the ModelOutcome default) in logs, metrics and traces —
+        # zero on exactly the outcomes an operator is trying to time.
         return ModelOutcome(
             **common,  # type: ignore[arg-type]
             status="timeout",
             error="timed out",
             error_kind="timeout",
+            duration_ms=(deps.clock.now() - start) * 1000.0,
         )
     except MomError as exc:
         # exc.safe_message is what the client sees; log the real cause for the operator — this
@@ -256,6 +269,7 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
             error_kind=exc.kind,
             error_detail=exc.detail,
             attempts=exc.attempts,
+            duration_ms=(deps.clock.now() - start) * 1000.0,
         )
     except Exception as exc:
         # Never surface raw provider/third-party text (it can carry keys, URLs, internal paths);
@@ -274,6 +288,7 @@ async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome
             status="error",
             error="call failed",
             error_kind="unknown",
+            duration_ms=(deps.clock.now() - start) * 1000.0,
         )
     duration_ms = (deps.clock.now() - start) * 1000.0
     # A member that only proposed tool calls (no prose) is still a real answer, not "empty" — its
@@ -358,9 +373,30 @@ def _detach_member(
         if t.cancelled():
             return
         if t.exception() is not None:
-            logger.warning("detached fan-out member errored", error=str(t.exception()))
+            logger.warning(
+                "detached fan-out member errored",
+                request_id=deps.request_id,
+                ensemble=plan.ensemble,
+                error=str(t.exception()),
+            )
             return
-        _record_member(deps, plan, t.result(), turn_type)
+        outcome = t.result()
+        _record_member(deps, plan, outcome, turn_type)
+        # The run's own logging ended with the client; without this, a detached member's spend is
+        # recorded as a metric but never appears in the log, so the lines under-report real cost.
+        # Distinct event name because it lands after this request's "run completed".
+        logger.info(
+            "detached member completed",
+            request_id=deps.request_id,
+            ensemble=plan.ensemble,
+            llm=outcome.llm,
+            model=outcome.model,
+            status=outcome.status,
+            cached=outcome.cached,
+            duration_ms=round(outcome.duration_ms, 1),
+            tokens=outcome.usage.total_tokens,
+            cost_usd=round(outcome.cost_usd, 6),
+        )
 
     task.add_done_callback(_done)
 
@@ -374,6 +410,15 @@ async def _fan_out(
 
     async def run(member: PlannedMember) -> ModelOutcome:
         async with sem:  # cap concurrent upstream calls
+            # Inside the semaphore, so this marks when the call actually goes out — not when it
+            # was planned. On a panel wider than max_concurrency the stagger is the whole signal.
+            logger.info(
+                "member dispatched",
+                request_id=deps.request_id,
+                ensemble=plan.ensemble,
+                llm=member.identity,
+                model=member.spec.model,
+            )
             return await _run_member(deps, member)
 
     tasks = [asyncio.create_task(run(m)) for m in plan.members]
@@ -401,7 +446,10 @@ async def _fan_out(
             )
             if not done:  # deadline elapsed with nothing new — abandon the stragglers
                 logger.warning(
-                    "fan-out deadline exceeded", ensemble=plan.ensemble, pending=len(pending)
+                    "fan-out deadline exceeded",
+                    request_id=deps.request_id,
+                    ensemble=plan.ensemble,
+                    pending=len(pending),
                 )
                 # In plan (config) order, not set-iteration order, for a deterministic sequence.
                 # Still genuinely running (not done) — leave them IN `pending` so `finally` below
@@ -507,10 +555,20 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
     turn_type: TurnType = "relay" if plan.skip_reason == "tool_continuation" else "ensemble"
     terminal_published = False
     run_started = deps.clock.now()
+    # Bound rather than contextvars: this generator is consumed from varying tasks (the router's,
+    # a coalescing leader's, or `aclose()` during registry teardown), so there is no single context
+    # to bind to — and structlog's capture_logs drops merge_contextvars, which would make these
+    # fields invisible to tests. Every line below carries request_id/ensemble for free.
+    log = logger.bind(request_id=deps.request_id, ensemble=plan.ensemble)
     # True only once the REAL synthesizer call is under way (not the vote/first short-circuit's
     # synthetic SynthesisStarted, which never calls an LLM) — gates the failure-recording below so
     # a fan-out-stage error is never mistakenly recorded as a synthesis failure.
     synthesizing = False
+    synth_started: float | None = None
+    # The DISPATCHED roster size, not len(outcomes): a member abandoned at the fan-out deadline
+    # never yields a MemberCompleted, so counting outcomes would report "2 of 2 ok" as "1 of 1 ok"
+    # — erasing the shortfall from the one line that exists to summarize it.
+    members_total = 0
 
     def _publish_terminal(event: ProgressEvent) -> None:
         nonlocal terminal_published
@@ -533,6 +591,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                     detail=plan.skip_reason,
                 ),
             )
+            log.info("fan-out skipped", reason=plan.skip_reason)
             if plan.skip_reason is not None:
                 yield FanoutSkipped(plan.skip_reason)
             synth_messages = plan.client_messages
@@ -553,11 +612,32 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                     members=tuple((m.identity, m.spec.model) for m in plan.members),
                 ),
             )
+            log.info(
+                "fan-out started",
+                members_total=members_total,
+                members=[f"{m.identity}={m.spec.model}" for m in plan.members],
+            )
             async for event in _fan_out(deps, plan, turn_type):
                 if isinstance(event, MemberCompleted):
                     outcome = event.outcome
                     outcomes.append(outcome)
                     _record_member(deps, plan, outcome, turn_type)
+                    # Fires for failed members too, so an operator can count members in and out;
+                    # the cause of a failure stays on the warning _run_member already logs.
+                    log.info(
+                        "member completed",
+                        llm=outcome.llm,
+                        model=outcome.model,
+                        status=outcome.status,
+                        cached=outcome.cached,
+                        duration_ms=round(outcome.duration_ms, 1),
+                        tokens=outcome.usage.total_tokens,
+                        cost_usd=round(outcome.cost_usd, 6),
+                        attempts=outcome.attempts,
+                        completed=len(outcomes),
+                        members_total=members_total,
+                        **({"error_kind": outcome.error_kind} if outcome.error_kind else {}),
+                    )
                     _publish(
                         deps,
                         ProgressEvent(
@@ -594,6 +674,13 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                             finish_reason=outcome.finish_reason,
                         )
                 elif isinstance(event, MemberAbandoned):
+                    # The deadline warning above counts stragglers; this names them.
+                    log.warning(
+                        "member abandoned",
+                        llm=event.identity,
+                        model=event.model,
+                        disposition="detached" if plan.detach_on_disconnect else "aborted",
+                    )
                     # Reuses "member_completed" (not a new ProgressKind): the dashboard's
                     # fillCard is the only code path that clears a pending slot, and it already
                     # keys off ANY member_completed event regardless of status — so this needs no
@@ -648,6 +735,15 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                     _publish_terminal(
                         ProgressEvent(kind="completed", ensemble=plan.ensemble, status="tool_calls")
                     )
+                    log.info(
+                        "run completed",
+                        status="tool_calls",
+                        strategy=plan.tool_strategy,
+                        members_ok=ok_count,
+                        members_total=members_total,
+                        total_cost_usd=round(sum(o.cost_usd for o in outcomes), 6),
+                        elapsed_seconds=round(deps.clock.now() - run_started, 2),
+                    )
                     return
             if any(o.ok for o in outcomes):
                 synth_messages = build_synthesis_messages(
@@ -673,6 +769,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 model=plan.synth.model,
             ),
         )
+        log.info("synthesis started", llm=plan.synth.llm_name, model=plan.synth.model)
         usage = Usage()
         synth_llm_cost: float | None = None
         synth_attempts = 1
@@ -680,6 +777,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         started_tools: set[int] = set()
         synth_text: list[str] = []
         synthesizing = True  # a real LLM call from here on — gates failure recording below
+        synth_started = deps.clock.now()  # also read by the failure handlers below
         synth_stream = deps.client.stream(_synth_spec(plan, synth_messages))
         async for chunk in _stream_with_timeout(synth_stream, plan.synth.timeout_seconds):
             if chunk.attempts is not None:
@@ -712,13 +810,21 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             if chunk.finish_reason:
                 finish = _coerce_finish(chunk.finish_reason)
 
+        synth_duration_ms = (deps.clock.now() - synth_started) * 1000.0
         if plan.synth.pricing is not None:
             synth_cost = compute_cost(usage, plan.synth.pricing)
         else:
             synth_cost = synth_llm_cost or 0.0
             _warn_once_if_free(plan.synth.model, usage, synth_cost)
         _record_synth(
-            deps, plan, usage, synth_cost, turn_type, finish_reason=finish, attempts=synth_attempts
+            deps,
+            plan,
+            usage,
+            synth_cost,
+            turn_type,
+            finish_reason=finish,
+            attempts=synth_attempts,
+            duration_ms=synth_duration_ms,
         )
         if deps.tracer is not None:
             deps.tracer.observe(
@@ -730,7 +836,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 messages=synth_messages,
                 output="".join(synth_text),
                 usage=usage,
-                duration_ms=0.0,
+                duration_ms=synth_duration_ms,
                 status="ok",
                 cost_usd=synth_cost,
                 finish_reason=finish,
@@ -746,6 +852,16 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 status=finish,
                 preview=_preview("".join(synth_text)),
             ),
+        )
+        log.info(
+            "run completed",
+            status=finish,
+            members_ok=sum(1 for o in outcomes if o.ok),
+            members_total=members_total,
+            synthesis_ms=round(synth_duration_ms, 1),
+            total_tokens=total_usage.total_tokens,
+            total_cost_usd=round(total_cost, 6),
+            elapsed_seconds=round(deps.clock.now() - run_started, 2),
         )
         yield Completed(finish_reason=finish, usage=total_usage, total_cost_usd=total_cost)
     except MomError as exc:
@@ -763,9 +879,20 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 error_kind=exc.kind,
                 error_detail=exc.detail,
                 attempts=exc.attempts,
+                duration_ms=_elapsed_ms(deps, synth_started),
             )
         _publish_terminal(
             ProgressEvent(kind="failed", ensemble=plan.ensemble, detail=exc.safe_message)
+        )
+        # safe_message, never exc.detail: the client-safe half is the one that is safe to log
+        # unconditionally. Covers QuorumNotMet and synthesis failures, previously logged nowhere.
+        log.warning(
+            "run failed",
+            code=exc.code,
+            error_kind=exc.kind,
+            error=exc.safe_message,
+            synthesizing=synthesizing,
+            elapsed_seconds=round(deps.clock.now() - run_started, 2),
         )
         yield PipelineFailed(code=exc.code, message=exc.safe_message, http_status=exc.http_status)
     except Exception:
@@ -778,9 +905,18 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 error_kind="unknown",
                 error_detail=None,
                 attempts=1,
+                duration_ms=_elapsed_ms(deps, synth_started),
             )
         _publish_terminal(
             ProgressEvent(kind="failed", ensemble=plan.ensemble, detail="internal error")
+        )
+        # An internal bug here yields PipelineFailed without ever reaching the API error handler,
+        # so this is the only place it can be seen. exc_info is operator-only, same as the cause
+        # text on the member warnings above.
+        log.exception(
+            "run failed",
+            code="internal_error",
+            elapsed_seconds=round(deps.clock.now() - run_started, 2),
         )
         yield PipelineFailed(code="internal_error", message="Internal server error")
     finally:
@@ -800,10 +936,8 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             # this the only trace is a progress event that ages out of the bus within the hour.
             # The elapsed number is the diagnostic: it is a client/proxy read-timeout, and which
             # one is a question of *which* value it lands on, every time, across requests.
-            logger.warning(
+            log.warning(
                 "run torn down before it finished — client disconnected",
-                request_id=deps.request_id,
-                ensemble=plan.ensemble,
                 elapsed_seconds=round(deps.clock.now() - run_started, 1),
                 reached_synthesis=synthesizing,
             )

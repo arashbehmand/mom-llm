@@ -78,3 +78,28 @@ def test_create_app_is_pure_construction():
     # Recent Starlette nests included routers (`_IncludedRouter`) instead of flattening them into
     # app.routes, so assert route existence via the generated OpenAPI schema (version-stable).
     assert "/v1/chat/completions" in app.openapi()["paths"]
+
+
+async def test_lifespan_configures_logging_from_settings(monkeypatch):
+    """Issue #31's root cause: configure_logging existed but nothing ever called it, so
+    MOM_LOG_LEVEL/MOM_LOG_FORMAT were inert and the gateway ran on structlog's defaults."""
+    calls: list[dict[str, str]] = []
+
+    def _record(*, level: str, fmt: str) -> None:
+        calls.append({"level": level, "fmt": fmt})
+
+    async def _fake_build_container(settings):
+        return object(), _noop_cleanup
+
+    async def _noop_cleanup() -> None:
+        return None
+
+    monkeypatch.setattr("mom.api.app.configure_logging", _record)
+    monkeypatch.setattr("mom.runtime.wiring.build_container", _fake_build_container)
+
+    settings = Settings(log_level="DEBUG", log_format="json")
+    app = create_app(settings)  # no prebuilt container -> the lifespan builds one
+    async with app.router.lifespan_context(app):
+        pass
+
+    assert calls == [{"level": "DEBUG", "fmt": "json"}]

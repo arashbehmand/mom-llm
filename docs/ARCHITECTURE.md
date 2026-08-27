@@ -169,6 +169,20 @@ Every endpoint follows the same five moves. Taking `POST /v1/chat/completions` a
 5. **Render.** The router hands the event iterator to the protocol's encoder — `encode_sse` for a
    streaming response, or `collect()` + `build_*` for JSON.
 
+### What this looks like in the logs
+
+Each of those milestones also emits one `INFO` log line, bound to the request's id and ensemble, so
+`docker logs` narrates a live request without a debug flag: the fan-out roster, a `member
+dispatched` line as each call leaves (logged inside the concurrency semaphore, so a panel wider than
+`max_concurrency` shows its stagger), a `member completed` line as each lands, `synthesis started`,
+and a closing `run completed` with totals and elapsed time. Because they are emitted here rather
+than in the routers, all three surfaces and both render modes narrate identically.
+
+These lines carry the same coarse shape as the `ProgressEvent`s published alongside them, minus
+`preview` — the dashboard's previews are truncated model output, which belongs on an ephemeral,
+same-origin bus and not in a durable log. See [Reading the
+logs](CONFIGURATION.md#reading-the-logs).
+
 ### Sampling note
 
 Client generation controls (`temperature`, `top_p`, `max_tokens`, `stop`, `seed`) are applied to
