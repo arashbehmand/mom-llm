@@ -31,6 +31,31 @@ def resolve_request_id(supplied: str | None, ids: IdFactory) -> str:
     return ids.new_id("req")
 
 
+def progress_url_from_base(
+    base: str | None, request_id: str, container: Container, *, with_token: bool = True
+) -> str | None:
+    """The progress URL against an explicit base, or ``None`` when no base is knowable.
+
+    ``server.public_url`` wins over the caller's base when configured; ``None`` comes back only
+    when neither exists — the stdio MCP server, which has no request to derive a host from and so
+    genuinely cannot name a reachable link rather than guessing at one.
+
+    ``with_token`` is what makes the link openable by a browser, and therefore what must be off
+    anywhere the link is *data* rather than a response header: the MCP surface returns it inside a
+    tool result, which lands in a model's context and travels wherever that agent sends its
+    transcript. Over stdio the caller never presented the token in the first place.
+    """
+    public_url = container.catalog.config.server.public_url
+    resolved = f"{public_url.rstrip('/')}/" if public_url else base
+    if resolved is None:
+        return None
+    url = f"{resolved.rstrip('/')}/v1/progress/{request_id}"
+    token = container.settings.api_token
+    if with_token and container.catalog.config.server.auth != "none" and token is not None:
+        url = f"{url}?token={quote(token.get_secret_value())}"
+    return url
+
+
 def progress_url(http_request: Request, request_id: str, container: Container) -> str:
     """The browser-openable URL for this request's live progress feed.
 
@@ -42,12 +67,9 @@ def progress_url(http_request: Request, request_id: str, container: Container) -
     internal-only hostname), so without an explicit public URL the generated link would be
     unreachable from outside that network.
     """
-    public_url = container.catalog.config.server.public_url
-    base = f"{public_url.rstrip('/')}/" if public_url else str(http_request.base_url)
-    url = f"{base}v1/progress/{request_id}"
-    token = container.settings.api_token
-    if container.catalog.config.server.auth != "none" and token is not None:
-        url = f"{url}?token={quote(token.get_secret_value())}"
+    # Never None here: an HTTP request always supplies a base.
+    url = progress_url_from_base(str(http_request.base_url), request_id, container)
+    assert url is not None  # noqa: S101
     return url
 
 

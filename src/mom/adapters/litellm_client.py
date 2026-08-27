@@ -166,6 +166,37 @@ def uncatalogued_models(models: Iterable[str]) -> dict[str, list[str]]:
     return {provider: sorted(models) for provider, models in sorted(grouped.items())}
 
 
+def pricing_for(model: str) -> dict[str, float] | None:
+    """Per-1M-token USD rates from litellm's pinned catalog, or ``None`` when it has no entry.
+
+    Catalogue lookup only — this is what a *listing* (the MCP ``list_llms`` tool) shows when
+    config declares no ``pricing:`` block, which is the common case since litellm prices calls at
+    runtime. Costing a real call still goes through ``compute_cost``/``_cost_from_usage``; nothing
+    here feeds spend accounting.
+
+    Exact key then bare id, the same two-step ``uncatalogued_models`` uses, and for the same
+    reason: a near-miss would quote someone else's prices.
+
+    Returns plain floats rather than a ``Pricing`` so this module keeps importing nothing from
+    ``mom.config``/``mom.domain.cost`` — litellm stays sealed in here (invariant #4).
+    """
+    import litellm
+
+    _, _, bare = model.rpartition("/")
+    entry = litellm.model_cost.get(model) or litellm.model_cost.get(bare)
+    if not isinstance(entry, dict):
+        return None
+    rates = {
+        "input_per_1m": entry.get("input_cost_per_token"),
+        "output_per_1m": entry.get("output_cost_per_token"),
+        "reasoning_per_1m": entry.get("output_cost_per_reasoning_token"),
+        "cache_read_per_1m": entry.get("cache_read_input_token_cost"),
+        "cache_write_per_1m": entry.get("cache_creation_input_token_cost"),
+    }
+    priced = {k: float(v) * 1_000_000 for k, v in rates.items() if isinstance(v, (int, float))}
+    return priced or None
+
+
 def _provider_of(model: str) -> str | None:
     """litellm's routing decision for a model id; ``None`` when it can't route it at all (an
     unroutable id fails loudly on its first call — not something to diagnose at startup)."""

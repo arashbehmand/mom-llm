@@ -70,3 +70,17 @@ class MetricsReader(Protocol):
     ) -> list[dict[str, object]]:
         """Aggregate usage/cost grouped by a dimension (member / turn_type / day)."""
         ...
+
+    async def estimated_cache_savings(
+        self, *, start: float | None = None, end: float | None = None, ensemble: str | None = None
+    ) -> float:
+        """What the cache hits in the window would have cost at their llm's average price."""
+        ...
+
+    async def recent_runs(self, *, limit: int = 20) -> list[dict[str, object]]:
+        """The most recently active runs, one row each (newest first)."""
+        ...
+
+    async def run_calls(self, request_id: str) -> list[dict[str, object]]:
+        """Every recorded call of one run, oldest first (members then synthesis)."""
+        ...

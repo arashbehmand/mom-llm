@@ -12,7 +12,12 @@ from mom.runtime.logging import get_logger
 logger = get_logger("mom.api")
 
 
-def _error_body(message: str, error_type: str, code: str) -> dict[str, object]:
+def error_body(message: str, error_type: str, code: str) -> dict[str, object]:
+    """The OpenAI-shaped error envelope every mom surface answers with.
+
+    Public because the mounted MCP sub-app renders its own auth/gating failures: a mount runs
+    outside the handlers installed below, so it has to build the same body rather than inherit it.
+    """
     return {"error": {"message": message, "type": error_type, "code": code}}
 
 
@@ -20,11 +25,11 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(MomError)
     async def _handle_mom_error(_request: Request, exc: Exception) -> JSONResponse:
         if not isinstance(exc, MomError):  # narrowing; the handler is only registered for MomError
-            body = _error_body("Internal server error", "api_error", "internal_error")
+            body = error_body("Internal server error", "api_error", "internal_error")
             return JSONResponse(status_code=500, content=body)
         return JSONResponse(
             status_code=exc.http_status,
-            content=_error_body(exc.safe_message, exc.error_type, exc.code),
+            content=error_body(exc.safe_message, exc.error_type, exc.code),
         )
 
     @app.exception_handler(Exception)
@@ -32,5 +37,5 @@ def install_error_handlers(app: FastAPI) -> None:
         logger.error("unhandled error", error=str(exc), exc_info=exc)
         return JSONResponse(
             status_code=500,
-            content=_error_body("Internal server error", "api_error", "internal_error"),
+            content=error_body("Internal server error", "api_error", "internal_error"),
         )

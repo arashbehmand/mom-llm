@@ -134,3 +134,6 @@ class NullCacheStore:
 
     async def put(self, key: str, llm: str, body: str, *, now: float) -> None:  # noqa: ARG002
         return None
+
+    async def stats(self) -> dict[str, int]:
+        return {"entries": 0, "bytes": 0, "hits": 0}

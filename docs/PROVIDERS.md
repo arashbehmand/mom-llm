@@ -18,7 +18,9 @@ exist because the Anthropic SDK appends `/v1/messages` to its base URL while Ope
 `server.auth: none`, the API key can be any non-empty string.
 
 MoM exposes, all under `/v1`: `POST /chat/completions`, `POST /responses`, `POST /messages`
-(+ `/messages/count_tokens`), and `GET /models`. `GET /health` needs no auth.
+(+ `/messages/count_tokens`), and `GET /models`. `GET /health` needs no auth. There is also an
+optional [MCP surface](#mcp-clients) at `/mcp`, which is a different way to use MoM: a tool your
+agent calls while staying on its own model, rather than a model it runs on.
 
 ---
 
@@ -156,6 +158,40 @@ Streaming (`client.messages.stream(...)`) and tool use work the same way.
 
 ---
 
+## MCP clients
+
+Everything above makes MoM the *model* a client runs on. MCP is the other arrangement: your agent
+keeps its own model and calls the panel as a tool when a question is worth more than one opinion.
+Turn the surface on with `server.mcp: { enabled: true }` (off by default), then:
+
+```bash
+# Claude Code, over HTTP — same port and token as /v1
+claude mcp add --transport http mom http://localhost:8000/mcp \
+  --header "Authorization: Bearer <your MoM token>"
+
+# ...or locally over stdio, with no gateway running at all
+claude mcp add mom -- mom mcp --config /etc/mom/config.yaml
+```
+
+Clients that read a JSON config (Cursor, Cline, Continue, Codex) take the same two shapes:
+
+```jsonc
+{"mcpServers": {
+  "mom": {"type": "http", "url": "http://localhost:8000/mcp",
+          "headers": {"Authorization": "Bearer <your MoM token>"}},
+  "mom-local": {"command": "mom", "args": ["mcp"],
+                "env": {"MOM_CONFIG": "/etc/mom/config.yaml"}}
+}}
+```
+
+The agent then has `consult` (a configured ensemble, or a panel it assembles from `list_llms` for
+that one question) plus read-only `list_llms`, `list_ensembles`, `runs`, `usage`, and
+`cache_stats`. The stdio form shares the gateway's databases, so a consult run there shows up in
+`mom metrics usage` and warms the same cache. Full tool and result reference:
+[API.md](API.md#mcp-mcp-and-mom-mcp).
+
+---
+
 ## Compatibility matrix
 
 All ensembles stream. "Tools" and "Reasoning" columns mark protocol support on that surface; the
@@ -173,6 +209,7 @@ shows work).
 | Continue | OpenAI Chat | `http://HOST:8000/v1` | ✅ | ✅ | ✅ |
 | `openai` SDK | OpenAI Chat **or** Responses | `http://HOST:8000/v1` | ✅ | ✅ | ✅ |
 | `anthropic` SDK | Anthropic Messages | `http://HOST:8000` | ✅ | ✅ | ✅ |
+| any MCP client | MCP (`/mcp` or `mom mcp`) | `http://HOST:8000/mcp` | — (progress notifications) | n/a — MoM *is* the tool | ✅ `effort` argument |
 
 ### Notes
 

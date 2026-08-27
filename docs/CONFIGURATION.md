@@ -130,6 +130,13 @@ server:
   run keeps going but stops accepting new attachers (a request landing after that point just
   starts its own fresh run). Off by default — enable once validated against real traffic.
   Currently wired into `/v1/chat/completions` only.
+- **`mcp`** — `enabled: true` mounts the [MCP tool surface](API.md#mcp-mcp-and-mom-mcp) at `/mcp`,
+  in the same process and behind the same bearer auth as `/v1` (`auth: none` applies here too). Off
+  by default: it is a second protocol on the same port, so turning it on should be deliberate. The
+  flag gates the **HTTP** surface only — `mom mcp` serves the same tools over stdio regardless,
+  since running that command is itself the opt-in. While disabled, `/mcp` answers 404 rather than
+  403, so a switched-off surface doesn't announce itself. Everything but `consult` is read-only,
+  and there is no purge or config-mutation tool on either transport.
 
 ---
 

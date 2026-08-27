@@ -41,6 +41,7 @@ _OPTIONAL_FIELDS: tuple[str, ...] = (
     "completed",
     "duration_ms",
     "preview",
+    "cost_usd",
 )
 
 
@@ -61,6 +62,10 @@ class ProgressEvent:
     completed: int | None = None  # members completed so far (member_completed)
     duration_ms: float | None = None
     preview: str | None = None  # truncated glimpse of the actual output (see PREVIEW_CHARS)
+    # This member's cost (member_completed) or the run total (completed). Optional because a
+    # progress event is a milestone, not an accounting record — metrics.db remains the ledger;
+    # this is what makes a still-running fan-out's spend visible (MCP `runs`, progress page).
+    cost_usd: float | None = None
 
     @property
     def terminal(self) -> bool:
@@ -94,6 +99,7 @@ class ProgressEvent:
             completed=data.get("completed"),
             duration_ms=data.get("duration_ms"),
             preview=data.get("preview"),
+            cost_usd=data.get("cost_usd"),
         )
 
     @classmethod

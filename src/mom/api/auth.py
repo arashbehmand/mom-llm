@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 import secrets
 
@@ -11,11 +12,16 @@ from mom.api.deps import Container, get_container
 from mom.domain.errors import AuthError, ConfigError
 
 
-def _present_token(request: Request) -> str | None:
-    header = request.headers.get("authorization")
+def present_token(headers: Mapping[str, str]) -> str | None:
+    """The token a caller presented, from ``Authorization: Bearer`` or ``x-api-key``.
+
+    Takes headers rather than a ``Request`` so the mounted MCP sub-app — which sees a raw ASGI
+    scope, never a FastAPI request — reads them the same way every router does.
+    """
+    header = headers.get("authorization")
     if header and header.lower().startswith("bearer "):
         return header[7:].strip()
-    return request.headers.get("x-api-key")
+    return headers.get("x-api-key")
 
 
 def _digest(value: str) -> bytes:
@@ -38,4 +44,4 @@ def check_token(container: Container, presented: str | None) -> None:
 async def require_api_key(request: Request) -> None:
     """Enforce the configured auth policy. No-op when the ensemble config sets auth: none."""
     container = get_container(request)
-    check_token(container, _present_token(request))
+    check_token(container, present_token(request.headers))

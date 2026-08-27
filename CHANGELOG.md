@@ -8,6 +8,30 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- **MCP surface — the panel as a tool call.** An agent can now ask an ensemble for a second opinion
+  without re-pointing its model endpoint mid-session, assemble a panel from the catalog for a single
+  question, and read gateway state without a shell on the host. Two transports over one definition:
+  streamable HTTP at `/mcp` (same process, port, and bearer auth as `/v1`; enabled with
+  `server.mcp: { enabled: true }`, **off by default**, and 404 while disabled), and `mom mcp` over
+  stdio for local clients — same config and data dir, no running gateway needed.
+
+  Six tools: `consult` runs a configured `ensemble` *or* an inline `panel` of catalog llms plus a
+  `synthesizer`, reporting progress per member as it goes and returning the synthesized answer with
+  a per-member cost breakdown and a `/v1/progress/{id}` link. `list_llms`, `list_ensembles`, `runs`,
+  `usage`, and `cache_stats` are read-only views. There is no purge or config-mutation tool on
+  either transport: a leaked token can already chat, and must not be able to destroy state.
+
+  `consult` returns one envelope for every outcome, discriminated by `status`: `ok` with the answer,
+  `tool_calls` when the panel answers with a tool call instead of prose, or `failed` with a
+  client-safe `{code, message, http_status}` — and, in that last case, the members that did complete
+  along with what they cost, so a run that dies upstream still accounts for its spend. Inline panels
+  are call-scoped (nothing is written to config), bill under the ensemble name `mcp:adhoc` (in
+  config's reserved-character namespace, so they can never shadow a configured ensemble), and
+  never coalesce, since request identity keys on the ensemble name rather than the roster.
+
+  Everything runs through the one orchestration path (`resolve_plan` → `run_ensemble` → `collect`);
+  the MCP surface is a fourth fold over the same typed event stream the wire encoders fold.
+
 - **Published container image** at `ghcr.io/arashbehmand/mom-llm`, built for `linux/amd64` and
   `linux/arm64` and tagged on release with the full version, `major.minor`, `major`, and `latest`.
 - **PyPI releases** — `pip install mom-llm`, published from the release workflow via PyPI trusted

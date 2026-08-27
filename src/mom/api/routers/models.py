@@ -71,6 +71,9 @@ def _openai_model(card: ModelCard, created: int) -> dict[str, Any]:
             "supports_reasoning": card.supports_reasoning,
             "supports_web_search": card.supports_web_search,
             "client_managed_mcp": True,
+            # MoM as an MCP *client* — whether it dials out to remote MCP servers itself (it does
+            # not; a client passes `type: mcp` blocks through instead). Unrelated to mom's own MCP
+            # surface at /mcp, which is about mom being the server someone else calls.
             "remote_mcp": False,
         },
     }

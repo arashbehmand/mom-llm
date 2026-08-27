@@ -667,6 +667,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                             duration_ms=outcome.duration_ms,
                             members_total=members_total,
                             completed=len(outcomes),
+                            cost_usd=outcome.cost_usd,
                             preview=_preview(
                                 outcome.content if outcome.ok else outcome.error or ""
                             ),
@@ -751,7 +752,13 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                     # This path used to `return` here with NO terminal progress event ever
                     # published — a dashboard watching a vote/first turn hung open forever.
                     _publish_terminal(
-                        ProgressEvent(kind="completed", ensemble=plan.ensemble, status="tool_calls")
+                        ProgressEvent(
+                            kind="completed",
+                            ensemble=plan.ensemble,
+                            status="tool_calls",
+                            # Members only — this path skips synthesis entirely.
+                            cost_usd=sum(o.cost_usd for o in outcomes),
+                        )
                     )
                     log.info(
                         "run completed",
@@ -868,6 +875,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                 kind="completed",
                 ensemble=plan.ensemble,
                 status=finish,
+                cost_usd=total_cost,
                 preview=_preview("".join(synth_text)),
             ),
         )

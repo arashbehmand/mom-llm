@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from mom.adapters.eventbus import InMemoryEventBus, RedisEventBus
+from mom.adapters.eventbus import InMemoryEventBus, RedisEventBus, RunIndexBus, _Channel
 from mom.api.reqid import resolve_request_id
 from mom.domain.progress import ProgressEvent
 from mom.testing import SequentialIds
@@ -54,6 +54,7 @@ def test_json_round_trip_preserves_all_fields():
         duration_ms=12.5,
         members_total=3,
         completed=1,
+        cost_usd=0.125,
     )
     assert ProgressEvent.from_json(event.to_json()) == event
 
@@ -294,3 +295,117 @@ async def test_redis_bus_reconnects_with_backoff_after_a_drop():
 
 async def _drain_bus(bus: RedisEventBus, request_id: str) -> list[str]:
     return [event.kind async for event in bus.subscribe(request_id)]
+
+
+# ---------------------------------------------------------------------------------------------
+# RunIndexBus — the "what is running right now" view neither bus can answer on its own
+# ---------------------------------------------------------------------------------------------
+def _index(inner: Any = None, **kwargs: Any) -> RunIndexBus:
+    clock = iter(range(1, 10_000))
+    return RunIndexBus(inner or InMemoryEventBus(), clock=lambda: float(next(clock)), **kwargs)
+
+
+async def test_run_index_forwards_every_event_to_the_wrapped_bus():
+    inner = InMemoryEventBus()
+    bus = _index(inner)
+    task = asyncio.create_task(_drain(inner, "r1"))
+    await _spin_until(lambda: bool(inner._channels.get("r1", _Channel()).subscribers))
+    bus.publish("r1", _ev("member_completed", member="a"))
+    bus.publish("r1", _ev("completed", status="stop"))
+    assert await asyncio.wait_for(task, timeout=1.0) == ["member_completed", "completed"]
+
+
+def test_run_index_folds_a_run_from_its_progress_events():
+    bus = _index()
+    bus.publish("r1", _ev("fanout_started", members=(("a", "m1"), ("b", "m2")), members_total=2))
+    bus.publish("r1", _ev("member_completed", member="a", model="m1", status="ok", cost_usd=0.25))
+
+    (run,) = bus.snapshot()
+    assert run.request_id == "r1"
+    assert run.state == "running"
+    assert run.members_total == 2
+    assert run.cost_usd == 0.25
+    members = {m.identity: m for m in run.members}
+    assert members["a"].status == "ok"
+    assert members["b"].status is None  # named upfront, still running
+
+
+def test_run_index_takes_the_terminal_total_rather_than_summing_twice():
+    """The completed event carries the whole run's cost (synthesis included), so it replaces the
+    running per-member sum instead of adding to it."""
+    bus = _index()
+    bus.publish("r1", _ev("member_completed", member="a", cost_usd=0.25))
+    bus.publish("r1", _ev("synthesis_started", member="s"))
+    assert bus.snapshot()[0].state == "synthesizing"
+    bus.publish("r1", _ev("completed", status="stop", cost_usd=0.40))
+
+    (run,) = bus.snapshot()
+    assert run.state == "completed"
+    assert run.cost_usd == 0.40
+    assert run.finish_reason == "stop"
+
+
+def test_run_index_records_why_a_run_failed():
+    bus = _index()
+    bus.publish("r1", _ev("failed", detail="quorum not met"))
+    (run,) = bus.snapshot()
+    assert (run.state, run.detail) == ("failed", "quorum not met")
+    assert run.in_flight is False
+
+
+def test_run_index_filters_by_request_id():
+    bus = _index()
+    bus.publish("r1", _ev("member_completed", member="a"))
+    bus.publish("r2", _ev("member_completed", member="b"))
+    assert [run.request_id for run in bus.snapshot("r2")] == ["r2"]
+    assert bus.snapshot("nope") == []
+
+
+def test_run_index_orders_by_most_recent_activity():
+    bus = _index()
+    bus.publish("r1", _ev("member_completed", member="a"))
+    bus.publish("r2", _ev("member_completed", member="b"))
+    bus.publish("r1", _ev("member_completed", member="c"))
+    assert [run.request_id for run in bus.snapshot()] == ["r1", "r2"]
+
+
+def test_run_index_evicts_finished_runs_past_their_ttl():
+    now = [0.0]
+    bus = RunIndexBus(
+        InMemoryEventBus(), ttl_seconds=10.0, clock=lambda: 1.0, monotonic=lambda: now[0]
+    )
+    bus.publish("r1", _ev("completed", status="stop"))
+    assert len(bus.snapshot()) == 1
+
+    now[0] = 100.0
+    assert bus.snapshot() == []
+
+
+def test_run_index_never_evicts_a_live_run():
+    """A fan-out can outlive any TTL (member timeouts are configurable in minutes). Dropping one
+    would report a running panel as gone — the exact failure this index exists to prevent."""
+    now = [0.0]
+    bus = RunIndexBus(
+        InMemoryEventBus(), ttl_seconds=1.0, clock=lambda: 1.0, monotonic=lambda: now[0]
+    )
+    bus.publish("r1", _ev("fanout_started", members_total=1))
+    now[0] = 10_000.0
+    assert [run.request_id for run in bus.snapshot()] == ["r1"]
+
+
+def test_run_index_caps_how_many_finished_runs_it_keeps():
+    bus = _index(max_runs=2)
+    for index in range(4):
+        bus.publish(f"r{index}", _ev("completed", status="stop"))
+    kept = {run.request_id for run in bus.snapshot()}
+    assert kept == {"r2", "r3"}  # the oldest finished runs go first
+
+
+def test_run_index_survives_an_event_it_cannot_fold():
+    """Indexing is a side benefit of publishing; it must never break the thing it observes."""
+    inner = InMemoryEventBus()
+    bus = _index(inner)
+    broken = _ev("member_completed", member="a")
+    object.__setattr__(broken, "members_total", "not-a-number")
+    bus.publish("r1", broken)
+    assert inner._channels["r1"].history == [broken]
