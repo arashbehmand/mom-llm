@@ -630,9 +630,49 @@ from `MOM_`-prefixed variables; several **legacy v1 names** are still accepted a
 | API token | `MOM_API_TOKEN` | `API_TOKEN` | The bearer token clients must present (when `auth: bearer`). |
 | Listen host / port | `MOM_HOST` / `MOM_PORT` | — | Also settable via `mom serve --host/--port`. |
 | Redis URL | `MOM_REDIS_URL` | `REDIS_URL` | Optional. |
-| Log level | `MOM_LOG_LEVEL` | — | e.g. `INFO`, `DEBUG`. |
+| Log level | `MOM_LOG_LEVEL` | — | `INFO` (default) narrates each request — see [Reading the logs](#reading-the-logs). `WARNING` keeps only problems; `DEBUG` adds per-request wire detail. |
 | Log format | `MOM_LOG_FORMAT` | — | `text` (default) or `json`. |
-| LiteLLM debug | `MOM_LITELLM_DEBUG` | `LITELLM_VERBOSE` | Verbose upstream logging. |
+| LiteLLM debug | `MOM_LITELLM_DEBUG` | `LITELLM_VERBOSE` | Verbose upstream logging. Not yet wired in v2. |
+
+### Reading the logs
+
+At the default `INFO` level a request narrates itself as it runs, so `docker logs` shows what the
+gateway is actually doing rather than only what went wrong. One request against a 2-member
+ensemble prints its roster, a line per member as the call goes out, a line per member as it lands,
+and a closing summary:
+
+```
+[info] fan-out started     request_id=req-9fd9… ensemble=mom members_total=2 members=['m1=openai/mock-a', 'm2=openai/mock-b']
+[info] member dispatched   request_id=req-9fd9… llm=m1 model=openai/mock-a
+[info] member dispatched   request_id=req-9fd9… llm=m2 model=openai/mock-b
+[info] member completed    request_id=req-9fd9… llm=m1 status=ok cached=False duration_ms=302.0 tokens=18 cost_usd=0.0 attempts=1 completed=1 members_total=2
+[info] member completed    request_id=req-9fd9… llm=m2 status=ok cached=False duration_ms=301.7 tokens=18 cost_usd=0.0 attempts=1 completed=2 members_total=2
+[info] synthesis started   request_id=req-9fd9… llm=syn model=openai/mock-syn
+[info] run completed       request_id=req-9fd9… status=stop members_ok=2 members_total=2 synthesis_ms=11.1 total_tokens=118 total_cost_usd=0.0 elapsed_seconds=0.31
+```
+
+Every line carries `request_id`, so concurrent requests stay separable under `grep`. The lines come
+from the engine, so all three API surfaces and both streaming and non-streaming look the same. A
+member that fails still gets its `member completed` line (with `status` and a classified
+`error_kind`), and `run completed` reports `members_ok` against the **dispatched** roster, so a
+member abandoned at the fan-out deadline shows up as a shortfall rather than vanishing from the
+denominator. A member detached after a client disconnect finishes in the background and logs
+`detached member completed` when it lands — after that request's `run completed`.
+
+**No message content is ever logged.** Model names, identities, statuses, timings, token counts and
+costs are; prompts, completions, reasoning, and tool arguments are not.
+
+Provider **error** text is a separate matter. The lifecycle lines above carry only a classified
+`error_kind`, and the client-visible error carries only a safe message. Internal-error lines report
+an exception's type and source location (`pipeline.py:809 in run_ensemble`) rather than a
+traceback, because a traceback's last line embeds the exception message — and an exception raised
+while parsing a provider's response carries that provider's text in it.
+
+The one exception is the operator-facing `member call failed` warning, which deliberately logs the
+provider's own exception chain so a failure can actually be diagnosed. That text is **not**
+scrubbed — it can contain API keys, bearer tokens, or internal URLs. Treat the log stream as
+sensitive: it is fine on a host you control, but scrub or filter before shipping it to a
+third-party aggregator.
 
 **Provider API keys** are read directly from the environment, by the names inferred (or set
 via `api_key_env`) in `llms`:

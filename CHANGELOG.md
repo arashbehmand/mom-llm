@@ -12,6 +12,25 @@ All notable changes to this project are documented in this file. The format is b
   `linux/arm64` and tagged on release with the full version, `major.minor`, `major`, and `latest`.
 - **PyPI releases** — `pip install mom-llm`, published from the release workflow via PyPI trusted
   publishing (OIDC, no stored API token).
+- **Request lifecycle logging at the default level.** A request now narrates itself in `docker
+  logs`: the fan-out roster, a line per member as its call goes out, a line per member as it lands
+  (status, cache hit, duration, tokens, cost, attempts), synthesis start, and a closing summary
+  with totals and elapsed time. Every line carries `request_id`, and the lines come from the
+  engine, so all three API surfaces and both streaming and non-streaming behave alike. Model
+  output, prompts, and tool arguments are never logged.
+
+### Fixed
+
+- **`MOM_LOG_LEVEL` and `MOM_LOG_FORMAT` had no effect.** `configure_logging` was never called, so
+  the gateway ran on structlog's defaults and `MOM_LOG_FORMAT=json` was unreachable. It is now
+  invoked from the app lifespan.
+- **Durations recorded as zero.** Synthesis was recorded as `duration_ms=0.0` in both metrics and
+  tracing, and a member that timed out or errored — or a synthesis call that failed outright —
+  recorded no duration at all, zero on exactly the outcomes worth timing. All now record real
+  elapsed time.
+- **Detached members were invisible in the log.** A member left running after a client disconnect
+  finishes and records a metric for its spend, but nothing was logged, so the logs under-reported
+  cost relative to the metrics DB. It now logs `detached member completed` when it lands.
 
 ## [2.0.0] - 2026-08-18
 
