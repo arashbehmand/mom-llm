@@ -9,7 +9,7 @@ from pathlib import Path
 import platformdirs
 
 from mom.adapters.caching import CachingClient
-from mom.adapters.eventbus import InMemoryEventBus, RedisEventBus
+from mom.adapters.eventbus import ClosableBus, InMemoryEventBus, RedisEventBus, RunIndexBus
 from mom.adapters.litellm_client import (
     LiteLLMClient,
     LiteLLMTokenEstimator,
@@ -23,7 +23,7 @@ from mom.adapters.observability import (
 )
 from mom.config.loader import load_config
 from mom.config.resolve import ResolvedCatalog
-from mom.domain.ports import EventBus, LLMClient, Tracer
+from mom.domain.ports import CacheStore, EventBus, LLMClient, Tracer
 from mom.engine.coalesce import CoalesceRegistry
 from mom.runtime.clock import SystemClock, UuidIds
 from mom.runtime.container import Container
@@ -92,16 +92,24 @@ def _bus_ttl_seconds(catalog: ResolvedCatalog) -> float:
 def build_bus(
     settings: Settings, catalog: ResolvedCatalog
 ) -> tuple[EventBus, Callable[[], Awaitable[None]]]:
-    """Build the progress event bus (Redis when ``redis_url`` is set, else in-memory)."""
+    """Build the progress event bus (Redis when ``redis_url`` is set, else in-memory).
+
+    Whichever is chosen is wrapped in a ``RunIndexBus`` so "what is running right now" is
+    answerable on both — the Redis bus is pure pub/sub with nothing to enumerate, and the
+    in-memory one only retains history for ids the caller already knows.
+    """
+    ttl = _bus_ttl_seconds(catalog)
+    inner: ClosableBus
     if settings.redis_url:
         try:
-            redis_bus = RedisEventBus.from_url(settings.redis_url)
+            inner = RedisEventBus.from_url(settings.redis_url)
         except Exception:
             logger.warning("redis event bus init failed; using in-memory", exc_info=True)
-        else:
-            return redis_bus, redis_bus.aclose
-    memory_bus = InMemoryEventBus(ttl_seconds=_bus_ttl_seconds(catalog))
-    return memory_bus, memory_bus.aclose
+            inner = InMemoryEventBus(ttl_seconds=ttl)
+    else:
+        inner = InMemoryEventBus(ttl_seconds=ttl)
+    bus = RunIndexBus(inner, ttl_seconds=ttl)
+    return bus, bus.aclose
 
 
 def build_coalesce(catalog: ResolvedCatalog) -> CoalesceRegistry:
@@ -194,6 +202,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
 
     closers: list[Callable[[], Awaitable[None]]] = []
     client: LLMClient = LiteLLMClient()
+    cache_store: CacheStore | None = None
     if catalog.config.cache.enabled:
         cache = await SqliteCacheStore.open(
             data_dir / "cache.db",
@@ -201,6 +210,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
             max_bytes=catalog.config.cache.max_size,
         )
         client = CachingClient(client, cache, clock, coalesce=catalog.config.cache.coalesce)
+        cache_store = cache
         closers.append(cache.close)
 
     metrics_store = await MetricsStore.open(data_dir / "metrics.db")
@@ -228,6 +238,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
         custody=InMemoryToolCallCustody(),
         bus=bus,
         coalesce=coalesce,
+        cache_store=cache_store,
     )
 
     async def cleanup() -> None:

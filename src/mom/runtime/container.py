@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from mom.config.resolve import ResolvedCatalog
 from mom.domain.metrics import MetricsReader, MetricsSink
 from mom.domain.ports import (
+    CacheStore,
     Clock,
     EventBus,
     IdFactory,
@@ -42,3 +43,6 @@ class Container:
     bus: EventBus | None = None
     # In-flight request coalescing (`server.dedupe`); None when disabled.
     coalesce: CoalesceRegistry | None = None
+    # The response cache the client already wraps, kept here purely so a reader (`mom mcp`'s
+    # cache_stats) can inspect it without opening a second connection to the same file.
+    cache_store: CacheStore | None = None

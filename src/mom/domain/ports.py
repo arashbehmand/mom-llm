@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from mom.domain.errors import ErrorKind
 from mom.domain.progress import ProgressEvent
@@ -80,6 +80,10 @@ class CacheStore(Protocol):
     async def get(self, key: str, *, now: float) -> str | None: ...
     async def put(self, key: str, llm: str, body: str, *, now: float) -> None: ...
 
+    async def stats(self) -> dict[str, int]:
+        """Entry count, total size in bytes, and cumulative hits (a read-only inspection)."""
+        ...
+
 
 class Tracer(Protocol):
     def observe(
@@ -136,6 +140,52 @@ class EventBus(Protocol):
     def subscribe(self, request_id: str) -> AsyncIterator[ProgressEvent]:
         """Stream a request's progress events (history first, then live, until terminal)."""
         ...
+
+
+@runtime_checkable
+class RunIndex(Protocol):
+    """A bus that also keeps a queryable summary of the runs it has seen.
+
+    Separate from :class:`EventBus` because indexing is an optional capability, not something
+    every bus owes its publishers: ``RedisEventBus`` is pure pub/sub with nothing to enumerate.
+    A reader (the MCP ``runs`` tool) ``isinstance``-checks for this rather than importing an
+    adapter, so the domain stays the only thing either side depends on.
+    """
+
+    def snapshot(self, request_id: str | None = None) -> list[RunSummary]:
+        """Known runs, newest first — one entry when ``request_id`` names a run it has seen."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class RunMemberSummary:
+    """One member's state within an indexed run (progress-derived, so cost may be unknown)."""
+
+    identity: str
+    model: str | None = None
+    status: str | None = None  # None while still in flight
+    duration_ms: float | None = None
+    cost_usd: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RunSummary:
+    """A run as the index knows it: what it is doing now and what it has spent so far."""
+
+    request_id: str
+    ensemble: str
+    state: Literal["running", "synthesizing", "completed", "failed"]
+    started_at: float
+    updated_at: float
+    members_total: int | None = None
+    members: tuple[RunMemberSummary, ...] = ()
+    cost_usd: float = 0.0
+    finish_reason: str | None = None  # status of the terminal event
+    detail: str | None = None  # failure message (failed runs)
+
+    @property
+    def in_flight(self) -> bool:
+        return self.state in ("running", "synthesizing")
 
 
 class Clock(Protocol):

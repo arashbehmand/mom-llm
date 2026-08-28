@@ -166,6 +166,63 @@ def uncatalogued_models(models: Iterable[str]) -> dict[str, list[str]]:
     return {provider: sorted(models) for provider, models in sorted(grouped.items())}
 
 
+def catalogue_entry(model: str) -> dict[str, Any] | None:
+    """What litellm's pinned catalog knows about a model, or ``None`` when it has no entry.
+
+    Catalogue lookup only, for *listings* (the MCP ``list_llms`` tool). Config almost never
+    declares ``pricing:`` or ``capabilities:`` — it doesn't have to, because litellm supplies both
+    at call time — so without this a listing would report nulls for every model it has. Costing a
+    real call still goes through ``compute_cost``/``_cost_from_usage``; nothing here feeds spend
+    accounting.
+
+    Exact key then bare id, the same two-step ``uncatalogued_models`` uses, and for the same
+    reason: a near-miss would describe (and price) someone else's model.
+
+    Returns plain dicts rather than domain types so this module keeps importing nothing from
+    ``mom.config``/``mom.domain.cost`` — litellm stays sealed in here (invariant #4).
+    """
+    import litellm
+
+    _, _, bare = model.rpartition("/")
+    entry = litellm.model_cost.get(model) or litellm.model_cost.get(bare)
+    return entry if isinstance(entry, dict) else None
+
+
+def pricing_for(model: str) -> dict[str, float] | None:
+    """Per-1M-token USD rates from litellm's catalog (see :func:`catalogue_entry`)."""
+    entry = catalogue_entry(model)
+    if entry is None:
+        return None
+    rates = {
+        "input_per_1m": entry.get("input_cost_per_token"),
+        "output_per_1m": entry.get("output_cost_per_token"),
+        "reasoning_per_1m": entry.get("output_cost_per_reasoning_token"),
+        "cache_read_per_1m": entry.get("cache_read_input_token_cost"),
+        "cache_write_per_1m": entry.get("cache_creation_input_token_cost"),
+    }
+    priced = {k: float(v) * 1_000_000 for k, v in rates.items() if isinstance(v, (int, float))}
+    return priced or None
+
+
+def capabilities_for(model: str) -> dict[str, Any] | None:
+    """What a model can do, per litellm's catalog (see :func:`catalogue_entry`).
+
+    Only the axes mom itself reasons about: vision and tools gate which members a request can
+    use, and the token limits size the panel's advertised window.
+    """
+    entry = catalogue_entry(model)
+    if entry is None:
+        return None
+    known = {
+        "vision": entry.get("supports_vision"),
+        "tools": entry.get("supports_function_calling"),
+        "context_length": entry.get("max_input_tokens"),
+        "max_output_tokens": entry.get("max_output_tokens"),
+    }
+    found = {k: v for k, v in known.items() if v is not None}
+    return found or None
+
+
 def _provider_of(model: str) -> str | None:
     """litellm's routing decision for a model id; ``None`` when it can't route it at all (an
     unroutable id fails loudly on its first call — not something to diagnose at startup)."""

@@ -146,6 +146,8 @@ There is no docs generator; these are hand-maintained, so drift is on you to pre
 
 ## Tooling
 
-MCP servers and other agent tooling are per-developer environment config and are not committed
-here — use whatever your environment provides, and fall back to ripgrep and the docs in `docs/`
-when it doesn't. Do not add local-tooling references to committed files.
+The MCP servers *you* use to work on this repo, and other agent tooling, are per-developer
+environment config and are not committed here — use whatever your environment provides, and fall
+back to ripgrep and the docs in `docs/` when it doesn't. Do not add local-tooling references to
+committed files. (Distinct from `mom.api.mcp`, which is the product: mom serving *its own* tools
+over MCP. That is committed, tested, and documented like any other surface.)

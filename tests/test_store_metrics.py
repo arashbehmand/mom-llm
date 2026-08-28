@@ -311,3 +311,48 @@ async def test_estimated_cache_savings_respects_the_ensemble_window(store: Metri
         ]
     )
     assert abs(await store.estimated_cache_savings(ensemble="x") - 0.10) < 1e-9
+
+
+# ---------------------------------------------------------------------------------------------
+# Run views — a "run" is reconstructed by grouping the call ledger; mom stores no run table
+# ---------------------------------------------------------------------------------------------
+async def test_recent_runs_groups_calls_into_runs(store: MetricsStore):
+    await store.insert_many(
+        [
+            _metric(request_id="r1", ts=100.0, llm="a", cost_usd=0.10),
+            _metric(request_id="r1", ts=110.0, llm="b", cost_usd=0.20, status="error"),
+            _metric(request_id="r1", ts=120.0, llm="s", cost_usd=0.30, role="synthesis"),
+            _metric(request_id="r2", ts=50.0, llm="a", cost_usd=1.0, cache_hit=True),
+        ]
+    )
+    runs = await store.recent_runs()
+
+    assert [run["request_id"] for run in runs] == ["r1", "r2"]  # most recent activity first
+    first = runs[0]
+    assert first["calls"] == 3
+    assert first["cost_usd"] == pytest.approx(0.60)
+    assert (first["started_ts"], first["last_ts"]) == (100.0, 120.0)
+    assert first["failures"] == 1
+    assert runs[1]["cache_hits"] == 1
+
+
+async def test_recent_runs_limit_bounds_the_listing(store: MetricsStore):
+    await store.insert_many([_metric(request_id=f"r{i}", ts=float(i)) for i in range(5)])
+    assert len(await store.recent_runs(limit=2)) == 2
+
+
+async def test_run_calls_returns_one_run_in_order(store: MetricsStore):
+    await store.insert_many(
+        [
+            _metric(request_id="r1", ts=200.0, llm="b"),
+            _metric(request_id="r1", ts=100.0, llm="a"),
+            _metric(request_id="other", ts=150.0, llm="c"),
+        ]
+    )
+    calls = await store.run_calls("r1")
+    assert [call["llm"] for call in calls] == ["a", "b"]
+    assert calls[0]["ensemble"] == "bmom"
+
+
+async def test_run_calls_for_an_unknown_run_is_empty(store: MetricsStore):
+    assert await store.run_calls("never-happened") == []

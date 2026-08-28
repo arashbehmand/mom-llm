@@ -16,6 +16,7 @@ from starlette.middleware.cors import CORSMiddleware
 from mom import __version__
 from mom.api.deps import Container
 from mom.api.errors import install_error_handlers
+from mom.api.mcp import mount_mcp, serve_mcp
 from mom.api.middleware import BudgetAlarmMiddleware
 from mom.api.routers.anthropic import router as anthropic_router
 from mom.api.routers.chat import router as chat_router
@@ -33,23 +34,29 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if container is not None:
-            app.state.container = container
-            yield
-            return
-        from mom.runtime.wiring import build_container
+        # The MCP server is built HERE rather than in create_app's body because its session
+        # manager may only be run once per instance: an app whose lifespan is entered a second
+        # time (an embedder restarting it, two consecutive TestClient blocks) needs a fresh one,
+        # not the one the previous run consumed. Serving /mcp needs the manager's task group even
+        # in stateless mode, and a sub-app's own lifespan is never run by the parent.
+        async with serve_mcp(app):
+            if container is not None:
+                app.state.container = container
+                yield
+                return
+            from mom.runtime.wiring import build_container
 
-        # Here, not in create_app's body: the lifespan runs in every real serving process
-        # (uvicorn factory mode, --reload children, direct ASGI) while tests with a prebuilt
-        # container return above and never mutate global logging state. Before build_container,
-        # so its startup catalog warnings come out formatted.
-        configure_logging(level=settings.log_level, fmt=settings.log_format)
-        built, cleanup = await build_container(settings)
-        app.state.container = built
-        try:
-            yield
-        finally:
-            await cleanup()
+            # Here, not in create_app's body: the lifespan runs in every real serving process
+            # (uvicorn factory mode, --reload children, direct ASGI) while tests with a prebuilt
+            # container return above and never mutate global logging state. Before
+            # build_container, so its startup catalog warnings come out formatted.
+            configure_logging(level=settings.log_level, fmt=settings.log_format)
+            built, cleanup = await build_container(settings)
+            app.state.container = built
+            try:
+                yield
+            finally:
+                await cleanup()
 
     app = FastAPI(title="MoM — Mixture of Models", version=__version__, lifespan=lifespan)
     if container is not None:  # tests: make the container available without the lifespan
@@ -75,6 +82,9 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
             allow_credentials=cors.allow_credentials,
             allow_methods=["*"],
             allow_headers=["*"],
+            # A browser MCP client reads its session id off the response; without this the
+            # header is invisible to it even though the request itself succeeded.
+            expose_headers=["Mcp-Session-Id"],
         )
 
     # Soft daily-budget alarm (adds a header when over budget; never blocks). Self-guards when no
@@ -102,4 +112,7 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     app.include_router(responses_router, prefix="/v1")
     app.include_router(metrics_router, prefix="/v1")
     app.include_router(progress_router, prefix="/v1")
+    # Not under /v1: MCP is its own protocol at its own well-known path, not another wire
+    # dialect of the model endpoint. Gated per request by `server.mcp.enabled` (see McpGate).
+    mount_mcp(app)
     return app

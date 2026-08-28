@@ -16,6 +16,10 @@ server:
   cors:
     origins: []           # empty = CORS disabled; ["*"] with allow_creditals=true is rejected
     allow_credentials: false
+  mcp:
+    enabled: false        # mount the MCP tool surface at /mcp (same port and auth as /v1).
+                          # Gates the HTTP mount only — `mom mcp` serves the same tools over
+                          # stdio regardless.
 
 defaults:
   call:

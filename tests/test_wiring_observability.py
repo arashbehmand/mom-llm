@@ -7,7 +7,7 @@ from textwrap import dedent
 import pytest
 import yaml
 
-from mom.adapters.eventbus import InMemoryEventBus, RedisEventBus
+from mom.adapters.eventbus import InMemoryEventBus, RedisEventBus, RunIndexBus
 from mom.adapters.observability import CompositeTracer, NoopTracer, OtelTracer
 from mom.config.resolve import resolve_catalog
 from mom.config.schema import Config
@@ -48,13 +48,16 @@ def test_build_tracer_composes_when_multiple_enabled(monkeypatch: pytest.MonkeyP
 
 def test_build_bus_is_in_memory_by_default():
     bus, _close = wiring.build_bus(Settings(_env_file=None), _catalog())
-    assert isinstance(bus, InMemoryEventBus)
+    # Always wrapped, so `runs` can enumerate live runs whichever bus deployment configured.
+    assert isinstance(bus, RunIndexBus)
+    assert isinstance(bus.inner, InMemoryEventBus)
 
 
 async def test_build_bus_is_redis_when_url_configured(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("MOM_REDIS_URL", "redis://localhost:6379/0")
     bus, close = wiring.build_bus(Settings(_env_file=None), _catalog())
-    assert isinstance(bus, RedisEventBus)
+    assert isinstance(bus, RunIndexBus)
+    assert isinstance(bus.inner, RedisEventBus)
     await close()  # tears down the (unconnected) client's pool
 
 
@@ -67,7 +70,8 @@ async def test_build_bus_falls_back_to_memory_when_redis_init_fails(
     monkeypatch.setattr(RedisEventBus, "from_url", staticmethod(_boom))
     monkeypatch.setenv("MOM_REDIS_URL", "redis://localhost:6379/0")
     bus, _close = wiring.build_bus(Settings(_env_file=None), _catalog())
-    assert isinstance(bus, InMemoryEventBus)
+    assert isinstance(bus, RunIndexBus)
+    assert isinstance(bus.inner, InMemoryEventBus)
 
 
 def test_build_bus_ttl_defaults_to_call_timeout_plus_replay_window():

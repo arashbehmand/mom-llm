@@ -27,9 +27,11 @@ flowchart LR
     RE --> R["responses.encode_sse → Responses events"]
     RE --> A["anthropic.encode_sse → Anthropic events"]
     RE --> CO["collect() → EnsembleResult"]
+    RE --> M["mcp.with_progress → MCP progress notifications"]
     CO --> CJ
     CO --> RB["responses.build_response → Responses JSON"]
     CO --> AB["anthropic.build_message → Anthropic JSON"]
+    CO --> MC["mcp.consult_success → ConsultResult"]
 ```
 
 - **Streaming responses** are the encoders' `encode_sse` async generators consuming the live event
@@ -87,9 +89,9 @@ Dependencies point inward, toward the domain.
 | **adapters** | `mom.adapters` | Port implementations that touch the outside world: `LiteLLMClient` (the provider transport), `CachingClient` (response cache middleware), the Langfuse tracer. |
 | **config** | `mom.config` | The YAML schema (Pydantic v2), `extends` resolution, and the immutable `ResolvedCatalog` the app consumes; plus per-ensemble capability cards. |
 | **store** | `mom.store` | Two aiosqlite databases: the response cache and the metrics store. |
-| **api** | `mom.api` | FastAPI routers, wire schemas, the three encoders, and the translate layer (wire → IR). |
+| **api** | `mom.api` | FastAPI routers, wire schemas, the three encoders, the translate layer (wire → IR), and `mom.api.mcp` — the MCP tool surface, a sibling of the routers that folds the same event stream. |
 | **runtime** | `mom.runtime` | Composition root: `Settings`, the `Container`, and `build_container` wiring. |
-| **cli** | `mom.cli` | The `mom` Typer app (`serve`, `config validate/show`, `healthcheck`). |
+| **cli** | `mom.cli` | The `mom` Typer app (`serve`, `mcp`, `config validate/show`, `cache`, `metrics`, `healthcheck`). |
 
 ### Contracts that enforce it
 

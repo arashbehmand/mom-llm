@@ -254,12 +254,18 @@ def _resolve_effort_matrix(
     raise ConfigError(f"{where}: unsupported effort spec {spec!r}")
 
 
-def _resolve_ensemble(
+def resolve_ensemble(
     name: str,
     ens: EnsembleConfig,
     llms: Mapping[str, ResolvedLlm],
     prompts: Mapping[str, str],
 ) -> ResolvedEnsemble:
+    """Resolve one ensemble against an already-resolved llm catalog.
+
+    Public because the MCP ``consult`` tool resolves inline panels through it: an ad-hoc panel is
+    built as an ``EnsembleConfig`` and resolved here, so it inherits every schema default and the
+    same unknown-llm/prompt validation a configured ensemble gets. One resolver, no drift.
+    """
     tiers = tuple(ens.effort_tiers) if ens.effort_tiers is not None else None
 
     def require_llm(llm_name: str, ref: str) -> None:
@@ -377,7 +383,7 @@ def resolve_catalog(config: Config) -> ResolvedCatalog:
 
     ensembles: dict[str, ResolvedEnsemble] = {}
     for ens_name, ens in config.ensembles.items():
-        ensembles[ens_name] = _resolve_ensemble(ens_name, ens, memo, config.prompts)
+        ensembles[ens_name] = resolve_ensemble(ens_name, ens, memo, config.prompts)
 
     return ResolvedCatalog(
         config=config,

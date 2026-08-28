@@ -62,6 +62,16 @@ class DedupeConfig(_Model):
     max_buffer: ByteSize = 8 * 1024 * 1024  # 8 MiB
 
 
+class McpConfig(_Model):
+    """The MCP tool surface mounted at ``/mcp`` — the panel as a tool call rather than a model
+    swap, plus read-only views of spend, runs, cache and catalog. Off by default: it is a second
+    network surface on the same port, so turning it on is a deliberate act. Gates the HTTP mount
+    only — ``mom mcp`` (stdio) is a local process the operator started on purpose.
+    """
+
+    enabled: bool = False
+
+
 class ServerConfig(_Model):
     auth: Literal["bearer", "none"] = "bearer"
     public_url: str | None = None
@@ -70,6 +80,7 @@ class ServerConfig(_Model):
     # long, so a slow fan-out doesn't trip a client's idle read-timeout. null = off.
     stream_heartbeat: Duration | None = None
     dedupe: DedupeConfig = Field(default_factory=DedupeConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
 
 class CallDefaults(_Model):

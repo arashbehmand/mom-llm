@@ -280,6 +280,38 @@ class MetricsStore:
             sum(avg_cost.get((row["llm"], row["model"]), 0.0) * row["hits"] for row in hits_rows)
         )
 
+    async def recent_runs(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """The most recently active runs, one row per ``request_id``, newest first.
+
+        A "run" is reconstructed by grouping the call ledger — mom stores no run table. Rows only
+        exist for calls that have *finished* (the recorder drains after each completes), so an
+        in-flight run is under-reported here until it ends; live state comes from the event bus
+        (see ``RunIndex``). ``LIMIT`` bounds the rows returned, not the group-by scan.
+        """
+        cursor = await self._conn.execute(
+            "SELECT request_id, MAX(ensemble) AS ensemble, MIN(ts) AS started_ts, "
+            "MAX(ts) AS last_ts, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0.0) AS cost_usd, "
+            "SUM(CASE WHEN status <> 'ok' THEN 1 ELSE 0 END) AS failures, "
+            "SUM(CASE WHEN cache_hit = 1 THEN 1 ELSE 0 END) AS cache_hits "
+            "FROM llm_calls GROUP BY request_id ORDER BY last_ts DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [dict(row) for row in rows]
+
+    async def run_calls(self, request_id: str) -> list[dict[str, Any]]:
+        """Every recorded call of one run, oldest first (fan-out members, then synthesis)."""
+        cursor = await self._conn.execute(
+            "SELECT ts, ensemble, llm, model, role, turn_type, status, cache_hit, cost_usd, "
+            "duration_ms, prompt_tokens, completion_tokens, total_tokens, error, finish_reason, "
+            "attempts FROM llm_calls WHERE request_id = ? ORDER BY ts",
+            (request_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [dict(row) for row in rows]
+
 
 class MetricsRecorder:
     """Buffers metrics on a bounded queue and drains them to the store off the hot path."""

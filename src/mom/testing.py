@@ -57,9 +57,10 @@ class FakeLLM:
 
     ``replies`` maps an llm identity to its non-streaming content (fan-out); ``fail`` is a set of
     identities whose ``complete`` raises. ``synth_chunks`` are streamed by ``stream`` (the
-    synthesizer), followed by a terminal usage/finish chunk. ``delays`` maps an identity to seconds
-    to ``asyncio.sleep`` before ``complete`` returns/raises — for scripting a straggler in
-    fan-out-deadline/detach tests without hand-rolling a one-off client.
+    synthesizer), preceded by any ``synth_reasoning`` deltas and followed by a terminal
+    usage/finish chunk. ``delays`` maps an identity to seconds to ``asyncio.sleep`` before
+    ``complete`` returns/raises — for scripting a straggler in fan-out-deadline/detach tests
+    without hand-rolling a one-off client.
     """
 
     def __init__(
@@ -67,6 +68,7 @@ class FakeLLM:
         *,
         replies: Mapping[str, str] | None = None,
         synth_chunks: tuple[str, ...] = ("synth", "esized ", "answer"),
+        synth_reasoning: tuple[str, ...] = (),
         fail: frozenset[str] = frozenset(),
         finish_reason: str = "stop",
         tool_calls: tuple[dict[str, str], ...] = (),
@@ -75,6 +77,7 @@ class FakeLLM:
     ) -> None:
         self._replies = dict(replies or {})
         self._synth_chunks = synth_chunks
+        self._synth_reasoning = synth_reasoning
         self._fail = fail
         self._finish_reason = finish_reason
         self._tool_calls = tool_calls
@@ -122,6 +125,8 @@ class FakeLLM:
                 usage=Usage(prompt_tokens=50, completion_tokens=5),
             )
             return
+        for piece in self._synth_reasoning:
+            yield CompletionChunk(reasoning=piece)
         for piece in self._synth_chunks:
             yield CompletionChunk(content=piece)
         yield CompletionChunk(

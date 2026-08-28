@@ -63,6 +63,30 @@ def serve(
     )
 
 
+_McpConfigOpt = typer.Option(
+    None, "--config", "-c", exists=True, dir_okay=False, help="Config YAML (else MOM_CONFIG)."
+)
+_McpDataDirOpt = typer.Option(
+    None, "--data-dir", help="Data directory for cache.db/metrics.db (overrides config/env)."
+)
+
+
+@app.command()
+def mcp(
+    config: Path | None = _McpConfigOpt,
+    data_dir: Path | None = _McpDataDirOpt,
+) -> None:
+    """Serve the MoM tools over MCP stdio (for a local MCP client; no running gateway needed).
+
+    Consults run here are recorded to the same metrics.db and warm the same cache as the
+    gateway's, so `mom metrics usage` accounts for them too. Unlike the HTTP surface at /mcp,
+    this ignores `server.mcp.enabled` — running the command is the opt-in.
+    """
+    from mom.api.mcp.stdio import run_stdio
+
+    asyncio.run(run_stdio(config=config, data_dir=data_dir))
+
+
 @app.command()
 def healthcheck(
     url: str = typer.Option("http://127.0.0.1:8000/health", help="Health endpoint to probe."),

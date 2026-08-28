@@ -15,14 +15,22 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 import contextlib
+from dataclasses import dataclass, field
 import time
-from typing import Any
+from typing import Any, Literal, Protocol
 
+from mom.domain.ports import EventBus, RunMemberSummary, RunSummary
 from mom.domain.progress import ProgressEvent
 from mom.runtime.logging import get_logger
 
 
 logger = get_logger("mom.eventbus")
+
+
+class ClosableBus(EventBus, Protocol):
+    """An event bus that also owns resources to release at shutdown (both of the ones here do)."""
+
+    async def aclose(self) -> None: ...
 
 
 class _Channel:
@@ -122,6 +130,156 @@ class InMemoryEventBus:
             for queue in channel.subscribers:
                 queue.put_nowait(None)
         self._channels.clear()
+
+
+class RunIndexBus:
+    """An :class:`~mom.domain.ports.EventBus` decorator that also indexes the runs it carries.
+
+    Progress events are published for a *subscriber*, so nothing in the bus contract can answer
+    "what is running right now" — ``InMemoryEventBus`` only keeps history for ids you already
+    know, and ``RedisEventBus`` keeps nothing at all. Folding each event into a compact per-run
+    summary as it passes through gives that answer for whichever bus is configured, without
+    widening ``EventBus`` for the one caller that wants it (see ``RunIndex``).
+
+    Process-local by construction: it indexes what *this* process published, so a multi-worker
+    deployment sees one worker's runs. metrics.db remains the cross-process, durable record —
+    this covers the gap that ledger structurally cannot, the run that has not finished yet.
+    """
+
+    def __init__(
+        self,
+        inner: ClosableBus,
+        *,
+        ttl_seconds: float = 900.0,
+        max_runs: int = 200,
+        clock: Callable[[], float] = time.time,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.inner = inner  # public: the wrapped bus is what deployment configured
+        self._ttl = ttl_seconds
+        self._max_runs = max_runs
+        self._clock = clock  # wall clock: timestamps a reader can compare against metrics rows
+        self._monotonic = monotonic  # eviction: immune to clock steps
+        self._runs: dict[str, _RunState] = {}
+
+    def publish(self, request_id: str, event: ProgressEvent) -> None:
+        try:
+            self._observe(request_id, event)
+        except Exception:  # indexing must never break the thing it observes
+            logger.debug("run index update failed", exc_info=True)
+        self.inner.publish(request_id, event)
+
+    def subscribe(self, request_id: str) -> AsyncIterator[ProgressEvent]:
+        return self.inner.subscribe(request_id)
+
+    async def aclose(self) -> None:
+        self._runs.clear()
+        await self.inner.aclose()
+
+    def snapshot(self, request_id: str | None = None) -> list[RunSummary]:
+        """Indexed runs, newest activity first (one entry when ``request_id`` is given)."""
+        self._evict()
+        states = (
+            [s for rid, s in self._runs.items() if rid == request_id]
+            if request_id is not None
+            else sorted(self._runs.values(), key=lambda s: s.updated_at, reverse=True)
+        )
+        return [state.to_summary() for state in states]
+
+    def _observe(self, request_id: str, event: ProgressEvent) -> None:
+        state = self._runs.get(request_id)
+        if state is None:
+            state = _RunState(request_id=request_id, started_at=self._clock())
+            self._runs[request_id] = state
+        state.apply(event, now=self._clock())
+        state.expires_at = self._monotonic() + self._ttl
+        self._evict()
+
+    def _evict(self) -> None:
+        """Drop terminal runs past their TTL, then the oldest if still over ``max_runs``.
+
+        In-flight runs are never evicted by either rule: a fan-out can legitimately outlive the
+        TTL (a 20-minute member timeout is configurable), and dropping it would report a live run
+        as gone — the one thing this index exists to prevent.
+        """
+        now = self._monotonic()
+        for rid, state in list(self._runs.items()):
+            if state.terminal and state.expires_at <= now:
+                del self._runs[rid]
+        overflow = len(self._runs) - self._max_runs
+        if overflow <= 0:
+            return
+        evictable = sorted(
+            (s for s in self._runs.values() if s.terminal), key=lambda s: s.updated_at
+        )
+        for state in evictable[:overflow]:
+            self._runs.pop(state.request_id, None)
+
+
+@dataclass
+class _RunState:
+    """Mutable fold of one run's progress events (see :class:`RunIndexBus`)."""
+
+    request_id: str
+    started_at: float
+    ensemble: str = ""
+    state: Literal["running", "synthesizing", "completed", "failed"] = "running"
+    updated_at: float = 0.0
+    expires_at: float = 0.0
+    members_total: int | None = None
+    members: dict[str, RunMemberSummary] = field(default_factory=dict)
+    cost_usd: float = 0.0
+    finish_reason: str | None = None
+    detail: str | None = None
+
+    @property
+    def terminal(self) -> bool:
+        return self.state in ("completed", "failed")
+
+    def apply(self, event: ProgressEvent, *, now: float) -> None:
+        self.updated_at = now
+        if event.ensemble:
+            self.ensemble = event.ensemble
+        if event.members_total is not None:
+            self.members_total = event.members_total
+        if event.kind == "fanout_started":
+            for identity, model in event.members or ():
+                self.members.setdefault(identity, RunMemberSummary(identity=identity, model=model))
+        elif event.kind == "member_completed" and event.member is not None:
+            self.members[event.member] = RunMemberSummary(
+                identity=event.member,
+                model=event.model,
+                status=event.status,
+                duration_ms=event.duration_ms,
+                cost_usd=event.cost_usd,
+            )
+            # Per-member costs accumulate; the terminal event's total replaces the running sum
+            # (it also covers synthesis), so the two never double-count.
+            self.cost_usd += event.cost_usd or 0.0
+        elif event.kind == "synthesis_started":
+            self.state = "synthesizing"
+        elif event.kind == "completed":
+            self.state = "completed"
+            self.finish_reason = event.status
+            if event.cost_usd is not None:
+                self.cost_usd = event.cost_usd
+        elif event.kind == "failed":
+            self.state = "failed"
+            self.detail = event.detail
+
+    def to_summary(self) -> RunSummary:
+        return RunSummary(
+            request_id=self.request_id,
+            ensemble=self.ensemble,
+            state=self.state,
+            started_at=self.started_at,
+            updated_at=self.updated_at,
+            members_total=self.members_total,
+            members=tuple(self.members.values()),
+            cost_usd=self.cost_usd,
+            finish_reason=self.finish_reason,
+            detail=self.detail,
+        )
 
 
 class RedisEventBus:

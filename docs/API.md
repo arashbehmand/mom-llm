@@ -1,12 +1,14 @@
 # MoM v2 API Reference
 
 MoM exposes three drop-in-compatible chat protocols — **OpenAI Chat Completions**, **OpenAI
-Responses**, and **Anthropic Messages** — plus model-discovery, metrics, and health endpoints. A
-"model" in every request is the name of an **ensemble**: MoM fans the prompt out to that ensemble's
-panel of members and returns one synthesized answer, rendered in whichever protocol you called.
+Responses**, and **Anthropic Messages** — plus model-discovery, metrics, and health endpoints, and
+an optional **MCP** tool surface. A "model" in every request is the name of an **ensemble**: MoM
+fans the prompt out to that ensemble's panel of members and returns one synthesized answer,
+rendered in whichever protocol you called.
 
-All application endpoints are mounted under `/v1`. Point any OpenAI or Anthropic SDK at the
-gateway's base URL and set the model to an ensemble name.
+The chat protocols and everything alongside them are mounted under `/v1`; MCP is its own protocol
+at `/mcp`. Point any OpenAI or Anthropic SDK at the gateway's base URL and set the model to an
+ensemble name.
 
 - [Authentication](#authentication)
 - [Errors](#errors)
@@ -17,6 +19,7 @@ gateway's base URL and set the model to an ensemble name.
 - [`GET /v1/metrics/usage`](#get-v1metricsusage)
 - [`GET /v1/progress/{id}`](#get-v1progressid)
 - [`GET /health`](#get-health)
+- [MCP (`/mcp` and `mom mcp`)](#mcp-mcp-and-mom-mcp)
 - [Effort tiers](#effort-tiers)
 - [Usage and cost](#usage-and-cost)
 - [Deviations](#deviations)
@@ -25,8 +28,8 @@ gateway's base URL and set the model to an ensemble name.
 
 ## Authentication
 
-Auth is a per-request dependency on every `/v1` route. Present the token either way OpenAI and
-Anthropic SDKs send it:
+Auth is a per-request dependency on every `/v1` route, and the same check guards `/mcp`. Present
+the token either way OpenAI and Anthropic SDKs send it:
 
 ```
 Authorization: Bearer <token>      # OpenAI style
@@ -227,6 +230,11 @@ Lists the ensembles. Each entry carries OpenAI's fields plus OpenRouter-conventi
 `supported_parameters` grows with capability — tools/response_format when tool-capable,
 `reasoning_effort`/`reasoning` when reasoning-capable, `web_search*` when search-capable.
 
+Those two MCP flags are about MoM as an MCP *client* and are unrelated to
+[MoM's own MCP surface](#mcp-mcp-and-mom-mcp): `client_managed_mcp` means you may pass Responses
+`type: mcp` tool blocks through to a synthesizer that understands them, and `remote_mcp: false`
+means MoM does not itself connect out to remote MCP servers on your behalf.
+
 `GET /v1/models/{id}` returns the OpenAI single-model object, or **404** for an unknown ensemble.
 
 #### Discovery dialects
@@ -312,6 +320,136 @@ regenerate sent afterward always starts a fresh one. Currently wired into
 ## `GET /health`
 
 Unauthenticated liveness probe. Returns `{"status": "ok", "version": "<v>"}`.
+
+---
+
+## MCP (`/mcp` and `mom mcp`)
+
+The chat protocols make MoM a *model* you point a client at. MCP makes it a *tool* an agent can
+call without leaving the model it is already running on: ask a panel for a second opinion mid-task,
+assemble a panel from the catalog on the spot, and read spend, runs and cache state without a shell
+on the gateway host.
+
+**Transports.** Streamable HTTP at `/mcp` (same process, port, and bearer auth as `/v1`; the
+`auth: none` dev opt-out applies here too), enabled with `server.mcp: { enabled: true }` — **off by
+default**. And `mom mcp`, the same tools over stdio for a local client, backed by the same config
+and data dir with no gateway running; consults it runs land in the same metrics DB and warm the
+same cache. `mom mcp` ignores `server.mcp.enabled` (running the command is the opt-in) and is
+unauthenticated: there are no headers on a pipe, and a process you started is inside the trust
+boundary, exactly like the rest of the CLI.
+
+```jsonc
+// Claude Code / Cursor, over HTTP
+{"mcpServers": {"mom": {"type": "http", "url": "https://mom.example.com/mcp",
+                        "headers": {"Authorization": "Bearer $MOM_API_TOKEN"}}}}
+
+// ...or locally over stdio
+{"mcpServers": {"mom": {"command": "mom", "args": ["mcp"],
+                        "env": {"MOM_CONFIG": "/etc/mom/config.yaml"}}}}
+```
+
+When the surface is disabled, `/mcp` answers **404** — a switched-off surface should look absent
+rather than announce itself to anyone probing the path.
+
+### Tools
+
+Everything except `consult` is read-only. There is deliberately no purge and no config mutation: a
+leaked token can already chat, and must not be able to destroy state.
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `list_llms` | — | every catalog llm (bases and variants) with model string, capabilities, pricing and its `pricing_source` |
+| `list_ensembles` | — | the resolved ensembles: members, effort tiers, synthesizer, advertised capabilities |
+| `consult` | `prompt`, then either `ensemble` or `panel` + `synthesizer`; optional `effort`, `system`, `tools`, `include_member_answers` | one synthesized answer with a per-member cost breakdown (below) |
+| `runs` | optional `request_id`, `limit` (clamped to 1–200) | in-flight, just-finished and recent runs, per-member status and cost |
+| `usage` | `days` (0 or less = all time), optional `ensemble` | the same aggregation `mom metrics usage` prints, grouped by ensemble and by member |
+| `cache_stats` | — | response-cache entry count, size, hits |
+
+`consult` reports progress as each member is asked, as each one answers (with the running cost),
+and again when synthesis begins — so a client can watch a slow panel work instead of guessing
+whether the call has hung.
+
+`effort` only applies to an ensemble that declares effort tiers. Passing it to one that doesn't —
+including any inline panel, which is always tierless — is rejected rather than ignored, so an
+agent never believes it bought deeper reasoning than it did.
+
+`list_llms` reads capabilities and pricing from config first and litellm's bundled catalog
+behind it, which is the same order the gateway uses at call time. Config declares those blocks
+only to *override* litellm, so most deployments get their numbers from the catalog.
+
+### Inline panels
+
+`panel: ["gpt", "claude", "gemini"]` with `synthesizer: "gpt"` runs a panel assembled for that one
+call. The llm names come from `list_llms`; everything else (strategy, tool arbitration, overflow
+handling) takes the schema defaults a configured ensemble would get, because an inline panel is
+resolved by the same resolver. Nothing is written to config — promoting a panel you like into a
+named ensemble stays a human edit.
+
+Inline panels are billed and grouped under the ensemble name **`mcp:adhoc`**, so `mom metrics usage
+--by ensemble` can answer "what have ad-hoc panels cost me". The `:` is why that name is safe to
+reuse across calls: config rejects `:` and `+` in ensemble names, so an inline panel can never
+shadow one of yours. They also never coalesce: request identity keys on the ensemble *name* plus
+the messages, so two different rosters asking the same question would otherwise collide and the
+second would silently get the first one's answer.
+
+### `consult` results
+
+One envelope for every outcome, discriminated by `status`:
+
+| `status` | Meaning | Shape |
+| --- | --- | --- |
+| `ok` | The panel answered | `answer` holds the synthesized text |
+| `tool_calls` | The panel returned tool calls to execute | `tool_calls` populated (OpenAI wire shape); executing them is the caller's job, as there is no tool continuation over MCP. `answer` still holds any prose the model wrote alongside them |
+| `failed` | The run died upstream (quorum not met, synthesis failure, timeout) | `error: {code, message, http_status}`, and the members that *did* complete are still listed with the tokens and money they spent |
+
+`status` is decided by whether there are tool calls, not by `finish_reason` — a provider can
+report `tool_calls` having emitted none we could parse, and that is an answer, not an empty
+result. `finish_reason` is reported verbatim either way.
+
+Every result also carries `ensemble`, `request_id`, `coalesced`, `progress_url`, `total_cost_usd`,
+`usage`, `reasoning` (the synthesizer's, when it produced any), and `members[]` with each member's
+`identity`, `status`, `cost_usd`, `duration_ms`, `cached` and client-safe `error`. A member the
+fan-out deadline passed by appears with status `abandoned` rather than vanishing from the list.
+`include_member_answers` adds each member's own text and reasoning; the synthesized answer and its
+reasoning come back either way.
+
+On a `failed` result the cost and token figures are a floor: they cover the members observed
+before the failure, and a synthesizer that streamed and then failed emits nothing to count.
+`usage` and `runs` remain the authority on what a run finally cost.
+
+`progress_url` is `null` over stdio unless `server.public_url` is set (there is no request to
+derive a host from). Unlike the `X-MoM-Progress-Url` response header, it never embeds the API
+token: a tool result is data that lands in a model's context and travels with that agent's
+transcript, and a stdio caller never presented a token in the first place. With `auth: bearer`
+the link therefore needs your own token attached to open — an HTTP MCP client already has one.
+
+Both a failed run and a malformed call come back as MCP `isError` results, and the difference is
+what rides along: a **failed run** carries the full `ConsultResult` as structured content, so the
+model can read what failed and what it cost and decide whether to retry or pick a different panel.
+A **caller mistake** (both or neither of `ensemble`/`panel`, an unknown llm, a panel with no
+synthesizer, an `effort` the ensemble has no tiers for) carries only a message, because nothing
+ran and there is nothing to report; those spend nothing.
+
+### What `runs` can and cannot see
+
+Two sources, because neither knows the whole story. `recent` comes from the metrics ledger:
+durable and shared across processes, but a call only lands there once the recorder's queue
+drains. `in_flight` and `just_finished` come from an index the gateway keeps as progress events
+pass through it — that index is what covers the window where a run has finished but the ledger
+has not caught up, and it is the only place a still-running fan-out's spend is visible at all.
+
+The index is **process-local**: a multi-worker gateway reports the worker that answered, and
+`mom mcp` sees only consults it ran itself. It wraps whichever bus is configured, Redis included,
+so this view survives a multi-process deployment for the process you asked. Only a gateway built
+without one reports `in_flight_visibility: "none"`, which says "cannot tell" rather than letting
+an empty list imply nothing is running.
+
+Spend figures here are a lower bound: metrics are recorded off the hot path and dropped rather
+than allowed to block a call (`GET /health` reports `metrics_dropped`).
+
+Running `mom mcp` beside a live gateway is supported — SQLite is in WAL mode with a busy timeout,
+so both processes read and write the same databases. The one unguarded case is two processes
+racing a schema *migration*, which only happens on the first open after an upgrade.
 
 ---
 

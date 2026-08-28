@@ -32,6 +32,28 @@ def test_example_config_loads_and_resolves():
     assert "gpt" in catalog.llms
 
 
+def test_mcp_surface_is_off_unless_asked_for():
+    """A second network surface on the same port is opt-in, and old configs stay valid."""
+    minimal = _resolve(
+        """
+        version: 2
+        llms: { a: { model: x/y } }
+        ensembles: { e: { members: [{ llm: a }], synthesizer: { llm: a } } }
+        """
+    )
+    assert minimal.config.server.mcp.enabled is False
+
+    enabled = _resolve(
+        """
+        version: 2
+        server: { mcp: { enabled: true } }
+        llms: { a: { model: x/y } }
+        ensembles: { e: { members: [{ llm: a }], synthesizer: { llm: a } } }
+        """
+    )
+    assert enabled.config.server.mcp.enabled is True
+
+
 def test_example_mom_debug_covers_every_llm():
     catalog = load_config(EXAMPLE)
     debug_members = {m.identity for m in catalog.ensembles["mom-debug"].members}

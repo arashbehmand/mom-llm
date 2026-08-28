@@ -31,6 +31,7 @@ dependencies = [
     "platformdirs>=4.2",
     "litellm>=1.97",
     "langfuse>=3.0",
+    "mcp>=2.1",
 ]
 
 # Optional feature deps, imported lazily so a base install never requires them:

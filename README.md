@@ -123,6 +123,21 @@ curl http://localhost:8000/v1/chat/completions \
   -d '{"model": "bmom", "messages": [{"role": "user", "content": "hi"}]}'
 ```
 
+**MCP** — the panel as a *tool call* rather than a model swap, so an agent can ask for a second
+opinion without re-pointing its endpoint mid-session. Opt in with `server.mcp: { enabled: true }`
+(off by default) and the gateway also speaks MCP at `/mcp`, same port and same token:
+
+```bash
+claude mcp add --transport http mom http://localhost:8000/mcp \
+  --header "Authorization: Bearer dev-secret"
+mom mcp     # ...or serve the same tools over stdio, no gateway required
+```
+
+Six tools: `consult` (run a configured ensemble — or a panel you assemble from the catalog for that
+one call — and get the synthesized answer with a per-member cost breakdown), plus read-only
+`list_llms`, `list_ensembles`, `runs`, `usage`, and `cache_stats`. Nothing here can purge or edit
+config. See [docs/API.md](docs/API.md#mcp-mcp-and-mom-mcp).
+
 Also served: `GET /v1/models`, `/v1/models/{id}`, `/v1/model/info` (capability cards),
 `POST /v1/messages/count_tokens`, `GET /v1/metrics/usage`, `GET /v1/progress/{id}` (SSE), and
 `GET /health`. Auth is a bearer token or an `x-api-key` header, compared in constant time.
@@ -131,6 +146,9 @@ Also served: `GET /v1/models`, `/v1/models/{id}`, `/v1/model/info` (capability c
 
 - **Three compatible surfaces** — Chat Completions, Responses, and Anthropic Messages over one
   pipeline and a shared typed event stream, so streaming and non-streaming stay in lockstep.
+- **🧰 MCP tool surface** — the same pipeline exposed as tools (`/mcp` or `mom mcp`): consult a
+  panel, assemble one from the catalog on the spot, and read spend, runs, and cache state without
+  a shell on the host. Off by default; read-only apart from `consult`.
 - **🖼️ Multimodal / vision** — send images (OpenAI or Anthropic format); a vision request runs on
   the members that can see, and incapable members drop out cleanly.
 - **Effort tiers** — a request's `reasoning_effort` selects a tier; each member declares its own
