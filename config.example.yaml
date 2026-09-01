@@ -6,6 +6,11 @@
 # its base, `extends` links one-off reuses of a model), `prompts` are synthesis instructions, and
 # `ensembles` are the models clients actually call.
 # Secrets never appear here — only the NAMES of environment variables that hold them.
+#
+# Copy this to ~/.mom/config.yaml (machine-wide) or ./mom.yaml (this project) and mom will find
+# it — both are on the search path, and they deep-merge with the project winning, so a project
+# file can be nothing but the `ensembles:` it adds. `mom config where` shows what was found.
+# See docs/CONFIGURATION.md#where-the-config-comes-from.
 version: 2
 
 server:

@@ -88,7 +88,7 @@ async def test_lifespan_configures_logging_from_settings(monkeypatch):
     def _record(*, level: str, fmt: str) -> None:
         calls.append({"level": level, "fmt": fmt})
 
-    async def _fake_build_container(settings):
+    async def _fake_build_container(settings, catalog, *, sources=None):
         return object(), _noop_cleanup
 
     async def _noop_cleanup() -> None:
@@ -98,7 +98,10 @@ async def test_lifespan_configures_logging_from_settings(monkeypatch):
     monkeypatch.setattr("mom.runtime.wiring.build_container", _fake_build_container)
 
     settings = Settings(log_level="DEBUG", log_format="json")
-    app = create_app(settings)  # no prebuilt container -> the lifespan builds one
+    # A catalog, not a config path: `create_app` reads no files, so the lifespan only falls back
+    # to discovery when it was handed nothing.
+    catalog = resolve_catalog(Config.model_validate(yaml.safe_load(_CONFIG)))
+    app = create_app(settings, catalog=catalog)  # no prebuilt container -> the lifespan builds one
     async with app.router.lifespan_context(app):
         pass
 

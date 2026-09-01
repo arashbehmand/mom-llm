@@ -109,7 +109,8 @@ Every legacy name is still **accepted as an alias**, so an existing `.env` keeps
 | `REDIS_URL` | `MOM_REDIS_URL` | alias kept, now optional |
 | `LITELLM_VERBOSE` | `MOM_LITELLM_DEBUG` | alias kept |
 | — | `MOM_DATA_DIR` | new — where the SQLite files live |
-| — | `MOM_CONFIG_OVERLAY` | new — a file deep-merged over `MOM_CONFIG` for deployment-local values |
+| — | `MOM_CONFIG_OVERLAY` | new — a file deep-merged last, over everything else |
+| — | `MOM_AUTH_FROM_OPENCODE` | new — also read API keys from opencode's `auth.json` |
 | — | `MOM_HOST` / `MOM_PORT` / `MOM_LOG_LEVEL` / `MOM_LOG_FORMAT` | new |
 | `ALLOWED_CORS_ORIGINS` | *(none)* | **removed** — CORS moved into the config under `server.cors` |
 | `REPORTING_SERVICE_URL` | *(none)* | **removed** — no second service |
@@ -117,6 +118,26 @@ Every legacy name is still **accepted as an alias**, so an existing `.env` keeps
 
 Provider API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …) and per-model proxy URLs work exactly
 as before. [`.env.example`](../.env.example) is the refreshed reference.
+
+## Config discovery is additive
+
+`MOM_CONFIG` still works and now means something slightly stronger: it **pins** one file and turns
+the search path off entirely, so an existing deployment resolves exactly the config it always did.
+What is new is that omitting it no longer fails — mom looks for `~/.mom/config.yaml` (or
+`$XDG_CONFIG_HOME/mom/config.yaml`) and `./mom.yaml` (or `./.mom/config.yaml`), merges them, and
+serves the result. `mom config where` shows what it found. See
+[Where the config comes from](./CONFIGURATION.md#where-the-config-comes-from).
+
+Two behaviour changes worth knowing about:
+
+- **The uvicorn target moved.** `mom serve` now runs `mom.api.app:serve_app`, which resolves the
+  search path in the serving process. `uvicorn mom.api.app:create_app --factory` still works and
+  still discovers its config, but it no longer installs CORS from that config — middleware has to
+  be added before the app is first called, and `create_app` deliberately reads nothing. Point
+  runbooks at `mom.api.app:serve_app` (or just use `mom serve`).
+- **`null` in `MOM_CONFIG_OVERLAY` now deletes an inherited key**, matching `extends:` and what
+  this document and [CONFIGURATION.md](./CONFIGURATION.md) already described. It previously set
+  the key to `null` instead.
 
 ## Docker
 

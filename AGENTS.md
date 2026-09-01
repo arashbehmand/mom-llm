@@ -25,9 +25,10 @@ source .venv/bin/activate
   `pip install` into `.venv`, and never hand-edit `uv.lock`.
 - Prefer the persistent `.venv` over ephemeral `uv run …` invocations — the `make` targets call
   `.venv/bin/*` directly, and CI installs the same lockfile with `uv sync --locked`.
-- Secrets live in the environment (or a gitignored `.env`; copy `.env.example`). The YAML config
-  only ever *names* env vars, never holds values. Never commit a key, and never read `.env` into
-  a test.
+- Secrets live in the environment, or in a `.env` / `auth.json` on the config search path
+  (`docs/CONFIGURATION.md`); copy `.env.example`. The YAML config only ever *names* env vars,
+  never holds values. Never commit a key, and never read a real `.env` into a test — the suite is
+  hermetic against `$HOME` and the working directory as well as the environment.
 
 ## Build / Lint / Test commands
 
@@ -50,9 +51,10 @@ pytest tests/test_chat_api.py::test_non_streaming_completion     # one test
 pytest -k "cache and not metrics" -q                             # by expression
 ```
 
-The CLI itself is a fast feedback loop: `mom config validate <path>` (exits non-zero on any
-problem), `mom config show <path> [ensemble]` (fully-resolved catalog), `mom healthcheck`,
-`mom cache …`, `mom metrics …`.
+The CLI itself is a fast feedback loop: `mom config where` (the search path — what was checked,
+found, and in what order it merges), `mom config validate` (exits non-zero on any problem),
+`mom config show [ensemble]` (fully-resolved catalog), `mom healthcheck`, `mom cache …`,
+`mom metrics …`. Each takes an optional path to pin one file instead of discovering.
 
 For an end-to-end run with no real provider or keys, start the mock upstream, point
 `OPENAI_API_BASE` at it, and serve the matching config — every member is `openai/*`, so nothing

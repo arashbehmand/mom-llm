@@ -22,6 +22,7 @@ from mom.domain.ports import (
     Tracer,
 )
 from mom.engine.coalesce import CoalesceRegistry
+from mom.runtime.discovery import ConfigSources
 from mom.runtime.settings import Settings
 
 
@@ -46,3 +47,7 @@ class Container:
     # The response cache the client already wraps, kept here purely so a reader (`mom mcp`'s
     # cache_stats) can inspect it without opening a second connection to the same file.
     cache_store: CacheStore | None = None
+    # Which config files the catalog was merged from, and what else was probed. `catalog` alone
+    # cannot answer "where did this come from" once resolution is a search path, and
+    # `settings.config_file` is only ever the pin — None whenever discovery did the work.
+    sources: ConfigSources | None = None

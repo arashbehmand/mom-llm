@@ -66,12 +66,20 @@ Streaming and non-streaming are two consumers of the *same* events, so they can 
 Requires Python 3.12+ and an API key for at least one provider.
 
 ```bash
-pip install mom-llm            # or: uv sync, to work from a checkout
-export MOM_CONFIG=config.example.yaml   # this repo's example; or point at your own
-export MOM_API_TOKEN=dev-secret
-export OPENAI_API_KEY=sk-...   # plus any other providers your config uses
+pip install mom-llm                          # or: uv sync, to work from a checkout
+
+mkdir -p ~/.mom                              # models and keys, once per machine
+cp config.example.yaml ~/.mom/config.yaml    # or write your own
+printf 'MOM_API_TOKEN=dev-secret\nOPENAI_API_KEY=sk-...\n' > ~/.mom/.env
+
+mom config where               # what mom found, and in what order it merges
 mom serve                      # http://127.0.0.1:8000
 ```
+
+mom finds its config on a two-level search path — `~/.mom/config.yaml` (or
+`$XDG_CONFIG_HOME/mom/config.yaml`) for the machine, `./mom.yaml` (or `./.mom/config.yaml`) for a
+project, deep-merged with the project winning. So a project file can be just the ensembles it
+adds, over the models you defined once. `--config <file>` or `MOM_CONFIG` pins one file instead.
 
 Or with Docker — the published image, or a build from the checkout:
 
@@ -83,8 +91,11 @@ docker run -p 8000:8000 -e MOM_API_TOKEN=dev-secret -e MOM_CONFIG=/config.yaml \
 docker compose up              # reads .env for secrets and MOM_CONFIG
 ```
 
-Secrets come from the environment (or a gitignored `.env`); the YAML config only ever *names* the
-env vars, never the values. Check the server with `curl localhost:8000/health`.
+Secrets come from the environment, or from a `.env` / `auth.json` beside any config on the search
+path — first definition wins, and the environment always outranks a file. The YAML config only ever
+*names* the env vars, never the values. Already authenticated with
+[opencode](https://github.com/sst/opencode)? `--auth-from-opencode` borrows its API keys. Check the
+server with `curl localhost:8000/health`.
 
 > **Coming from v1?** The config format and the way you run MoM both changed (your *clients* don't).
 > [docs/MIGRATION.md](docs/MIGRATION.md) walks through both, field by field.
@@ -265,9 +276,13 @@ Start from **[`config.example.yaml`](config.example.yaml)** and see
 **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** for the full reference. Validate and inspect with:
 
 ```bash
-mom config validate config.example.yaml
-mom config show config.example.yaml bmom     # flattened, resolved view of one ensemble
+mom config where           # every path checked, what was found, and the merge order
+mom config validate        # loads, validates, resolves; non-zero on any problem
+mom config show bmom       # flattened, resolved view of one ensemble
 ```
+
+Each of those takes an optional path (`mom config show config.example.yaml bmom`) when you want to
+inspect a specific file rather than whatever is on the search path.
 
 ## 🔗 Use MoM as a provider
 

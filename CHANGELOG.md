@@ -8,6 +8,60 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- **Config discovery — a search path, not one env var.** `mom` now finds its own config. Two
+  levels, deep-merged like git config: a user level (`~/.mom/config.yaml`, else
+  `$XDG_CONFIG_HOME/mom/config.yaml`) holding the models and keys a machine has once, and a
+  project level (`./mom.yaml`, else `./.mom/config.yaml`) holding only what a directory adds.
+  Each layers a sibling override named from its own file (`mom.yaml` → `mom.override.yaml`), and
+  `MOM_CONFIG_OVERLAY` still merges last. Validation runs **once, after the merge**, so a project
+  file can be nothing but `version: 2` and the `ensembles:` it adds over user-level `llms`; `null`
+  masks an inherited key. Deliberately not `./config.yaml` — too generic a name to claim in an
+  arbitrary directory — and deliberately no upward walk from the working directory.
+
+  This exists because `mom mcp` made the old model untenable: MCP clients launch it from an
+  arbitrary directory with a near-empty environment, so every client entry had to carry
+  `--config /abs/path` and its own `env` block, and `mom cache` / `mom metrics` answered
+  differently depending on where you ran them. An MCP entry is now
+  `{"command": "mom", "args": ["mcp"]}`.
+
+  `--config` / `MOM_CONFIG` still works and now means something stronger: it **pins** one file and
+  turns discovery off entirely, so a server told which config to serve does not also pick up
+  whatever sits in `$HOME`. `MOM_CONFIG` is read from the process environment and the working
+  directory's `.env` only, never from a discovered one — a file mom has not found yet must not be
+  able to change where mom looks.
+
+- **Secrets on the same search path, and `auth.json`.** `.env` and `auth.json` are read from each
+  level's directory and always from the working directory, project before user, first definition
+  wins, with the process environment outranking every file. `auth.json` is a flat
+  env-var-name → value object (`{"ANTHROPIC_API_KEY": "sk-…"}`), the same vocabulary the config
+  already uses when it names an `api_key_env`; mom warns when one is readable beyond its owner,
+  and treats a malformed one as a skip rather than a startup failure.
+
+  This also fixes something that only ever worked by accident: nothing in mom put provider keys
+  into the environment, so a key in `.env` reached `os.getenv` only because litellm calls
+  `load_dotenv()` on import — and that resolves relative to *litellm's own installed directory*,
+  not the working directory. It found a repo's `.env` when `.venv/` happened to sit inside the
+  repo, and nothing at all from a system-wide install. Keys are now published deliberately.
+  `MOM_*` names are deliberately excluded from that: they reach `Settings` through its dotenv
+  source instead, so `MOM_API_TOKEN` is not visible to every subprocess mom spawns.
+
+- **`--auth-from-opencode`.** Borrows API keys from [opencode](https://github.com/sst/opencode)'s
+  `auth.json` (`$XDG_DATA_HOME/opencode/auth.json`, else `~/.local/share/opencode/auth.json`),
+  mapping its `type: "api"` entries onto the standard env var names at the lowest precedence of
+  all. `oauth` entries are skipped — they hold refresh tokens for a session opencode renews, not
+  API keys, and a provider answers one with an opaque 401. The file is ignored entirely unless the
+  flag (or `MOM_AUTH_FROM_OPENCODE`) is set.
+
+- **`mom config where`.** Prints every path checked, which were found, the exact merge order, and
+  the secret files consulted — env var **names** only, never values. It never applies the secrets
+  it describes, so asking where a key would come from cannot change where it comes from, and it
+  answers even when the merged config is broken or missing, which is when it is most needed.
+
+- **`mom serve` takes `--config` / `--overlay` / `--auth-from-opencode`**, and the positional path
+  on `mom config validate` / `mom config show` is now optional (omitted means "discover"; given, it
+  pins). Every existing invocation keeps working. `mom config show <ensemble>` works too — a lone
+  argument that is not a file on disk is read as an ensemble name.
+
 - **MCP surface — the panel as a tool call.** An agent can now ask an ensemble for a second opinion
   without re-pointing its model endpoint mid-session, assemble a panel from the catalog for a single
   question, and read gateway state without a shell on the host. Two transports over one definition:
@@ -51,6 +105,25 @@ All notable changes to this project are documented in this file. The format is b
   output, prompts, and tool arguments are never logged.
 
 ### Fixed
+
+- **`null` in `MOM_CONFIG_OVERLAY` now deletes an inherited key**, which is what
+  `docs/CONFIGURATION.md` has always said it does and what `extends:` has always done. There were
+  two deep-merge implementations that disagreed on exactly this; there is now one
+  (`mom.config.merge`), used by config layering, `extends`/`variants`, and discovery alike.
+
+- **Config is resolved once, in one place.** It used to be loaded at four independent sites with
+  three different policies, and two of them silently dropped `MOM_CONFIG_OVERLAY`: the CORS
+  bootstrap in `create_app` and the data-dir resolution behind `mom cache` / `mom metrics`. An
+  overlay that set `server.cors` was invisible to CORS, and one that set `storage.data_dir` sent
+  `mom cache stats` looking in a different directory than the gateway was writing to. Everything
+  now goes through `mom.runtime.bootstrap`.
+
+- **Building the app reads no files.** `create_app` used to re-load `settings.config_file` in its
+  body to install CORS — a second read that could disagree with the catalog the lifespan went on
+  to serve. It is now handed the resolved catalog. `mom serve` points uvicorn at the new
+  `mom.api.app:serve_app`, which resolves config and secrets in the process that serves (the
+  child, under `--reload`). `uvicorn mom.api.app:create_app --factory` still works and still
+  discovers its config, but no longer installs CORS from it — see `docs/MIGRATION.md`.
 
 - **`MOM_LOG_LEVEL` and `MOM_LOG_FORMAT` had no effect.** `configure_logging` was never called, so
   the gateway ran on structlog's defaults and `MOM_LOG_FORMAT=json` was unreachable. It is now

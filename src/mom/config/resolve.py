@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from mom.config.merge import deep_merge
 from mom.config.schema import (
     AllMembersConfig,
     Config,
@@ -125,18 +126,6 @@ class ResolvedCatalog:
     ensembles: Mapping[str, ResolvedEnsemble]
 
 
-def _deep_merge(base: Mapping[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
-    result: dict[str, Any] = dict(base)
-    for key, value in over.items():
-        if value is None:
-            result.pop(key, None)
-        elif isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
 def _resolve_llm(
     name: str,
     raw: Mapping[str, LlmConfig],
@@ -171,7 +160,7 @@ def _resolve_llm(
         api = cfg.api if "api" in provided else parent.api
         api_key_env = cfg.api_key_env if "api_key_env" in provided else parent.api_key_env
         proxy_url_env = cfg.proxy_url_env if "proxy_url_env" in provided else parent.proxy_url_env
-        params = _deep_merge(parent.params, cfg.params)
+        params = deep_merge(parent.params, cfg.params)
         search = cfg.search if "search" in provided else parent.search
         pricing = cfg.pricing if "pricing" in provided else parent.pricing
         capabilities = cfg.capabilities if "capabilities" in provided else parent.capabilities

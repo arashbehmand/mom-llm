@@ -77,14 +77,21 @@ Look for issues labeled:
 
 4. **Set Up Configuration**
    ```bash
-   cp config.example.yaml config.yaml
-   # Edit config.yaml to define your test LLMs and ensembles
+   cp config.example.yaml mom.yaml
+   # Edit mom.yaml to define your test LLMs and ensembles
    ```
+
+   `./mom.yaml` is on the config search path, so every `mom` command in this checkout picks it up
+   with no flags. (`./config.yaml` deliberately is not — too generic a name to claim in an
+   arbitrary directory.)
 
 5. **Verify Setup**
    ```bash
    # Validate the config you just wrote (exits non-zero on any problem)
-   mom config validate config.yaml
+   mom config validate
+
+   # ...and see where it came from, if that is ever a surprise
+   mom config where
 
    # Run the test suite
    make test
@@ -94,8 +101,9 @@ Look for issues labeled:
    curl localhost:8000/health
    ```
 
-   `mom serve` reads `MOM_CONFIG` (see `.env.example`) for the config path and
-   `MOM_API_TOKEN` for the bearer token clients must present.
+   `mom serve` discovers its config (see
+   [docs/CONFIGURATION.md](docs/CONFIGURATION.md#where-the-config-comes-from)); set `MOM_CONFIG`
+   to pin one file instead. `MOM_API_TOKEN` is the bearer token clients must present.
 
 ## 📏 Code Standards
 

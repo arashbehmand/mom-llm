@@ -9,8 +9,8 @@ from textwrap import dedent
 import pytest
 from typer.testing import CliRunner
 
-from mom.api.mcp import stdio
 from mom.cli import app
+from mom.config.resolve import ConfigError
 
 
 runner = CliRunner()
@@ -102,17 +102,38 @@ def test_logs_go_to_stderr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, log_
 
 
 def test_reports_a_missing_config_rather_than_starting(monkeypatch: pytest.MonkeyPatch):
+    """With nothing to find, the error names every path it looked in.
+
+    A search path moves the answer to "which file is it reading?" out of one env var, so the
+    failure has to carry it instead — `MOM_CONFIG is unset` would now be a half-truth.
+    """
     monkeypatch.delenv("MOM_CONFIG", raising=False)
     result = runner.invoke(app, ["mcp"])
     assert result.exit_code != 0
-    assert isinstance(result.exception, RuntimeError)
-    assert "MOM_CONFIG" in str(result.exception)
+    assert isinstance(result.exception, ConfigError)
+    message = str(result.exception)
+    assert "no config found" in message
+    for expected in (".mom/config.yaml", "mom.yaml", "MOM_CONFIG"):
+        assert expected in message
+
+
+def test_discovers_a_project_config_with_no_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The point of the whole feature: an MCP client entry is `{"command": "mom",
+    "args": ["mcp"]}` — no --config, no env block, whatever directory it launches in."""
+    (tmp_path / "cwd" / "mom.yaml").write_text(CONFIG)
+    result = runner.invoke(app, ["mcp", "--data-dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
 
 
 def test_cli_overrides_beat_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """`config_file` carries a validation alias, so the override has to go through model_copy —
-    passing it as a plain field name would silently not bind."""
+    passing it as a plain field name would silently not bind. It also has to go in as a `Path`:
+    the field is typed `Path | None` and model_copy does not validate, so a `str` here would be a
+    lie every caller downstream has to keep re-wrapping."""
+    from mom.runtime.bootstrap import bootstrap
+
     monkeypatch.setenv("MOM_CONFIG", str(tmp_path / "not-this-one.yaml"))
-    settings = stdio._settings(_config_file(tmp_path), tmp_path / "data")
-    assert settings.config_file == str(tmp_path / "config.yaml")
-    assert settings.data_dir == str(tmp_path / "data")
+    booted = bootstrap(config=_config_file(tmp_path), data_dir=tmp_path / "data")
+    assert booted.settings.config_file == tmp_path / "config.yaml"
+    assert booted.settings.data_dir == tmp_path / "data"
+    assert booted.sources.files == (tmp_path / "config.yaml",)

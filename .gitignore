@@ -9,6 +9,12 @@ scripts/
 config.local.yaml
 *.local.yaml
 
+# Per-level sibling overrides, and the credential file that sits beside a discovered config.
+# `mom.yaml` and `.mom/` themselves are deliberately NOT ignored — a project config is meant to
+# be committed; it is only the override and the keys next to it that are not.
+*.override.yaml
+auth.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

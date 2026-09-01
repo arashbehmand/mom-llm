@@ -32,6 +32,10 @@ dependencies = [
     "litellm>=1.97",
     "langfuse>=3.0",
     "mcp>=2.1",
+    # Direct, not transitive: mom.runtime.secrets parses the discovered .env files itself rather
+    # than relying on litellm's incidental import-time load_dotenv() (which resolves relative to
+    # litellm's own install directory, not the cwd — see that module's docstring).
+    "python-dotenv>=1.0",
 ]
 
 # Optional feature deps, imported lazily so a base install never requires them:

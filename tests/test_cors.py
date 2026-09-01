@@ -10,7 +10,7 @@ import httpx
 import pytest
 import yaml
 
-from mom.api.app import create_app
+from mom.api.app import create_app, serve_app
 from mom.api.deps import Container
 from mom.config.resolve import resolve_catalog
 from mom.config.schema import Config
@@ -86,7 +86,12 @@ async def test_create_app_with_no_container_and_no_config_skips_cors():
 
 
 async def test_cors_loaded_from_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # Production path: no container is passed, so create_app best-effort loads settings.config_file.
+    """Production path: `serve_app` resolves the config and hands `create_app` the catalog.
+
+    `create_app` itself reads nothing — it used to re-load `settings.config_file` here, a second
+    read that dropped `MOM_CONFIG_OVERLAY` and so could install CORS from a different config than
+    the one the lifespan went on to serve.
+    """
     config = tmp_path / "models.yaml"
     config.write_text(
         dedent("""
@@ -104,7 +109,7 @@ async def test_cors_loaded_from_config_file(tmp_path: Path, monkeypatch: pytest.
         encoding="utf-8",
     )
     monkeypatch.setenv("MOM_CONFIG", str(config))
-    app = create_app(Settings(_env_file=None))
+    app = serve_app()
     async with _client(app) as client:
         resp = await client.get("/health", headers={"Origin": "https://prod.example.com"})
     assert resp.status_code == 200

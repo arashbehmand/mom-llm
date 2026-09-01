@@ -2,46 +2,139 @@
 
 MoM is configured from two independent sources:
 
-1. **A YAML config file** — the *model catalog*: the individual models (`llms`), the
+1. **YAML config files** — the *model catalog*: the individual models (`llms`), the
    synthesis prompts (`prompts`), and the ensembles clients actually call (`ensembles`),
-   plus server/cache/observability settings. This file never contains secrets — only the
+   plus server/cache/observability settings. These files never contain secrets — only the
    **names** of the environment variables that hold them.
-2. **The process environment** — machine-local facts and secrets: the listen host/port, the
-   API token, provider API keys, proxy URLs. Read from `MOM_`-prefixed variables (with a few
-   legacy aliases) and from a `.env` file if present.
+2. **The environment, and the secret files on the search path** — machine-local facts and
+   secrets: the listen host/port, the API token, provider API keys, proxy URLs. Read from
+   `MOM_`-prefixed variables (with a few legacy aliases), and from the `.env` / `auth.json`
+   files described under [Where secrets come from](#where-secrets-come-from).
 
 The YAML schema is Pydantic v2 with `extra = "forbid"` **everywhere**, so a misspelled key is
-a hard error rather than a silently-ignored line. Point the server at your config with the
-`MOM_CONFIG` environment variable, and validate it before starting:
+a hard error rather than a silently-ignored line.
 
 ```bash
-export MOM_CONFIG=/etc/mom/config.yaml
-mom config validate $MOM_CONFIG        # loads, validates, resolves; non-zero on any problem
-mom config show     $MOM_CONFIG        # prints the fully-resolved catalog (flattened efforts)
+mom config where                       # what was checked, what was found, and the merge order
+mom config validate                    # loads, validates, resolves; non-zero on any problem
+mom config show                        # prints the fully-resolved catalog (flattened efforts)
 mom serve --host 0.0.0.0 --port 8000   # run the gateway
 mom cache stats                        # response-cache entries / bytes / hits (under data_dir)
 mom cache purge --yes                  # clear the response cache
 ```
 
-### Local overlay (deployment-specific values that don't belong in the tracked config)
+None of those take a path, because mom finds its config itself. Every one of them also accepts
+`--config <file>` (and honours `MOM_CONFIG`) when you want to say exactly which file to use.
 
-`MOM_CONFIG_OVERLAY` (or `mom config validate/show --overlay <file>`) deep-merges a second YAML
-file over the main config at load time — for a value that's specific to *this* deployment and
-has no business sitting in a config you publish or share (e.g. `server.public_url`, your real
-domain). Keep the overlay out of git (`config.local.yaml` and `*.local.yaml` are gitignored by
-default):
+## Where the config comes from
+
+Two levels, deep-merged like git config — a **user** level holding the models and keys a machine
+has once, and a **project** level holding only what a directory adds:
+
+| Level | Looked for, in order — first **found** wins, they do not stack |
+| --- | --- |
+| user | `~/.mom/config.yaml`, then `$XDG_CONFIG_HOME/mom/config.yaml` (default `~/.config/mom/config.yaml`) |
+| project | `./mom.yaml`, then `./.mom/config.yaml` |
+
+Deliberately **not** `./config.yaml` — too generic a name to claim in an arbitrary directory.
+And deliberately **no upward walk**: `./mom.yaml` means the working directory, and the user level
+is what covers running from a subdirectory.
+
+Each level also layers a **sibling override** named from its own file — `config.override.yaml`
+beside `config.yaml`, `mom.override.yaml` beside `mom.yaml` — for values specific to *this*
+machine or deployment that have no business in a config you publish or share (`server.public_url`
+and your real domain, say). Those are gitignored by default, along with `auth.json`.
+
+The full merge order, lowest precedence first:
+
+```
+~/.mom/config.yaml  →  ~/.mom/config.override.yaml  →  ./mom.yaml  →  ./mom.override.yaml  →  $MOM_CONFIG_OVERLAY
+```
+
+**Validation runs once, after the merge**, so no single file has to be a complete config. That is
+what makes the machine-wide catalog work — llms and prompts live in `~/.mom/config.yaml`, and a
+project file is just the ensembles it adds:
+
+```yaml
+# ./mom.yaml — `llms: a` comes from the user level
+version: 2
+ensembles:
+  panel:
+    members: [{ llm: claude }, { llm: gpt }]
+    synthesizer: { llm: claude }
+```
+
+Merge semantics are the same as `extends:` (see below), at every layer: nested maps merge
+key-by-key, a scalar replaces the base value, and `null` **masks an inherited key** — which is
+how a project drops an llm the user level defines.
+
+### Pinning one file
+
+`--config <file>` (or `MOM_CONFIG`) turns discovery **off entirely**. Only that file, its sibling
+override, and `MOM_CONFIG_OVERLAY` apply — a server told exactly which config to serve must not
+also pick up whatever happens to sit in `$HOME`:
 
 ```bash
-cat > config.local.yaml <<'EOF'
-server:
-  public_url: https://mom.example.com
-EOF
-export MOM_CONFIG_OVERLAY=./config.local.yaml
+export MOM_CONFIG=/etc/mom/config.yaml   # also reads /etc/mom/config.override.yaml
 mom serve
 ```
 
-Merge semantics are the same as `extends:` (see below): nested maps merge key-by-key, a scalar
-in the overlay replaces the base value, `null` deletes an inherited key.
+`MOM_CONFIG` is read from the process environment and the working directory's `.env` only, never
+from a discovered one — otherwise a file mom had not found yet could change where mom looks.
+
+### Where secrets come from
+
+Secrets are resolved separately from config, and the **first definition wins** — the process
+environment always outranks a file:
+
+| Precedence | Source |
+| --- | --- |
+| 1 | the process environment |
+| 2 | `<project level dir>/.env`, then `<project level dir>/auth.json` |
+| 3 | `./.env`, then `./auth.json` — the working directory, always |
+| 4 | `<user level dir>/.env`, then `<user level dir>/auth.json` — skipped when pinned |
+| 5 | `~/.local/share/opencode/auth.json` — only with `--auth-from-opencode` |
+
+The working directory is always on the path, even when it is not the project level (a config in
+`./.mom/`, or a pinned config elsewhere), because `./.env` is where people keep keys.
+
+`auth.json` is a flat env-var-name → value object, the same vocabulary the config uses when it
+names an `api_key_env` or `proxy_url_env`:
+
+```json
+{ "ANTHROPIC_API_KEY": "sk-ant-...", "MUSE_SPARK_PROXY_URL": "http://user:pw@proxy:8080" }
+```
+
+mom warns (never fails) when an `auth.json` is readable beyond its owner — `chmod 600` it. A
+malformed one is a warning and a skip, not a startup failure: a missing key surfaces clearly on
+the call that needed it, whereas a malformed *config* is fatal.
+
+`MOM_*` settings in a `.env` reach mom's own settings but are deliberately **not** exported to the
+process environment — `MOM_API_TOKEN` has no business being visible to every subprocess. Put
+provider keys in `auth.json` or `.env`; put `MOM_*` in `.env`.
+
+### Borrowing opencode's keys
+
+`--auth-from-opencode` reads [opencode](https://github.com/sst/opencode)'s `auth.json`
+(`$XDG_DATA_HOME/opencode/auth.json`, else `~/.local/share/opencode/auth.json`) and maps its
+`type: "api"` entries onto the standard env var names, at the lowest precedence of all. The file
+is ignored entirely unless the flag is set:
+
+```bash
+mom mcp --auth-from-opencode          # or MOM_AUTH_FROM_OPENCODE=1
+mom config where --auth-from-opencode # preview what it would set, without setting it
+```
+
+`type: "oauth"` entries are skipped — they hold refresh tokens for a session opencode renews, not
+API keys, and handing one to a provider fails with an opaque 401. Providers opencode authenticates
+that mom has no model prefix for (bundled gateways, subscription plans) are skipped and reported.
+
+### Debugging resolution
+
+`mom config where` prints every path checked, which were found, the exact merge order, and the
+secret files consulted. It reports env var **names** only — never values — and never applies the
+secrets it describes, so asking where a key would come from cannot change where it comes from. It
+also works when the merged config is broken or missing, which is when you need it most.
 
 A minimal but complete file — `version`, `llms`, and `ensembles` are the only required keys;
 everything else has a sensible default:
@@ -631,8 +724,9 @@ from `MOM_`-prefixed variables; several **legacy v1 names** are still accepted a
 
 | Purpose | Primary variable | Legacy alias | Notes |
 | --- | --- | --- | --- |
-| Config file path | `MOM_CONFIG` | `MOM_CONFIG_PATH` | Path to the YAML catalog. |
-| Config overlay | `MOM_CONFIG_OVERLAY` | — | Optional file deep-merged over `MOM_CONFIG` — see [Local overlay](#local-overlay-deployment-specific-values-that-dont-belong-in-the-tracked-config) above. |
+| Config file path | `MOM_CONFIG` | `MOM_CONFIG_PATH` | Pins one YAML catalog, disabling discovery — see [Pinning one file](#pinning-one-file). |
+| Config overlay | `MOM_CONFIG_OVERLAY` | — | Optional file deep-merged last, over everything else. |
+| opencode bridge | `MOM_AUTH_FROM_OPENCODE` | — | Also read API keys from opencode's `auth.json`, at lowest precedence. |
 | Data directory | `MOM_DATA_DIR` | — | Overrides `storage.data_dir`; metrics DB + cache. |
 | API token | `MOM_API_TOKEN` | `API_TOKEN` | The bearer token clients must present (when `auth: bearer`). |
 | Listen host / port | `MOM_HOST` / `MOM_PORT` | — | Also settable via `mom serve --host/--port`. |
@@ -701,5 +795,6 @@ MUSE_SPARK_PROXY_URL="http://user:password@us-proxy.example:8080"
 **Langfuse** credentials are read from the env vars named in `observability.langfuse`
 (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` by default).
 
-All of these may be placed in a `.env` file in the working directory; the process environment
-takes precedence over `.env`.
+All of these may be placed in a `.env` (or, for provider keys, an `auth.json`) anywhere on the
+secrets search path — see [Where secrets come from](#where-secrets-come-from) for the full
+precedence order. The process environment takes precedence over every file.
