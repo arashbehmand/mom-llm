@@ -40,10 +40,13 @@ Deliberately **not** `./config.yaml` — too generic a name to claim in an arbit
 And deliberately **no upward walk**: `./mom.yaml` means the working directory, and the user level
 is what covers running from a subdirectory.
 
-Each level also layers a **sibling override** named from its own file — `config.override.yaml`
-beside `config.yaml`, `mom.override.yaml` beside `mom.yaml` — for values specific to *this*
-machine or deployment that have no business in a config you publish or share (`server.public_url`
-and your real domain, say). Those are gitignored by default, along with `auth.json`.
+Each level also layers a **sibling override** for values specific to *this* machine or deployment
+that have no business in a config you publish or share (`server.public_url` and your real domain,
+say). The name is derived from the base file's own stem — `config.override.yaml` beside
+`config.yaml`, and `mom.override.yaml` beside `mom.yaml`, so a project that names its config
+`mom.yaml` does not grow a surprising `config.override.yaml`. A file pinned with `--config` gets
+the same treatment (`prod.yaml` → `prod.override.yaml`). Overrides are gitignored by default,
+along with `auth.json`.
 
 The full merge order, lowest precedence first:
 
@@ -92,11 +95,22 @@ environment always outranks a file:
 | 1 | the process environment |
 | 2 | `<project level dir>/.env`, then `<project level dir>/auth.json` |
 | 3 | `./.env`, then `./auth.json` — the working directory, always |
-| 4 | `<user level dir>/.env`, then `<user level dir>/auth.json` — skipped when pinned |
+| 4 | `~/.mom/.env` and `auth.json`, then `$XDG_CONFIG_HOME/mom/.env` and `auth.json` — skipped when pinned |
 | 5 | `~/.local/share/opencode/auth.json` — only with `--auth-from-opencode` |
 
 The working directory is always on the path, even when it is not the project level (a config in
 `./.mom/`, or a pinned config elsewhere), because `./.env` is where people keep keys.
+
+Unlike the config candidates, **both** user directories are searched for secrets, in the same
+priority order (`~/.mom` first). Keys are additive and first-wins, so there is nothing to gain
+from making them exclusive — and the common setup is a project `mom.yaml` for ensembles with
+`~/.mom/.env` for keys and no user-level YAML at all.
+
+**An empty value is treated as absent everywhere.** `KEY=` in a `.env`, or `"KEY": ""` in an
+`auth.json`, defines nothing: it is not reported as a contribution, it does not shadow a real
+value further down the path, and it does not stop a file from replacing an empty variable already
+in the environment. Anything else would disagree with the code that reads these names — an empty
+API key is indistinguishable from a missing one at the provider.
 
 `auth.json` is a flat env-var-name → value object, the same vocabulary the config uses when it
 names an `api_key_env` or `proxy_url_env`:
@@ -135,6 +149,15 @@ that mom has no model prefix for (bundled gateways, subscription plans) are skip
 secret files consulted. It reports env var **names** only — never values — and never applies the
 secrets it describes, so asking where a key would come from cannot change where it comes from. It
 also works when the merged config is broken or missing, which is when you need it most.
+
+Each secret file is reported in three classes, because "what did this file do" has three
+different answers:
+
+| Line | Meaning |
+| --- | --- |
+| `would set: …` | names this file wins and publishes to the environment |
+| `reaches settings: …` | `MOM_*` names, which configure mom itself without entering the environment |
+| `already set elsewhere: …` | names a higher-precedence source already defined — this file lost |
 
 A minimal but complete file — `version`, `llms`, and `ensembles` are the only required keys;
 everything else has a sensible default:

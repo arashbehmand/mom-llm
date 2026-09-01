@@ -60,11 +60,13 @@ def test_user_dot_mom_wins_over_xdg_and_they_do_not_stack(tree: Path):
     sources = _discover(tree)
     assert sources.files == (tree / "home" / ".mom" / "config.yaml", tree / "proj" / "mom.yaml")
     skipped = [
-        p.path
+        p
         for p in sources.checked
         if p.role == "user config" and p.note and "already matched" in p.note
     ]
-    assert skipped == [tree / "home" / ".config" / "mom" / "config.yaml"]
+    assert [p.path for p in skipped] == [tree / "home" / ".config" / "mom" / "config.yaml"]
+    # Both candidates are named config.yaml, so the note has to name the winning *path*.
+    assert str(tree / "home" / ".mom" / "config.yaml") in skipped[0].note
 
 
 def test_xdg_is_used_when_dot_mom_is_absent(tree: Path):
@@ -106,6 +108,14 @@ def test_no_upward_walk_from_cwd(tree: Path):
     (tree / "proj" / "nested").mkdir()
     sources = discover(cwd=tree / "proj" / "nested", home=tree / "home")
     assert sources.files == ()
+
+
+def test_an_absolute_xdg_root_is_usable_without_a_home(tree: Path):
+    """No home does not mean no config: a container run as a uid with no passwd entry can still
+    be pointed at one with $XDG_CONFIG_HOME, which is why that variable is absolute-only."""
+    _write(tree / "elsewhere" / "mom" / "config.yaml", USER_LLMS + PROJECT_ENSEMBLES)
+    sources = discover(cwd=tree / "proj", home=None, xdg_config_home=tree / "elsewhere")
+    assert sources.files == (tree / "elsewhere" / "mom" / "config.yaml",)
 
 
 def test_missing_home_skips_the_user_level_with_a_note(tree: Path):
@@ -172,6 +182,23 @@ def test_config_overlay_merges_last_and_is_deduped(tree: Path):
         tree / "proj" / "mom.yaml",
         sibling,
     )
+
+
+def test_a_duplicated_overlay_keeps_its_last_place_not_its_first(tree: Path):
+    """De-duplication has to drop the *earlier* copy here. `files` runs lowest-precedence-first,
+    so keeping the first occurrence would demote the file the operator explicitly asked to apply
+    last and let an intervening layer override it."""
+    _write(tree / "home" / ".mom" / "config.yaml", USER_LLMS + "server: { public_url: 'base' }\n")
+    user_override = _write(
+        tree / "home" / ".mom" / "config.override.yaml", "server: { public_url: 'OVERLAY' }\n"
+    )
+    _write(tree / "proj" / "mom.yaml", PROJECT_ENSEMBLES + "server: { public_url: 'project' }\n")
+
+    sources = _discover(tree, overlay=user_override)
+    assert sources.files[-1] == user_override
+    from mom.config.loader import load_layered
+
+    assert load_layered(sources.files).config.server.public_url == "OVERLAY"
 
 
 def test_a_named_overlay_that_does_not_exist_is_still_merged_and_so_fails(tree: Path):

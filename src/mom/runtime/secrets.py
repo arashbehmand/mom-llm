@@ -21,6 +21,12 @@ Two mechanisms, deliberately, because the two kinds of name are read by differen
   auth gateway: ``MOM_API_TOKEN`` has no business being visible to every subprocess mom spawns,
   or to anything that dumps the environment.
 
+An **empty value is treated as absent everywhere** — collected, reported, and applied. That is
+the only reading under which "first definition wins" agrees with the consumers: litellm's
+``_resolve_api_key`` already skips falsy values, so a ``KEY=`` line that shadowed a real key one
+level down would produce a missing-key failure at the provider while this module reported the
+shadowing file as the winner.
+
 Warnings are returned as **data**, never logged from here. ``mom mcp`` writes JSON-RPC frames on
 stdout, so a warning emitted before ``configure_logging(..., stream=sys.stderr)`` has run is a
 protocol violation rather than noise; the caller logs these once logging is pointed somewhere
@@ -65,6 +71,14 @@ class SecretSource:
     values: Mapping[str, str] = field(default_factory=dict, repr=False)
     #: Names this source actually won — those no higher-precedence source had already defined.
     applied: tuple[str, ...] = ()
+    #: ``MOM_*`` names this source carries. They never enter ``os.environ`` (they reach
+    #: ``Settings`` through ``dotenv_files``), so they cannot appear in ``applied`` — but a file
+    #: whose whole contribution is ``MOM_API_TOKEN`` must not report as having contributed
+    #: nothing. That file is why the gateway authenticates.
+    settings_names: tuple[str, ...] = ()
+    #: Names a higher-precedence source (usually the process environment) already defined, so
+    #: this file lost. Distinguishes "beaten" from "empty" in ``mom config where``.
+    shadowed: tuple[str, ...] = ()
     warning: str | None = None
 
 
@@ -98,8 +112,11 @@ def _read_dotenv(path: Path) -> SecretSource:
     try:
         parsed = dotenv_values(path, encoding="utf-8")
     except OSError as exc:
-        return SecretSource("dotenv", path, found=True, warning=f"unreadable: {exc}")
-    values = {k: v for k, v in parsed.items() if v is not None and _ENV_NAME.match(k)}
+        # found=False on purpose: `dotenv_files` feeds found dotenvs to `Settings(_env_file=…)`,
+        # where python-dotenv reopens them. Reporting a file we could not read as present would
+        # turn a warning here into a raise there, which is not what "secrets are soft" means.
+        return SecretSource("dotenv", path, found=False, warning=f"unreadable: {exc}")
+    values = {k: v for k, v in parsed.items() if v and _ENV_NAME.match(k)}
     return SecretSource("dotenv", path, found=True, values=values)
 
 
@@ -122,11 +139,13 @@ def _read_auth_json(path: Path) -> SecretSource:
         )
 
     values: dict[str, str] = {}
-    rejected: list[str] = []
+    rejected = 0
     reserved: list[str] = []
     for name, value in loaded.items():
-        if not (isinstance(name, str) and _ENV_NAME.match(name) and isinstance(value, str)):
-            rejected.append(str(name))
+        if not (
+            isinstance(name, str) and _ENV_NAME.match(name) and isinstance(value, str) and value
+        ):
+            rejected += 1
         elif name.startswith("MOM_"):
             reserved.append(name)
         else:
@@ -134,7 +153,12 @@ def _read_auth_json(path: Path) -> SecretSource:
 
     warnings = [w for w in (_mode_warning(path),) if w]
     if rejected:
-        warnings.append(f"skipped non-string or malformed keys: {', '.join(sorted(rejected))}")
+        # The count, not the names: a reversed mapping ({"sk-ant-…": "ANTHROPIC_API_KEY"}) puts
+        # the credential in the key position, and this module promises never to print one.
+        warnings.append(
+            f"skipped {rejected} entr{'y' if rejected == 1 else 'ies'} that are not "
+            "UPPER_SNAKE_CASE name -> non-empty string"
+        )
     if reserved:
         # There is no route from auth.json into Settings, and putting MOM_API_TOKEN into
         # os.environ is exactly what this module avoids. Say so rather than dropping it silently.
@@ -178,9 +202,16 @@ def _read_opencode(path: Path) -> SecretSource:
 
     values: dict[str, str] = {}
     skipped: list[str] = []
+    not_a_key: list[str] = []
     for provider, entry in loaded.items():
-        if not isinstance(entry, dict) or entry.get("type") != "api":
-            continue  # oauth / wellknown: not an API key
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") != "api":
+            # oauth / wellknown. Worth naming rather than passing over in silence: a provider mom
+            # fully supports, authenticated by a route mom cannot use, is exactly the thing an
+            # operator wonders about when the bridge "found nothing".
+            not_a_key.append(str(provider))
+            continue
         key = entry.get("key")
         prefix = _OPENCODE_PROVIDER_ALIASES.get(provider, provider)
         candidates = infer_key_env_candidates(f"{prefix}/x")
@@ -189,8 +220,17 @@ def _read_opencode(path: Path) -> SecretSource:
             continue
         values.setdefault(candidates[0], key)
 
-    warning = f"no mom equivalent for: {', '.join(sorted(skipped))}" if skipped else None
-    return SecretSource("opencode", path, found=True, values=values, warning=warning)
+    notes = []
+    if not_a_key:
+        notes.append(
+            "authenticated in opencode but not an API key (oauth/wellknown): "
+            + ", ".join(sorted(not_a_key))
+        )
+    if skipped:
+        notes.append(f"no mom equivalent for: {', '.join(sorted(skipped))}")
+    return SecretSource(
+        "opencode", path, found=True, values=values, warning="; ".join(notes) or None
+    )
 
 
 def collect_secrets(
@@ -233,14 +273,30 @@ def resolve_secrets(
     resolved: list[SecretSource] = []
     for source in collected:
         won: list[str] = []
+        settings_names: list[str] = []
+        shadowed: list[str] = []
         for name, value in source.values.items():
-            if name.startswith("MOM_") or name in taken:
+            if name.startswith("MOM_"):
+                settings_names.append(name)
+                continue
+            if name in taken:
+                shadowed.append(name)
                 continue
             taken.add(name)
             won.append(name)
             if apply:
-                os.environ.setdefault(name, value)
-        resolved.append(replace(source, applied=tuple(won)))
+                # Not `setdefault`: that keys on presence while `taken` keys on truthiness, so an
+                # empty variable already in the environment would be reported as overridden and
+                # then left empty. An empty value is not a definition — override it.
+                os.environ[name] = value
+        resolved.append(
+            replace(
+                source,
+                applied=tuple(won),
+                settings_names=tuple(settings_names),
+                shadowed=tuple(shadowed),
+            )
+        )
     return tuple(resolved)
 
 

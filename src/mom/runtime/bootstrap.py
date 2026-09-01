@@ -16,7 +16,7 @@ leave the two describing different files, which logs and ``/health`` would then 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
@@ -34,6 +34,11 @@ class Bootstrapped:
     settings: Settings
     sources: ConfigSources
     secrets: tuple[SecretSource, ...]
+    #: Memo for :meth:`catalog`, which several callers ask for more than once (`mom config where`
+    #: renders the sources and then resolves the data dir). Reading and re-parsing every file on
+    #: the stack each time is pure waste, and two reads could disagree if a file changed between
+    #: them. A one-slot list because the dataclass is frozen.
+    _memo: list[ResolvedCatalog] = field(default_factory=list, repr=False)
 
     @property
     def warnings(self) -> tuple[str, ...]:
@@ -44,9 +49,11 @@ class Bootstrapped:
 
     def catalog(self) -> ResolvedCatalog:
         """Merge and validate the resolved stack. Raises ``ConfigError`` when there is nothing."""
-        if not self.sources.files:
-            raise ConfigError(_nothing_found(self.sources))
-        return load_layered(self.sources.files)
+        if not self._memo:
+            if not self.sources.files:
+                raise ConfigError(_nothing_found(self.sources))
+            self._memo.append(load_layered(self.sources.files))
+        return self._memo[0]
 
 
 def _nothing_found(sources: ConfigSources) -> str:
@@ -175,14 +182,18 @@ def _settings(
     to keep defensively re-wrapping.
     """
     settings = Settings(_env_file=tuple(env_files) or None)
-    overrides: dict[str, object] = {}
-    if config is not None:
-        overrides["config_file"] = Path(config)
-    if overlay is not None:
-        overrides["config_overlay"] = Path(overlay)
+    # Written through unconditionally, `None` included. A discovered `.env` can carry MOM_CONFIG
+    # — it is correctly ignored for discovery (see the module docstring) but pydantic would still
+    # bind it, leaving `settings.config_file` naming a file that was never loaded while
+    # `sources.files` holds the merge that actually ran. Clearing it is what makes
+    # "config_file is only ever the pin" true rather than merely intended.
+    overrides: dict[str, object] = {
+        "config_file": Path(config) if config is not None else None,
+        "config_overlay": Path(overlay) if overlay is not None else None,
+    }
     if data_dir is not None:
         overrides["data_dir"] = Path(data_dir)
     if auth_from_opencode:
         # One-directional: an omitted flag must not clobber MOM_AUTH_FROM_OPENCODE.
         overrides["auth_from_opencode"] = True
-    return settings.model_copy(update=overrides) if overrides else settings
+    return settings.model_copy(update=overrides)

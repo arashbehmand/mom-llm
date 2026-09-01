@@ -45,6 +45,11 @@ All notable changes to this project are documented in this file. The format is b
   `MOM_*` names are deliberately excluded from that: they reach `Settings` through its dotenv
   source instead, so `MOM_API_TOKEN` is not visible to every subprocess mom spawns.
 
+  An **empty value is treated as absent everywhere** — it is not a contribution, it does not
+  shadow a real value further down the path, and it does not prevent a file from replacing an
+  empty variable already in the environment. Any other rule disagrees with the code that reads
+  these names, where an empty API key is indistinguishable from a missing one.
+
 - **`--auth-from-opencode`.** Borrows API keys from [opencode](https://github.com/sst/opencode)'s
   `auth.json` (`$XDG_DATA_HOME/opencode/auth.json`, else `~/.local/share/opencode/auth.json`),
   mapping its `type: "api"` entries onto the standard env var names at the lowest precedence of
@@ -56,6 +61,12 @@ All notable changes to this project are documented in this file. The format is b
   the secret files consulted — env var **names** only, never values. It never applies the secrets
   it describes, so asking where a key would come from cannot change where it comes from, and it
   answers even when the merged config is broken or missing, which is when it is most needed.
+  Each secret file reports in three classes, because "what did this file do" has three different
+  answers: `would set:` (names it publishes to the environment), `reaches settings:` (`MOM_*`
+  names, which configure mom without entering the environment), and `already set elsewhere:`
+  (names a higher-precedence source had already defined). Reporting only the first would have
+  made a `~/.mom/.env` holding just `MOM_API_TOKEN` — the file authenticating the gateway — read
+  as having contributed nothing.
 
 - **`mom serve` takes `--config` / `--overlay` / `--auth-from-opencode`**, and the positional path
   on `mom config validate` / `mom config show` is now optional (omitted means "discover"; given, it
@@ -117,6 +128,29 @@ All notable changes to this project are documented in this file. The format is b
   overlay that set `server.cors` was invisible to CORS, and one that set `storage.data_dir` sent
   `mom cache stats` looking in a different directory than the gateway was writing to. Everything
   now goes through `mom.runtime.bootstrap`.
+
+- **A config you name is a config you get.** `mom cache` / `mom metrics` resolve their data
+  directory through the shared resolver, and that resolver used to swallow every config error and
+  fall back to the platform default. A typo in `MOM_CONFIG` therefore retargeted the command
+  silently — `mom cache purge --yes` would have purged a cache the operator never named. Finding
+  *nothing* still falls back quietly (these commands answered without a config before discovery
+  existed); a file that was named and could not be loaded now fails.
+
+- **`create_app` honours the `Settings` it is handed.** Passing `Settings(config_file=X)` without
+  a catalog — the library-embedder and `uvicorn …:create_app --factory` path — re-derived the pin
+  from the environment and served whatever discovery turned up, while still reporting `X` as
+  `container.settings.config_file`. It now serves `X`, and adopts the bootstrapped settings so a
+  `MOM_API_TOKEN` in a discovered `.env` authenticates on that path too.
+
+- **`settings.config_file` is only ever the pin.** A discovered `.env` carrying `MOM_CONFIG` is
+  correctly ignored for discovery, but still bound into `Settings` — leaving `config_file` naming
+  a file that was never loaded while `sources.files` held the merge that actually ran. It is now
+  cleared explicitly when discovery did the work.
+
+- **An `MOM_CONFIG_OVERLAY` that names a discovered file keeps its last place.** De-duplication
+  kept the first occurrence, which is right for the secret directories (ordered
+  highest-precedence-first) and backwards for the config stack (ordered lowest-first): the file
+  the operator asked to apply last was demoted, and an intervening layer overrode it.
 
 - **Building the app reads no files.** `create_app` used to re-load `settings.config_file` in its
   body to install CORS — a second read that could disagree with the catalog the lifespan went on

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from textwrap import dedent
 
 import httpx
@@ -106,3 +108,71 @@ async def test_lifespan_configures_logging_from_settings(monkeypatch):
         pass
 
     assert calls == [{"level": "DEBUG", "fmt": "json"}]
+
+
+async def test_lifespan_fallback_honours_the_settings_it_was_given(tmp_path: Path, monkeypatch):
+    """`create_app(Settings(config_file=X))` with no catalog has to serve X.
+
+    This is the library-embedder and `uvicorn …:create_app --factory` path. It used to bootstrap
+    bare — re-deriving the pin from the environment — so it served whatever discovery turned up
+    while still reporting X as `container.settings.config_file`. No test entered this branch.
+    """
+    pinned = tmp_path / "pinned.yaml"
+    pinned.write_text(
+        "version: 2\nllms: { z: { model: openai/z } }\n"
+        "ensembles: { p: { members: [{ llm: z }], synthesizer: { llm: z } } }\n",
+        encoding="utf-8",
+    )
+    # A decoy on the search path: discovery would find this one if the pin were ignored.
+    (Path.cwd() / "mom.yaml").write_text(_CONFIG, encoding="utf-8")
+
+    captured: list[object] = []
+
+    async def _fake_build_container(settings, catalog, *, sources=None):
+        captured.append((settings, catalog, sources))
+        return object(), _noop
+
+    async def _noop() -> None:
+        return None
+
+    monkeypatch.setattr("mom.runtime.wiring.build_container", _fake_build_container)
+    monkeypatch.setattr("mom.api.app.configure_logging", lambda **_: None)
+    settings = Settings(_env_file=None).model_copy(update={"config_file": pinned})
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        pass
+
+    used_settings, catalog, sources = captured[0]
+    assert sorted(catalog.ensembles) == ["p"]
+    assert sources is not None
+    assert sources.files == (pinned,)
+    assert used_settings.config_file == pinned
+
+
+async def test_lifespan_fallback_adopts_the_discovered_dotenv(tmp_path: Path, monkeypatch):
+    """The bootstrapped Settings carry the discovered `.env` files. Keeping the caller's env-only
+    Settings meant MOM_API_TOKEN in ~/.mom/.env authenticated under `mom serve` and nowhere else.
+    """
+    home = Path(os.environ["HOME"])
+    (home / ".mom").mkdir(parents=True, exist_ok=True)
+    (home / ".mom" / ".env").write_text("MOM_API_TOKEN=from-user-env\n", encoding="utf-8")
+    (Path.cwd() / "mom.yaml").write_text(_CONFIG, encoding="utf-8")
+
+    captured: list[Settings] = []
+
+    async def _fake_build_container(settings, catalog, *, sources=None):
+        captured.append(settings)
+        return object(), _noop
+
+    async def _noop() -> None:
+        return None
+
+    monkeypatch.setattr("mom.runtime.wiring.build_container", _fake_build_container)
+    monkeypatch.setattr("mom.api.app.configure_logging", lambda **_: None)
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        pass
+
+    token = captured[0].api_token
+    assert token is not None
+    assert token.get_secret_value() == "from-user-env"

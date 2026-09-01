@@ -259,3 +259,145 @@ def test_secret_dirs_are_probed_even_where_no_config_lives(tree: Path):
     show that it looked."""
     collected = collect_secrets(ConfigSources(pinned=False, secret_dirs=(tree / "nowhere",)))
     assert [(s.kind, s.found) for s in collected] == [("dotenv", False), ("auth_json", False)]
+
+
+# ---- empty values are not definitions ------------------------------------------------------------
+def test_an_empty_value_does_not_shadow_a_real_one_below_it(tree: Path, monkeypatch):
+    """`.env.example` shipped LANGFUSE_*="" for a while, so this is the shape a copied example
+    produces: an empty at the project level over a real value at the user level."""
+    _write(tree / "proj" / ".env", 'OPENAI_API_KEY=""\n')
+    _write(tree / "home" / ".mom" / ".env", "OPENAI_API_KEY=real-key\n")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    resolve_secrets(_collected(tree), apply=True)
+    assert os.environ["OPENAI_API_KEY"] == "real-key"
+
+
+def test_an_empty_process_variable_is_overridden_not_merely_reported(
+    tree: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`taken` tests truthiness while `setdefault` tested presence — so an empty in the process
+    env was reported as replaced and then left empty."""
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    _write(tree / "proj" / ".env", "OPENAI_API_KEY=from-file\n")
+
+    resolve_secrets(_collected(tree), apply=True)
+    assert os.environ["OPENAI_API_KEY"] == "from-file"
+
+
+def test_applied_never_names_something_the_environment_did_not_receive(tree: Path, monkeypatch):
+    """The invariant behind the two tests above: the report and the write agree."""
+    monkeypatch.setenv("XAI_API_KEY", "")
+    _write(tree / "proj" / ".env", 'XAI_API_KEY=real\nGROQ_API_KEY=""\nCOHERE_API_KEY=c\n')
+
+    for source in resolve_secrets(_collected(tree), apply=True):
+        for name in source.applied:
+            assert os.environ.get(name) == source.values[name]
+    assert "GROQ_API_KEY" not in os.environ  # an empty line defines nothing at all
+
+
+def test_an_unreadable_dotenv_never_reaches_settings(tree: Path):
+    """Reported as a warning, not handed to `Settings(_env_file=…)` — python-dotenv would reopen
+    it there and raise, turning a soft warning into a startup failure."""
+    path = _write(tree / "proj" / ".env", "OPENAI_API_KEY=x\n", mode=0o000)
+    try:
+        collected = _collected(tree)
+        source = next(s for s in collected if s.path == path)
+        assert source.found is False
+        assert source.warning is not None
+        assert path not in dotenv_files(collected)
+    finally:
+        path.chmod(0o600)
+
+
+# ---- what `config where` needs to be able to say -------------------------------------------------
+def test_mom_names_are_reported_separately_rather_than_as_nothing(tree: Path):
+    """A file whose whole contribution is MOM_API_TOKEN is the file authenticating the gateway.
+    It cannot report as having contributed nothing."""
+    _write(tree / "home" / ".mom" / ".env", "MOM_API_TOKEN=t\n")
+    resolved = resolve_secrets(_collected(tree), environ={}, apply=False)
+    source = next(s for s in resolved if s.path == tree / "home" / ".mom" / ".env")
+    assert source.settings_names == ("MOM_API_TOKEN",)
+    assert source.applied == ()
+
+
+def test_a_file_beaten_by_the_environment_is_distinguishable_from_an_empty_one(tree: Path):
+    _write(tree / "proj" / ".env", "OPENAI_API_KEY=loser\n")
+    resolved = resolve_secrets(_collected(tree), environ={"OPENAI_API_KEY": "winner"}, apply=False)
+    source = next(s for s in resolved if s.path == tree / "proj" / ".env")
+    assert source.shadowed == ("OPENAI_API_KEY",)
+    assert source.applied == ()
+
+
+def test_opencode_reports_oauth_providers_it_could_not_use(tree: Path):
+    """The most useful thing the bridge can say: a provider mom fully supports, authenticated by
+    a route mom cannot use. It used to `continue` before recording anything."""
+    _opencode(tree)
+    source = next(
+        s
+        for s in _collected(tree, auth_from_opencode=True, home=tree / "home")
+        if s.kind == "opencode"
+    )
+    assert source.warning is not None
+    assert "oauth" in source.warning
+    assert "openai" in source.warning  # the oauth entry in OPENCODE
+
+
+def test_a_rejected_auth_json_key_is_counted_not_printed(tree: Path):
+    """A reversed mapping puts the credential in the key position, and this module promises
+    never to print one."""
+    _write(
+        tree / "proj" / "auth.json",
+        json.dumps({"sk-ant-super-secret": "ANTHROPIC_API_KEY"}),
+        mode=0o600,
+    )
+    source = next(s for s in _collected(tree) if s.kind == "auth_json" and s.found)
+    assert source.warning is not None
+    assert "sk-ant-super-secret" not in source.warning
+    assert "skipped 1 entry" in source.warning
+
+
+def test_user_secret_dirs_follow_candidate_order_not_where_the_yaml_landed(tmp_path: Path):
+    """`~/.mom` outranks `~/.config/mom` for config; secrets must not invert that just because
+    the XDG dir happened to hold the config.yaml."""
+    home = tmp_path / "home"
+    _write(home / ".config" / "mom" / "config.yaml", CONFIG)
+    (tmp_path / "proj").mkdir(exist_ok=True)
+    sources = discover(cwd=tmp_path / "proj", home=home)
+    assert sources.secret_dirs == (
+        tmp_path / "proj",
+        home / ".mom",
+        home / ".config" / "mom",
+    )
+
+
+def test_unpinned_discovery_leaves_config_file_none(tree: Path, monkeypatch):
+    """`settings.config_file` is only ever the pin. A discovered `.env` can carry MOM_CONFIG —
+    correctly ignored for discovery — but pydantic would still bind it, leaving `config_file`
+    naming a file that was never loaded while `sources.files` holds the merge that ran."""
+    _write(tree / "home" / ".mom" / ".env", "MOM_CONFIG=/etc/never-loaded.yaml\n")
+    monkeypatch.chdir(tree / "proj")
+    monkeypatch.setenv("HOME", str(tree / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    booted = bootstrap()
+    assert booted.sources.pinned is False
+    assert booted.sources.files == (tree / "proj" / "mom.yaml",)
+    assert booted.settings.config_file is None
+
+
+def test_a_project_dotenv_beats_a_user_one_for_mom_settings(tree: Path, monkeypatch):
+    """The load-bearing assumption: pydantic-settings layers a sequence of `_env_file`s
+    later-wins. All MOM_* precedence rests on it, and only the path *order* was asserted — a
+    dependency bump that changed the merge direction would have passed the suite silently.
+    """
+    _write(tree / "home" / ".mom" / ".env", "MOM_API_TOKEN=user\nMOM_LOG_LEVEL=WARNING\n")
+    _write(tree / "proj" / ".env", "MOM_API_TOKEN=project\n")
+    monkeypatch.chdir(tree / "proj")
+    monkeypatch.setenv("HOME", str(tree / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    settings = bootstrap().settings
+    assert settings.api_token is not None
+    assert settings.api_token.get_secret_value() == "project"
+    assert settings.log_level == "WARNING"  # the user level still fills what the project omits

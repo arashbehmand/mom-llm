@@ -46,8 +46,6 @@ def create_app(
     warnings: Sequence[str] = (),
 ) -> FastAPI:
     """Build the MoM FastAPI application."""
-    given_settings = settings
-    settings = settings or (container.settings if container else Settings())
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -67,9 +65,7 @@ def create_app(
             # (uvicorn factory mode, --reload children, direct ASGI) while tests with a prebuilt
             # container return above and never mutate global logging state. Before
             # build_container, so its startup catalog warnings come out formatted.
-            run_settings, resolved, resolved_sources, found = _resolve(
-                given_settings, catalog, sources
-            )
+            run_settings, resolved, resolved_sources, found = _resolve(settings, catalog, sources)
             configure_logging(level=run_settings.log_level, fmt=run_settings.log_format)
             for warning in (*warnings, *found):
                 get_logger("mom.config").warning("config discovery", detail=warning)
@@ -144,21 +140,33 @@ def _resolve(
 ) -> tuple[Settings, ResolvedCatalog, ConfigSources | None, tuple[str, ...]]:
     """What `serve_app` already resolved, or a resolution done now.
 
-    The fallback exists for `uvicorn mom.api.app:create_app --factory`, which is a documented way
-    to run this app and passes no arguments at all. It resolves in the lifespan rather than at
+    The fallback exists for `uvicorn mom.api.app:create_app --factory` and for library embedders,
+    both of which reach the lifespan without a catalog. It resolves here rather than at
     construction, so building the app stays free of I/O.
 
-    It adopts the bootstrapped ``Settings`` too, not just the catalog. Those carry the discovered
-    ``.env`` files, so keeping the caller's env-only ``Settings`` would mean `MOM_API_TOKEN` in
-    `~/.mom/.env` authenticated under `mom serve` but not here — exactly the kind of
-    which-entry-point-am-I divergence this change exists to remove.
+    Two things it must get right, and both used to be wrong:
+
+    * **A caller's `Settings` is an instruction, not decoration.** `create_app(Settings(
+      config_file=X))` has to serve X. Bootstrapping bare would re-derive the pin from the
+      environment and quietly serve the discovered stack instead, while still reporting X as
+      `container.settings.config_file`.
+    * **The bootstrapped `Settings` are adopted, not discarded.** They carry the discovered
+      `.env` files, so keeping an env-only `Settings` would mean `MOM_API_TOKEN` in `~/.mom/.env`
+      authenticated under `mom serve` and nowhere else.
     """
-    if catalog is not None:
-        return settings or Settings(), catalog, sources, ()
     from mom.runtime.bootstrap import bootstrap
 
-    booted = bootstrap()
-    return settings or booted.settings, booted.catalog(), booted.sources, booted.warnings
+    if catalog is not None and settings is not None:
+        return settings, catalog, sources, ()
+    booted = bootstrap(
+        config=settings.config_file if settings else None,
+        overlay=settings.config_overlay if settings else None,
+        data_dir=settings.data_dir if settings else None,
+        auth_from_opencode=bool(settings and settings.auth_from_opencode),
+    )
+    if catalog is not None:
+        return booted.settings, catalog, sources, booted.warnings
+    return booted.settings, booted.catalog(), booted.sources, booted.warnings
 
 
 def serve_app() -> FastAPI:

@@ -185,9 +185,13 @@ def _resolve_catalog(
 
 
 @config_app.command("validate")
-def config_validate(path: Path | None = _PathArg, overlay: Path | None = _OverlayOpt) -> None:
+def config_validate(
+    path: Path | None = _PathArg,
+    overlay: Path | None = _OverlayOpt,
+    auth_from_opencode: bool = _OpencodeOpt,
+) -> None:
     """Load, validate, and resolve a config; exit non-zero on any problem."""
-    catalog = _resolve_catalog(path, overlay)
+    catalog = _resolve_catalog(path, overlay, auth_from_opencode=auth_from_opencode)
     typer.secho(
         f"OK — {len(catalog.llms)} llms, {len(catalog.ensembles)} ensembles",
         fg=typer.colors.GREEN,
@@ -204,6 +208,7 @@ def config_show(
     path: Path | None = _ShowPathArg,
     ensemble: str | None = typer.Argument(None, help="Show just this ensemble."),
     overlay: Path | None = _OverlayOpt,
+    auth_from_opencode: bool = _OpencodeOpt,
 ) -> None:
     """Print the fully-resolved catalog (flattened effort matrix per ensemble)."""
     from mom.config.resolve import ResolvedEnsemble
@@ -218,7 +223,7 @@ def config_show(
         typer.secho(f"no such file: {path}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 
-    catalog = _resolve_catalog(path, overlay)
+    catalog = _resolve_catalog(path, overlay, auth_from_opencode=auth_from_opencode)
 
     def render(name: str, ens: ResolvedEnsemble) -> None:
         tiers = ens.effort_tiers
@@ -274,7 +279,7 @@ def config_where(
     )
     _render_config_sources(booted)
     _render_secret_sources(booted)
-    typer.echo(f"\ndata dir: {_resolve_data_dir(path, None, overlay=overlay)}")
+    typer.echo(f"\ndata dir: {_data_dir_from(booted)}")
 
 
 def _render_config_sources(booted: Bootstrapped) -> None:
@@ -294,19 +299,36 @@ def _render_config_sources(booted: Bootstrapped) -> None:
 
 
 def _render_secret_sources(booted: Bootstrapped) -> None:
+    """Every class of contribution, because `applied` alone cannot express two of them.
+
+    `MOM_*` names never enter `os.environ` (they reach `Settings` via its dotenv source), and a
+    name a higher-precedence source already defined is beaten rather than absent. Reporting only
+    `applied` made a `~/.mom/.env` holding just `MOM_API_TOKEN` — the file authenticating the
+    gateway — read as "nothing new".
+    """
     typer.secho("\nsecrets  (env var NAMES only — values are never printed)", bold=True)
     for source in booted.secrets:
         if not source.found:
-            typer.echo(f"    {source.path!s:<52} {source.kind:<10} not found")
+            note = f"not found{'' if source.warning is None else f' ({source.warning})'}"
+            typer.echo(f"    {source.path!s:<52} {source.kind:<10} {note}")
             continue
-        would = ", ".join(source.applied) or "nothing new"
-        typer.echo(f"    {source.path!s:<52} {source.kind:<10} would set: {would}")
+        typer.echo(f"    {source.path!s:<52} {source.kind:<10}")
+        for label, names in (
+            ("would set", source.applied),
+            ("reaches settings", source.settings_names),
+            ("already set elsewhere", source.shadowed),
+        ):
+            if names:
+                typer.echo(f"      {label}: {', '.join(names)}")
+        if not (source.applied or source.settings_names or source.shadowed):
+            typer.echo("      contributes nothing")
         if source.warning:
             typer.secho(f"      ⚠ {source.warning}", fg=typer.colors.YELLOW)
     if not booted.settings.auth_from_opencode:
         typer.echo(
             f"    {'opencode bridge':<52} {'opencode':<10} not checked (pass --auth-from-opencode)"
         )
+    typer.echo("\n  the process environment outranks every file above.")
 
 
 cache_app = typer.Typer(help="Inspect and manage the response cache.", no_args_is_help=True)
@@ -322,21 +344,32 @@ def _resolve_data_dir(
     disagree about which database they mean — they used to, because this read one file and
     ignored `MOM_CONFIG_OVERLAY` while the server merged the overlay in.
 
-    A missing or broken config is not fatal here: these commands only ever wanted a directory,
-    and they answered without a config before discovery existed.
+    Finding **nothing** is not fatal: these commands only ever wanted a directory, and they
+    answered without a config before discovery existed. A config that was *named* and could not
+    be loaded is a different matter — falling back there would silently retarget the command at
+    the default database, and `mom cache purge --yes` with a typo in `MOM_CONFIG` would then
+    purge a cache the operator never asked about.
     """
     if data_dir is not None:
         return data_dir
-    from mom.config.resolve import ConfigError
     from mom.runtime.bootstrap import bootstrap
+
+    return _data_dir_from(bootstrap(config=config, overlay=overlay, apply=False))
+
+
+def _data_dir_from(booted: Bootstrapped) -> Path:
+    """The data dir implied by an already-resolved bootstrap."""
+    from mom.config.resolve import ConfigError
     from mom.runtime.wiring import resolve_data_dir
 
-    booted = bootstrap(config=config, overlay=overlay, apply=False)
     if booted.settings.data_dir is not None:
         return Path(booted.settings.data_dir)
     try:
         return resolve_data_dir(booted.settings, booted.catalog())
-    except (ConfigError, FileNotFoundError, ValueError):
+    except (ConfigError, FileNotFoundError, ValueError) as exc:
+        if booted.sources.files:  # something was named or found, and it did not load
+            typer.secho(f"invalid config: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
         import platformdirs
 
         return Path(platformdirs.user_data_dir("mom-llm"))
@@ -363,9 +396,13 @@ async def _cache_clear(db: Path) -> int:
 
 
 @cache_app.command("stats")
-def cache_stats(config: Path | None = _ConfigOpt, data_dir: Path | None = _DataDirOpt) -> None:
+def cache_stats(
+    config: Path | None = _ConfigOpt,
+    data_dir: Path | None = _DataDirOpt,
+    overlay: Path | None = _OverlayOpt,
+) -> None:
     """Print response-cache statistics (entries / bytes / hits)."""
-    db = _resolve_data_dir(config, data_dir) / "cache.db"
+    db = _resolve_data_dir(config, data_dir, overlay=overlay) / "cache.db"
     if not db.exists():
         typer.echo(f"cache: empty (no database at {db})")
         return
@@ -380,10 +417,11 @@ def cache_stats(config: Path | None = _ConfigOpt, data_dir: Path | None = _DataD
 def cache_purge(
     config: Path | None = _ConfigOpt,
     data_dir: Path | None = _DataDirOpt,
+    overlay: Path | None = _OverlayOpt,
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ) -> None:
     """Delete every entry in the response cache."""
-    db = _resolve_data_dir(config, data_dir) / "cache.db"
+    db = _resolve_data_dir(config, data_dir, overlay=overlay) / "cache.db"
     if not db.exists():
         typer.echo(f"cache: empty (no database at {db})")
         return
@@ -418,6 +456,7 @@ async def _usage_report(
 def metrics_usage(
     config: Path | None = _ConfigOpt,
     data_dir: Path | None = _DataDirOpt,
+    overlay: Path | None = _OverlayOpt,
     days: float = typer.Option(7.0, help="Look back this many days (0 or negative = all time)."),
     ensemble: str | None = typer.Option(None, help="Restrict to one ensemble."),
     by: str | None = typer.Option(
@@ -427,7 +466,7 @@ def metrics_usage(
     """Print usage/cost: calls, billable calls, cache hit rate, per-status breakdown, and
     estimated cache savings. NOTE: `MetricsRecorder` drops rows under sustained load (see
     `GET /health`'s `metrics_dropped`) — treat this as a lower bound on real spend, not exact."""
-    db = _resolve_data_dir(config, data_dir) / "metrics.db"
+    db = _resolve_data_dir(config, data_dir, overlay=overlay) / "metrics.db"
     if not db.exists():
         typer.echo(f"metrics: empty (no database at {db})")
         return

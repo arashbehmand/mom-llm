@@ -153,3 +153,44 @@ def test_where_does_not_apply_the_secrets_it_describes(tmp_path: Path, monkeypat
 
     assert runner.invoke(app, ["config", "where"]).exit_code == 0
     assert os.environ.get("OPENAI_API_KEY") != "preview-only"
+
+
+def test_where_names_a_mom_only_file_contribution(tmp_path: Path):
+    """A `.env` whose whole contribution is MOM_API_TOKEN is the file authenticating the gateway.
+    Rendering only `applied` made it read as "nothing new" — the debugging tool being wrong about
+    the headline use case."""
+    _project(tmp_path)
+    (Path.cwd() / ".env").write_text("MOM_API_TOKEN=dev-secret\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["config", "where"])
+    assert result.exit_code == 0, result.output
+    assert "reaches settings: MOM_API_TOKEN" in result.stdout
+    assert "dev-secret" not in result.stdout
+
+
+def test_where_distinguishes_beaten_from_empty(tmp_path: Path, monkeypatch):
+    _project(tmp_path)
+    (Path.cwd() / ".env").write_text("OPENAI_API_KEY=loser\n", encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "winner")
+
+    result = runner.invoke(app, ["config", "where"])
+    assert result.exit_code == 0, result.output
+    assert "already set elsewhere: OPENAI_API_KEY" in result.stdout
+    assert "loser" not in result.stdout
+
+
+def test_where_reports_an_opencode_oauth_provider(tmp_path: Path):
+    """A provider mom fully supports, authenticated by a route mom cannot use, is the most useful
+    thing the bridge can say — and it used to say nothing at all."""
+    _project(tmp_path)
+    oc = Path(os.environ["HOME"]) / ".local" / "share" / "opencode"
+    oc.mkdir(parents=True, exist_ok=True)
+    (oc / "auth.json").write_text(
+        '{"anthropic": {"type": "oauth", "access": "a", "refresh": "r", "expires": 0}}\n',
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["config", "where", "--auth-from-opencode"])
+    assert result.exit_code == 0, result.output
+    assert "oauth" in result.stdout
+    assert "anthropic" in result.stdout
