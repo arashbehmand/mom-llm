@@ -1,13 +1,20 @@
 """Application factory and lifespan.
 
 ``create_app`` is the single place routers meet wiring. Pass a prebuilt ``Container`` (tests, with
-fakes) or let the lifespan construct one from ``Settings`` (load config, LiteLLM client, clock).
-Building the app has no import-time side effects.
+fakes), or a resolved ``catalog`` (``serve_app``), or neither and let the lifespan resolve one.
+Building the app has no import-time side effects and reads no files: everything it needs about
+the config is handed to it.
+
+``serve_app`` is the factory ``mom serve`` points uvicorn at. It resolves the config search path
+and materializes secrets *once*, in the process that will serve — which is the child process
+under ``--reload``, not the parent that parsed the flags — and hands the result to ``create_app``.
+Keeping that out of ``create_app`` is what lets the app be built in a test without discovering,
+reading, or applying anything from the developer's machine.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -24,13 +31,21 @@ from mom.api.routers.metrics import router as metrics_router
 from mom.api.routers.models import router as models_router
 from mom.api.routers.progress import router as progress_router
 from mom.api.routers.responses import router as responses_router
-from mom.runtime.logging import configure_logging
+from mom.config.resolve import ResolvedCatalog
+from mom.runtime.discovery import ConfigSources
+from mom.runtime.logging import configure_logging, get_logger
 from mom.runtime.settings import Settings
 
 
-def create_app(settings: Settings | None = None, *, container: Container | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    container: Container | None = None,
+    catalog: ResolvedCatalog | None = None,
+    sources: ConfigSources | None = None,
+    warnings: Sequence[str] = (),
+) -> FastAPI:
     """Build the MoM FastAPI application."""
-    settings = settings or (container.settings if container else Settings())
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -50,8 +65,11 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
             # (uvicorn factory mode, --reload children, direct ASGI) while tests with a prebuilt
             # container return above and never mutate global logging state. Before
             # build_container, so its startup catalog warnings come out formatted.
-            configure_logging(level=settings.log_level, fmt=settings.log_format)
-            built, cleanup = await build_container(settings)
+            run_settings, resolved, resolved_sources, found = _resolve(settings, catalog, sources)
+            configure_logging(level=run_settings.log_level, fmt=run_settings.log_format)
+            for warning in (*warnings, *found):
+                get_logger("mom.config").warning("config discovery", detail=warning)
+            built, cleanup = await build_container(run_settings, resolved, sources=resolved_sources)
             app.state.container = built
             try:
                 yield
@@ -62,19 +80,16 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     if container is not None:  # tests: make the container available without the lifespan
         app.state.container = container
 
-    # Install CORS from the catalog config. A prebuilt container (tests) exposes it directly;
-    # otherwise the container is built later in the lifespan, so best-effort load the config file
-    # here. Any failure leaves CORS off — a bad config must never break the (pure) app build.
+    # Install CORS from the catalog. Middleware has to be added before the app is first called
+    # (Starlette builds the stack then and `add_middleware` raises afterwards), so this cannot
+    # wait for the lifespan — which is why the catalog is a parameter. It used to be re-loaded
+    # from `settings.config_file` right here, a second read that dropped `MOM_CONFIG_OVERLAY`
+    # and so could disagree with the catalog the lifespan went on to serve.
     cors = None
     if container is not None:
         cors = container.catalog.config.server.cors
-    elif settings.config_file is not None:
-        try:
-            from mom.config.loader import load_config
-
-            cors = load_config(settings.config_file).config.server.cors
-        except Exception:
-            cors = None
+    elif catalog is not None:
+        cors = catalog.config.server.cors
     if cors is not None and cors.origins:
         app.add_middleware(
             CORSMiddleware,
@@ -116,3 +131,64 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     # dialect of the model endpoint. Gated per request by `server.mcp.enabled` (see McpGate).
     mount_mcp(app)
     return app
+
+
+def _resolve(
+    settings: Settings | None,
+    catalog: ResolvedCatalog | None,
+    sources: ConfigSources | None,
+) -> tuple[Settings, ResolvedCatalog, ConfigSources | None, tuple[str, ...]]:
+    """What `serve_app` already resolved, or a resolution done now.
+
+    The fallback exists for `uvicorn mom.api.app:create_app --factory` and for library embedders,
+    both of which reach the lifespan without a catalog. It resolves here rather than at
+    construction, so building the app stays free of I/O.
+
+    Two things it must get right, and both used to be wrong:
+
+    * **A caller's `Settings` is an instruction, not decoration.** `create_app(Settings(
+      config_file=X))` has to serve X. Bootstrapping bare would re-derive the pin from the
+      environment and quietly serve the discovered stack instead, while still reporting X as
+      `container.settings.config_file`.
+    * **The bootstrapped `Settings` are adopted, not discarded.** They carry what the discovered
+      `.env` files defined, so keeping an env-only `Settings` would mean `MOM_API_TOKEN` in
+      `~/.mom/.env` authenticated under `mom serve` and nowhere else.
+
+    A supplied `catalog` is the third case, and it means the caller has taken over config
+    resolution entirely. Discovery stays off: an embedder handing in a catalog it built itself
+    does not expect mom to go reading `$HOME` for a data directory, an API token, or a Redis URL.
+    Its process environment still configures it, because that is how any library is configured.
+    """
+    if catalog is not None:
+        if settings is not None:
+            return settings, catalog, sources, ()
+        return Settings(), catalog, sources, ()
+
+    from mom.runtime.bootstrap import bootstrap
+
+    booted = bootstrap(
+        config=settings.config_file if settings else None,
+        overlay=settings.config_overlay if settings else None,
+        data_dir=settings.data_dir if settings else None,
+        auth_from_opencode=bool(settings and settings.auth_from_opencode),
+    )
+    return booted.settings, booted.catalog(), booted.sources, booted.warnings
+
+
+def serve_app() -> FastAPI:
+    """The factory `mom serve` runs: resolve config and secrets once, then build the app.
+
+    Deliberately does not configure logging or emit anything. Building an app must not reach
+    global state — structlog is process-wide, so a factory that reconfigured it would change the
+    behaviour of everything else in the process. The warnings it collected ride along and are
+    logged in the lifespan, once the sink is set up.
+    """
+    from mom.runtime.bootstrap import bootstrap
+
+    booted = bootstrap()
+    return create_app(
+        booted.settings,
+        catalog=booted.catalog(),
+        sources=booted.sources,
+        warnings=booted.warnings,
+    )

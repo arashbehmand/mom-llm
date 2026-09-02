@@ -116,3 +116,22 @@ def test_loader_layering_overlay(tmp_path: Path):
     assert merged["server"]["auth"] == "none"
     catalog = load_config(base, overlay=overlay)
     assert catalog.config.server.auth == "none"
+
+
+def test_loader_overlay_null_deletes_inherited_key(tmp_path: Path):
+    """The overlay merge deletes an inherited key on `null`, same as `extends` — see
+    docs/CONFIGURATION.md's "Local overlay" section."""
+    base = tmp_path / "models.yaml"
+    base.write_text(
+        "version: 2\n"
+        "server: { public_url: https://example.com }\n"
+        "llms: { a: { model: openai/x } }\n"
+        "ensembles: { e: { members: [{ llm: a }], synthesizer: { llm: a } } }\n",
+        encoding="utf-8",
+    )
+    overlay = tmp_path / "local.yaml"
+    overlay.write_text("server: { public_url: null }\n", encoding="utf-8")
+    merged = load_raw(base, overlay=overlay)
+    assert "public_url" not in merged["server"]
+    catalog = load_config(base, overlay=overlay)
+    assert catalog.config.server.public_url is None

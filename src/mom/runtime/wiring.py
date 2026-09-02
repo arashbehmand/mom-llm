@@ -21,13 +21,13 @@ from mom.adapters.observability import (
     NoopTracer,
     OtelTracer,
 )
-from mom.config.loader import load_config
 from mom.config.resolve import ResolvedCatalog
 from mom.domain.ports import CacheStore, EventBus, LLMClient, Tracer
 from mom.engine.coalesce import CoalesceRegistry
 from mom.runtime.clock import SystemClock, UuidIds
 from mom.runtime.container import Container
 from mom.runtime.custody import InMemoryToolCallCustody
+from mom.runtime.discovery import ConfigSources
 from mom.runtime.logging import get_logger
 from mom.runtime.settings import Settings
 from mom.store.cache import SqliteCacheStore
@@ -191,11 +191,18 @@ def _has_declared_pricing(catalog: ResolvedCatalog, model: str) -> bool:
     return any(llm.pricing is not None for llm in catalog.llms.values() if llm.model == model)
 
 
-async def build_container(settings: Settings) -> tuple[Container, Callable[[], Awaitable[None]]]:
-    """Load config, open stores, wire adapters. Returns the container and an async cleanup."""
-    if settings.config_file is None:
-        raise RuntimeError("MOM_CONFIG must point to a config file to serve")
-    catalog = load_config(settings.config_file, overlay=settings.config_overlay)
+async def build_container(
+    settings: Settings,
+    catalog: ResolvedCatalog,
+    *,
+    sources: ConfigSources | None = None,
+) -> tuple[Container, Callable[[], Awaitable[None]]]:
+    """Open stores and wire adapters around an already-resolved catalog.
+
+    The catalog is passed in rather than loaded here because resolving it is now a search over
+    several files (see :mod:`mom.runtime.bootstrap`); re-deriving it from ``settings.config_file``
+    would quietly collapse that stack back to one file and discard every layer discovery merged.
+    """
     _warn_stale_model_catalog(catalog)
     clock = SystemClock()
     data_dir = resolve_data_dir(settings, catalog)
@@ -228,6 +235,7 @@ async def build_container(settings: Settings) -> tuple[Container, Callable[[], A
     container = Container(
         settings=settings,
         catalog=catalog,
+        sources=sources,
         client=client,
         clock=clock,
         ids=UuidIds(),

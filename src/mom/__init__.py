@@ -24,9 +24,11 @@ import os
 # the catalog silently changes underneath every model call. Setting it here removes the ordering
 # question rather than continuing to win it by luck.
 #
-# An explicit value in the environment still wins: `LITELLM_LOCAL_MODEL_COST_MAP=False` forces
-# the network fetch, which is the escape hatch when config.yaml adopts a model that the pinned
-# litellm's bundled catalog predates (see the litellm floor in pyproject.toml).
+# An explicit value in the *process* environment still wins: `LITELLM_LOCAL_MODEL_COST_MAP=False`
+# forces the network fetch, which is the escape hatch when config.yaml adopts a model that the
+# pinned litellm's bundled catalog predates (see the litellm floor in pyproject.toml). It has to
+# be a real env var, not a `.env` entry: this line runs at import, long before any `.env` is read
+# (mom.runtime.secrets), and both this setdefault and dotenv are first-wins.
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 

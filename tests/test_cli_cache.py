@@ -61,3 +61,58 @@ def test_cache_purge_requires_confirmation(tmp_path: Path):
     result = runner.invoke(app, ["cache", "purge", "--data-dir", str(tmp_path)], input="n\n")
     assert result.exit_code != 0  # aborted at the prompt
     assert _remaining(tmp_path / "cache.db") == 2  # nothing removed
+
+
+def test_data_dir_follows_a_discovered_config(tmp_path: Path):
+    """`mom cache` and the gateway must mean the same database. They used to be able to disagree:
+    this path read one config file and ignored MOM_CONFIG_OVERLAY, while the server merged it."""
+    data = tmp_path / "elsewhere"
+    (Path.cwd() / "mom.yaml").write_text(
+        "version: 2\n"
+        f"storage: {{ data_dir: {data} }}\n"
+        "llms: { a: { model: openai/a } }\n"
+        "ensembles: { e: { members: [{ llm: a }], synthesizer: { llm: a } } }\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["cache", "stats"])
+    assert result.exit_code == 0, result.output
+    assert str(data / "cache.db") in result.stdout
+
+
+def test_data_dir_falls_back_silently_with_no_config(tmp_path: Path):
+    """These commands only ever wanted a directory, and answered without a config before
+    discovery existed — a miss must not become a hard failure."""
+    result = runner.invoke(app, ["cache", "stats"])
+    assert result.exit_code == 0, result.output
+    assert "cache: empty" in result.stdout
+
+
+def test_a_named_config_that_cannot_load_fails_instead_of_retargeting(tmp_path: Path, monkeypatch):
+    """`mom cache purge --yes` with a typo in MOM_CONFIG used to fall back to the platform
+    default and purge a cache the operator never named. Silence is fine when nothing was found;
+    it is not fine when a file was named and could not be loaded."""
+    monkeypatch.setenv("MOM_CONFIG", str(tmp_path / "typo.yaml"))
+    result = runner.invoke(app, ["cache", "purge", "--yes"])
+    assert result.exit_code == 1
+    combined = result.output + (result.stderr if result.stderr_bytes else "")
+    assert "invalid config" in combined
+
+
+def test_overlay_flag_reaches_data_dir_resolution(tmp_path: Path):
+    """`--overlay` exists on serve/mcp/config; cache and metrics resolve the same data dir and
+    took only `--config`."""
+    data = tmp_path / "from-overlay"
+    base = tmp_path / "base.yaml"
+    base.write_text(
+        "version: 2\nllms: { a: { model: openai/a } }\n"
+        "ensembles: { e: { members: [{ llm: a }], synthesizer: { llm: a } } }\n",
+        encoding="utf-8",
+    )
+    overlay = tmp_path / "over.yaml"
+    overlay.write_text(f"storage: {{ data_dir: {data} }}\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["cache", "stats", "--config", str(base), "--overlay", str(overlay)]
+    )
+    assert result.exit_code == 0, result.output
+    assert str(data / "cache.db") in result.stdout

@@ -344,8 +344,7 @@ boundary, exactly like the rest of the CLI.
                         "headers": {"Authorization": "Bearer $MOM_API_TOKEN"}}}}
 
 // ...or locally over stdio
-{"mcpServers": {"mom": {"command": "mom", "args": ["mcp"],
-                        "env": {"MOM_CONFIG": "/etc/mom/config.yaml"}}}}
+{"mcpServers": {"mom": {"command": "mom", "args": ["mcp"]}}}
 ```
 
 When the surface is disabled, `/mcp` answers **404** — a switched-off surface should look absent

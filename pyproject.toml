@@ -32,6 +32,10 @@ dependencies = [
     "litellm>=1.97",
     "langfuse>=3.0",
     "mcp>=2.1",
+    # Direct, not transitive: mom.runtime.secrets parses the discovered .env files itself rather
+    # than relying on litellm's incidental import-time load_dotenv() (which resolves relative to
+    # litellm's own install directory, not the cwd — see that module's docstring).
+    "python-dotenv>=1.0",
 ]
 
 # Optional feature deps, imported lazily so a base install never requires them:
@@ -159,7 +163,17 @@ asyncio_mode = "auto"
 
 [tool.coverage.run]
 # Gate the core logic; api/runtime/store/cli are exercised but not chased to a number.
-source = ["mom.domain", "mom.engine", "mom.adapters", "mom.config"]
+source = [
+    "mom.domain",
+    "mom.engine",
+    "mom.adapters",
+    "mom.config",
+    # Config/secret resolution: gated because it decides which credentials and which config file
+    # the process uses, which is the last thing that should go unmeasured.
+    "mom.runtime.bootstrap",
+    "mom.runtime.discovery",
+    "mom.runtime.secrets",
+]
 branch = true
 omit = ["*/tests/*"]
 

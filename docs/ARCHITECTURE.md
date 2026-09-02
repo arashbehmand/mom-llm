@@ -363,15 +363,31 @@ stream into their own event grammars (`response.*` items with a centralized `seq
 
 ## Composition and configuration
 
+- **`discovery`** (`mom.runtime.discovery`) resolves the config *search path* — a user level
+  (`~/.mom`, `$XDG_CONFIG_HOME/mom`) under a project level (`./mom.yaml`, `./.mom/config.yaml`),
+  each with a sibling override — into an ordered list of files. It is pure: `cwd`, `home` and the
+  XDG root are parameters, not global reads, so the search path is testable against a synthetic
+  tree. `--config`/`MOM_CONFIG` turns it off and pins one file.
+- **`secrets`** (`mom.runtime.secrets`) reads the `.env` / `auth.json` files on that same path.
+  Provider keys go into `os.environ` (`litellm_client` dereferences them by name at call time, so
+  there is no object to thread them through); `MOM_*` names deliberately do not, reaching
+  `Settings` through its dotenv source instead. Warnings are returned as data, never logged in
+  place — `mom mcp` writes JSON-RPC on stdout, where a stray log line is a protocol violation.
+- **`bootstrap`** (`mom.runtime.bootstrap`) is the single resolver every entry point calls, so
+  `mom serve`, `mom mcp`, `mom config`, `mom cache` and `mom metrics` cannot disagree about which
+  files are in play.
 - **`Settings`** (`mom.runtime.settings`) reads only machine-local facts and secrets from `MOM_`-
   prefixed env vars (`MOM_CONFIG`, `MOM_API_TOKEN`, `MOM_DATA_DIR`, …), with legacy v1 aliases
   accepted. It never carries the YAML model config.
-- **`build_container`** (`mom.runtime.wiring`) is the composition root: it loads and resolves the
-  config into a `ResolvedCatalog`, opens the two stores, wraps the `LiteLLMClient` in the
+- **`build_container`** (`mom.runtime.wiring`) is the composition root: it takes an
+  already-resolved `ResolvedCatalog`, opens the two stores, wraps the `LiteLLMClient` in the
   `CachingClient` when caching is enabled, builds the tracer, and returns a frozen `Container` plus
   an async cleanup. `create_app` (`mom.api.app`) wires this into FastAPI's lifespan and installs the
-  routers, CORS (from config), and the `MomError → OpenAI-shaped-JSON` exception handlers.
-- Building the app has **no import-time side effects**; tests inject a prebuilt `Container` (with
+  routers, CORS (from the catalog it is handed), and the `MomError → OpenAI-shaped-JSON` exception
+  handlers. `serve_app` is the factory `mom serve` points uvicorn at: it bootstraps once, in the
+  process that will serve — the child, under `--reload`.
+- Building the app has **no import-time side effects** and reads **no files**: everything
+  `create_app` knows about the config is passed to it. Tests inject a prebuilt `Container` (with
   fakes) and skip the lifespan entirely.
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the config schema and [API.md](API.md) for the endpoint

@@ -170,7 +170,7 @@ claude mcp add --transport http mom http://localhost:8000/mcp \
   --header "Authorization: Bearer <your MoM token>"
 
 # ...or locally over stdio, with no gateway running at all
-claude mcp add mom -- mom mcp --config /etc/mom/config.yaml
+claude mcp add mom -- mom mcp
 ```
 
 Clients that read a JSON config (Cursor, Cline, Continue, Codex) take the same two shapes:
@@ -179,8 +179,7 @@ Clients that read a JSON config (Cursor, Cline, Continue, Codex) take the same t
 {"mcpServers": {
   "mom": {"type": "http", "url": "http://localhost:8000/mcp",
           "headers": {"Authorization": "Bearer <your MoM token>"}},
-  "mom-local": {"command": "mom", "args": ["mcp"],
-                "env": {"MOM_CONFIG": "/etc/mom/config.yaml"}}
+  "mom-local": {"command": "mom", "args": ["mcp"]}
 }}
 ```
 
