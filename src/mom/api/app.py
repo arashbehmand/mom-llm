@@ -150,22 +150,28 @@ def _resolve(
       config_file=X))` has to serve X. Bootstrapping bare would re-derive the pin from the
       environment and quietly serve the discovered stack instead, while still reporting X as
       `container.settings.config_file`.
-    * **The bootstrapped `Settings` are adopted, not discarded.** They carry the discovered
-      `.env` files, so keeping an env-only `Settings` would mean `MOM_API_TOKEN` in `~/.mom/.env`
-      authenticated under `mom serve` and nowhere else.
+    * **The bootstrapped `Settings` are adopted, not discarded.** They carry what the discovered
+      `.env` files defined, so keeping an env-only `Settings` would mean `MOM_API_TOKEN` in
+      `~/.mom/.env` authenticated under `mom serve` and nowhere else.
+
+    A supplied `catalog` is the third case, and it means the caller has taken over config
+    resolution entirely. Discovery stays off: an embedder handing in a catalog it built itself
+    does not expect mom to go reading `$HOME` for a data directory, an API token, or a Redis URL.
+    Its process environment still configures it, because that is how any library is configured.
     """
+    if catalog is not None:
+        if settings is not None:
+            return settings, catalog, sources, ()
+        return Settings(), catalog, sources, ()
+
     from mom.runtime.bootstrap import bootstrap
 
-    if catalog is not None and settings is not None:
-        return settings, catalog, sources, ()
     booted = bootstrap(
         config=settings.config_file if settings else None,
         overlay=settings.config_overlay if settings else None,
         data_dir=settings.data_dir if settings else None,
         auth_from_opencode=bool(settings and settings.auth_from_opencode),
     )
-    if catalog is not None:
-        return booted.settings, catalog, sources, booted.warnings
     return booted.settings, booted.catalog(), booted.sources, booted.warnings
 
 

@@ -15,11 +15,11 @@ Two mechanisms, deliberately, because the two kinds of name are read by differen
 
 * **Provider and third-party names** (``ANTHROPIC_API_KEY``, a ``proxy_url_env``, ``LANGFUSE_*``)
   go into ``os.environ`` with ``setdefault``, so the process environment always outranks a file.
-* **``MOM_*`` names never enter the process environment.** ``Settings`` reads them from the
-  discovered ``.env`` files directly (``pydantic-settings`` takes a *sequence* of dotenv files,
-  later overriding earlier, with the real environment still outranking all of them). This is an
-  auth gateway: ``MOM_API_TOKEN`` has no business being visible to every subprocess mom spawns,
-  or to anything that dumps the environment.
+* **Names that configure mom itself never enter the process environment.** They are handed to
+  ``Settings`` directly instead. This is an auth gateway: ``MOM_API_TOKEN`` has no business being
+  visible to every subprocess mom spawns, or to anything that dumps the environment — and neither
+  has ``API_TOKEN``, the legacy spelling of the same secret, which is why the set comes from
+  :func:`~mom.runtime.settings.settings_env_names` rather than a ``MOM_`` prefix test.
 
 An **empty value is treated as absent everywhere** — collected, reported, and applied. That is
 the only reading under which "first definition wins" agrees with the consumers: litellm's
@@ -46,6 +46,7 @@ from typing import Literal
 
 from mom.config.resolve import infer_key_env_candidates
 from mom.runtime.discovery import ConfigSources
+from mom.runtime.settings import settings_env_names
 
 
 SecretKind = Literal["dotenv", "auth_json", "opencode"]
@@ -264,9 +265,9 @@ def resolve_secrets(
 ) -> tuple[SecretSource, ...]:
     """Fill in each source's ``applied`` names, first definition wins; optionally set them.
 
-    ``MOM_*`` is skipped here by design — those reach ``Settings`` through ``dotenv_files``
-    instead, so they never become process-wide state. With ``apply=False`` nothing is mutated
-    and the result is a pure preview.
+    Names belonging to ``Settings`` are skipped here by design — they reach it through
+    :func:`settings_values` instead, so they never become process-wide state. With
+    ``apply=False`` nothing is mutated and the result is a pure preview.
     """
     env = os.environ if environ is None else environ
     taken = {name for name in env if env.get(name)}
@@ -276,7 +277,7 @@ def resolve_secrets(
         settings_names: list[str] = []
         shadowed: list[str] = []
         for name, value in source.values.items():
-            if name.startswith("MOM_"):
+            if _is_settings_name(name):
                 settings_names.append(name)
                 continue
             if name in taken:
@@ -300,12 +301,29 @@ def resolve_secrets(
     return tuple(resolved)
 
 
-def dotenv_files(collected: Sequence[SecretSource]) -> tuple[Path, ...]:
-    """The discovered ``.env`` files, ordered **lowest** precedence first for ``pydantic-settings``.
+def _is_settings_name(name: str) -> bool:
+    """Whether this name configures mom rather than a provider.
 
-    ``Settings(_env_file=…)`` layers a sequence with later files overriding earlier ones, which
-    is the reverse of the order secrets are collected in — hence the flip.
+    The ``MOM_`` prefix test stays alongside the derived set so a future setting is kept out of
+    the environment from the moment it is added, not from the moment someone remembers to.
     """
-    return tuple(
-        source.path for source in reversed(collected) if source.kind == "dotenv" and source.found
-    )
+    return name.startswith("MOM_") or name in settings_env_names()
+
+
+def settings_values(collected: Sequence[SecretSource]) -> dict[str, str]:
+    """The settings names the files define, merged highest-precedence-first.
+
+    Handing ``Settings`` the *values* rather than the file paths is what makes the empty-is-absent
+    rule apply to mom's own settings too. ``Settings(_env_file=…)`` re-reads and re-parses the raw
+    files, so it never saw the filtering this module does: a project ``.env`` with a bare
+    ``MOM_API_TOKEN=`` would beat a real token in ``~/.mom/.env`` and leave the gateway unable to
+    authenticate anyone. It also drops a dependency on ``pydantic-settings`` layering a sequence
+    of dotenv files later-wins, which was load-bearing for precedence and invisible in the code.
+    """
+    merged: dict[str, str] = {}
+    for source in collected:
+        if source.kind != "dotenv":
+            continue
+        for name in source.settings_names:
+            merged.setdefault(name, source.values[name])
+    return merged

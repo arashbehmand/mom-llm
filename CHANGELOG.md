@@ -48,7 +48,13 @@ All notable changes to this project are documented in this file. The format is b
   An **empty value is treated as absent everywhere** — it is not a contribution, it does not
   shadow a real value further down the path, and it does not prevent a file from replacing an
   empty variable already in the environment. Any other rule disagrees with the code that reads
-  these names, where an empty API key is indistinguishable from a missing one.
+  these names, where an empty API key is indistinguishable from a missing one. That covers mom's
+  own settings too: `Settings` is handed the values the files defined rather than the file paths,
+  because handing over paths let pydantic re-read them raw, so a bare `MOM_API_TOKEN=` in a
+  project `.env` beat a real token at the user level and left the gateway unable to authenticate
+  anyone. Keeping settings out of the process environment likewise covers the legacy spellings
+  (`API_TOKEN`, `REDIS_URL`, `LITELLM_VERBOSE`), which carry the same secrets as their prefixed
+  names and were being published while the prefixed ones were not.
 
 - **`--auth-from-opencode`.** Borrows API keys from [opencode](https://github.com/sst/opencode)'s
   `auth.json` (`$XDG_DATA_HOME/opencode/auth.json`, else `~/.local/share/opencode/auth.json`),
@@ -135,6 +141,11 @@ All notable changes to this project are documented in this file. The format is b
   silently — `mom cache purge --yes` would have purged a cache the operator never named. Finding
   *nothing* still falls back quietly (these commands answered without a config before discovery
   existed); a file that was named and could not be loaded now fails.
+
+- **A supplied catalog turns discovery off.** `create_app(catalog=…)` without settings paired the
+  caller's catalog with settings discovered from the host's `~/.mom`, so an embedder that had
+  taken over config resolution still had its data directory, API token and Redis URL decided by
+  whatever happened to be in `$HOME`. Its process environment configures it now, and nothing else.
 
 - **`create_app` honours the `Settings` it is handed.** Passing `Settings(config_file=X)` without
   a catalog — the library-embedder and `uvicorn …:create_app --factory` path — re-derived the pin

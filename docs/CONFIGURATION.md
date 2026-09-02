@@ -106,11 +106,11 @@ priority order (`~/.mom` first). Keys are additive and first-wins, so there is n
 from making them exclusive — and the common setup is a project `mom.yaml` for ensembles with
 `~/.mom/.env` for keys and no user-level YAML at all.
 
-**An empty value is treated as absent everywhere.** `KEY=` in a `.env`, or `"KEY": ""` in an
-`auth.json`, defines nothing: it is not reported as a contribution, it does not shadow a real
-value further down the path, and it does not stop a file from replacing an empty variable already
-in the environment. Anything else would disagree with the code that reads these names — an empty
-API key is indistinguishable from a missing one at the provider.
+**An empty value is treated as absent everywhere**, provider keys and mom's own settings alike.
+`KEY=` in a `.env`, or `"KEY": ""` in an `auth.json`, defines nothing: it is not reported as a
+contribution, it does not shadow a real value further down the path, and it does not stop a file
+from replacing an empty variable already in the environment. Anything else would disagree with
+the code that reads these names, where an empty API key is indistinguishable from a missing one.
 
 `auth.json` is a flat env-var-name → value object, the same vocabulary the config uses when it
 names an `api_key_env` or `proxy_url_env`:
@@ -123,9 +123,11 @@ mom warns (never fails) when an `auth.json` is readable beyond its owner — `ch
 malformed one is a warning and a skip, not a startup failure: a missing key surfaces clearly on
 the call that needed it, whereas a malformed *config* is fatal.
 
-`MOM_*` settings in a `.env` reach mom's own settings but are deliberately **not** exported to the
-process environment — `MOM_API_TOKEN` has no business being visible to every subprocess. Put
-provider keys in `auth.json` or `.env`; put `MOM_*` in `.env`.
+Settings in a `.env` reach mom but are deliberately **not** exported to the process environment:
+`MOM_API_TOKEN` has no business being visible to every subprocess mom spawns. That covers the
+legacy spellings too (`API_TOKEN`, `REDIS_URL`, `LITELLM_VERBOSE`), which carry exactly the same
+values as their `MOM_`-prefixed names. Put provider keys in `auth.json` or `.env`; put settings
+in `.env`.
 
 ### Borrowing opencode's keys
 

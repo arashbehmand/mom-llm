@@ -16,9 +16,9 @@ from mom.runtime.bootstrap import bootstrap
 from mom.runtime.discovery import ConfigSources, discover
 from mom.runtime.secrets import (
     collect_secrets,
-    dotenv_files,
     opencode_auth_path,
     resolve_secrets,
+    settings_values,
 )
 
 
@@ -98,14 +98,59 @@ def test_mom_names_reach_settings_but_not_the_process_environment(
     assert booted.settings.api_token.get_secret_value() == "secret-token"
 
 
-def test_dotenv_files_are_ordered_lowest_precedence_first(tree: Path):
-    """pydantic-settings layers a sequence with *later* files overriding earlier, which is the
-    reverse of collection order."""
+def test_settings_values_merge_highest_precedence_first(tree: Path):
+    """Settings gets the *values* the files defined, not the file paths. Handing over paths let
+    pydantic re-read them raw, so the empty-is-absent filtering never reached mom's own settings
+    — and precedence silently depended on pydantic layering a file sequence later-wins."""
     _write(tree / "proj" / ".env", "MOM_HOST=project\n")
-    _write(tree / "home" / ".mom" / ".env", "MOM_HOST=user\n")
+    _write(tree / "home" / ".mom" / ".env", "MOM_HOST=user\nMOM_LOG_LEVEL=WARNING\n")
 
-    files = dotenv_files(_collected(tree))
-    assert files == (tree / "home" / ".mom" / ".env", tree / "proj" / ".env")
+    values = settings_values(resolve_secrets(_collected(tree), environ={}, apply=False))
+    assert values == {"MOM_HOST": "project", "MOM_LOG_LEVEL": "WARNING"}
+
+
+def test_an_empty_setting_does_not_shadow_a_real_one(tree: Path, monkeypatch):
+    """The empty-is-absent rule has to cover mom's own settings too. A bare `MOM_API_TOKEN=` in a
+    project .env used to beat a real token in ~/.mom/.env and leave the gateway unable to
+    authenticate anyone."""
+    _write(tree / "proj" / ".env", "MOM_API_TOKEN=\n")
+    _write(tree / "home" / ".mom" / ".env", "MOM_API_TOKEN=real-token\n")
+    monkeypatch.chdir(tree / "proj")
+    monkeypatch.setenv("HOME", str(tree / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    token = bootstrap().settings.api_token
+    assert token is not None
+    assert token.get_secret_value() == "real-token"
+
+
+def test_a_legacy_alias_reaches_settings_without_entering_the_environment(tree: Path, monkeypatch):
+    """`API_TOKEN` is the legacy spelling of `MOM_API_TOKEN` and carries the same secret, so it
+    gets the same treatment. Testing only the MOM_ prefix published it to every subprocess."""
+    _write(tree / "proj" / ".env", "API_TOKEN=legacy-secret\nREDIS_URL=redis://x\n")
+    monkeypatch.chdir(tree / "proj")
+    monkeypatch.setenv("HOME", str(tree / "home"))
+    monkeypatch.delenv("API_TOKEN", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+
+    settings = bootstrap().settings
+    assert settings.api_token is not None
+    assert settings.api_token.get_secret_value() == "legacy-secret"
+    assert settings.redis_url == "redis://x"
+    assert "API_TOKEN" not in os.environ
+    assert "REDIS_URL" not in os.environ
+
+
+def test_settings_injection_leaves_the_environment_as_it_found_it(tree: Path, monkeypatch):
+    """The values are published only for the Settings construction. Anything left behind would be
+    the process-wide exposure this module exists to avoid."""
+    _write(tree / "home" / ".mom" / ".env", "MOM_API_TOKEN=t\nMOM_LOG_LEVEL=DEBUG\n")
+    monkeypatch.chdir(tree / "proj")
+    monkeypatch.setenv("HOME", str(tree / "home"))
+    before = dict(os.environ)
+
+    assert bootstrap().settings.log_level == "DEBUG"
+    assert dict(os.environ) == before
 
 
 # ---- auth.json ----------------------------------------------------------------------------------
@@ -296,16 +341,15 @@ def test_applied_never_names_something_the_environment_did_not_receive(tree: Pat
     assert "GROQ_API_KEY" not in os.environ  # an empty line defines nothing at all
 
 
-def test_an_unreadable_dotenv_never_reaches_settings(tree: Path):
-    """Reported as a warning, not handed to `Settings(_env_file=…)` — python-dotenv would reopen
-    it there and raise, turning a soft warning into a startup failure."""
-    path = _write(tree / "proj" / ".env", "OPENAI_API_KEY=x\n", mode=0o000)
+def test_an_unreadable_dotenv_is_a_warning_not_a_startup_failure(tree: Path):
+    """Secrets are soft. Reported, contributing nothing, and never able to take the process down."""
+    path = _write(tree / "proj" / ".env", "MOM_API_TOKEN=x\n", mode=0o000)
     try:
-        collected = _collected(tree)
+        collected = resolve_secrets(_collected(tree), environ={}, apply=False)
         source = next(s for s in collected if s.path == path)
         assert source.found is False
         assert source.warning is not None
-        assert path not in dotenv_files(collected)
+        assert settings_values(collected) == {}
     finally:
         path.chmod(0o600)
 

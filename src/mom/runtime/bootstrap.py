@@ -15,7 +15,7 @@ leave the two describing different files, which logs and ``/health`` would then 
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -23,7 +23,7 @@ from pathlib import Path
 from mom.config.loader import load_layered
 from mom.config.resolve import ConfigError, ResolvedCatalog
 from mom.runtime.discovery import ConfigSources, discover
-from mom.runtime.secrets import SecretSource, collect_secrets, dotenv_files, resolve_secrets
+from mom.runtime.secrets import SecretSource, collect_secrets, resolve_secrets, settings_values
 from mom.runtime.settings import Settings
 
 
@@ -156,7 +156,7 @@ def bootstrap(
 
     # Step 5.
     settings = _settings(
-        dotenv_files(secrets),
+        settings_values(secrets),
         config=pinned,
         overlay=resolved_overlay,
         data_dir=data_dir,
@@ -166,14 +166,25 @@ def bootstrap(
 
 
 def _settings(
-    env_files: Sequence[Path],
+    from_files: Mapping[str, str],
     *,
     config: Path | None,
     overlay: Path | None,
     data_dir: Path | None,
     auth_from_opencode: bool,
 ) -> Settings:
-    """Build ``Settings`` with the already-resolved paths applied.
+    """Build ``Settings`` from the process environment plus what the discovered files defined.
+
+    The file-sourced names are published into the environment only for the duration of the
+    construction below, then removed. That looks roundabout next to ``Settings(**kwargs)``, and
+    it is the only option that gets all three properties at once: the names are env-var spellings
+    rather than field names (so the validation aliases bind), ``setdefault`` keeps the real
+    process environment outranking every file, and pydantic's own validation and coercion run
+    normally. Init kwargs would take the *highest* priority and invert the documented precedence.
+
+    Transient is the point. What must never happen is a settings secret *persisting* in the
+    environment where a subprocess or an environment dump can see it; a window inside one
+    function, in a single-threaded startup that spawns nothing, is not that.
 
     ``model_copy`` rather than keyword construction for the path fields: they carry validation
     aliases (``MOM_CONFIG`` / ``MOM_CONFIG_PATH``), so passing them by field name would silently
@@ -181,7 +192,14 @@ def _settings(
     ``model_copy`` does not validate, so a string here would be a type the rest of the code has
     to keep defensively re-wrapping.
     """
-    settings = Settings(_env_file=tuple(env_files) or None)
+    injected = [name for name in from_files if name not in os.environ]
+    for name in injected:
+        os.environ[name] = from_files[name]
+    try:
+        settings = Settings()
+    finally:
+        for name in injected:
+            os.environ.pop(name, None)
     # Written through unconditionally, `None` included. A discovered `.env` can carry MOM_CONFIG
     # — it is correctly ignored for discovery (see the module docstring) but pydantic would still
     # bind it, leaving `settings.config_file` naming a file that was never loaded while

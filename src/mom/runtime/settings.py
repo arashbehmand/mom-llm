@@ -78,3 +78,22 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("MOM_AUTH_FROM_OPENCODE"),
     )
+
+
+def settings_env_names() -> frozenset[str]:
+    """Every environment variable name that configures mom itself.
+
+    Derived from the model rather than hand-listed, so it cannot drift when a field or a legacy
+    alias is added. It covers both spellings of the aliased fields — ``MOM_API_TOKEN`` *and*
+    ``API_TOKEN`` — which matters because the legacy names carry exactly the same secrets as the
+    prefixed ones and must be kept out of the process environment for the same reason.
+    """
+    names: set[str] = set()
+    prefix = Settings.model_config.get("env_prefix", "")
+    for field_name, field in Settings.model_fields.items():
+        alias = field.validation_alias
+        if isinstance(alias, AliasChoices):
+            names.update(str(choice) for choice in alias.choices)
+        else:
+            names.add(f"{prefix}{field_name}".upper())
+    return frozenset(names)
