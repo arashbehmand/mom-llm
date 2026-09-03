@@ -544,7 +544,6 @@ ensembles:
       # Opus 5's ladder gained `xhigh`, so the calibration rule above now lands one rung higher at
       # emom's lower tiers; the default (`max`) tier cell is unchanged.
       - { llm: cl5op,  effort: [high, xhigh, max] }
-      - { llm: cl5f,   effort: [medium, high, max] }
       - { llm: cl5st,  effort: [high, xhigh, max] }
       - { llm: g31p,   effort: high }   # 'high' is g31p's own ceiling — nowhere higher to go
       - { llm: g37f,   effort: high }   # ditto
