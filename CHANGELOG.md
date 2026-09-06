@@ -6,6 +6,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-09-06
+
+### Fixed
+
+- **`mom --version` reported 2.0.0 on 2.1.0.** The version was written twice — `pyproject.toml`
+  and a literal in `mom/__init__.py` — and the release bumped one of them. `__version__` now reads
+  the installed distribution's metadata, so there is one source of truth and no second literal to
+  forget. The distribution version was correct throughout; only the CLI and `mom.__version__`
+  under-reported.
+
 ## [2.1.0] - 2026-09-06
 
 Shape a panel without editing its roster — per turn from the chat box, per machine from a config
