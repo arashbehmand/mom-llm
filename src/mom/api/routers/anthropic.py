@@ -42,13 +42,20 @@ async def messages(req: MessagesRequest, container: ContainerDep, http_request: 
             message_id=message_id,
             model=ir.model,
             input_tokens=input_tokens,
+            notices=plan.notices,
         )
         heartbeat = container.catalog.config.server.stream_heartbeat
         heartbeat_seconds = heartbeat.total_seconds() if heartbeat is not None else None
         return sse_response(stream, headers=headers, heartbeat_seconds=heartbeat_seconds)
     result = await collect(events)
     return JSONResponse(
-        build_message(result, message_id=message_id, model=ir.model, input_tokens=input_tokens),
+        build_message(
+            result,
+            message_id=message_id,
+            model=ir.model,
+            input_tokens=input_tokens,
+            notices=plan.notices,
+        ),
         headers=headers,
     )
 

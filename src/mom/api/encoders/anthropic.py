@@ -2,6 +2,11 @@
 
 Folds the same domain event stream into Anthropic's content-block event sequence
 (message_start / content_block_* / message_delta / message_stop).
+
+Member perspectives have no home on this surface (there is no `<think>` convention to borrow), but
+a plan's ``notices`` — a ``<<SYSTEM>>`` directive MoM couldn't honor — do: they open the thinking
+block the synthesizer's own reasoning then continues into. A client driving MoM through
+``/v1/messages`` learns its directive was dropped exactly as one on the other two surfaces does.
 """
 
 from __future__ import annotations
@@ -49,11 +54,29 @@ def stop_reason(finish: str) -> str:
     return _STOP_REASON.get(finish, "end_turn")
 
 
+def _notice_text(notices: tuple[str, ...]) -> str:
+    return "".join(f"{notice}\n" for notice in notices) + "\n" if notices else ""
+
+
 def build_message(
-    result: EnsembleResult, *, message_id: str, model: str, input_tokens: int
+    result: EnsembleResult,
+    *,
+    message_id: str,
+    model: str,
+    input_tokens: int,
+    notices: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Non-streaming Anthropic message object."""
     content: list[dict[str, Any]] = []
+    if notices:
+        thinking = _notice_text(notices)
+        content.append(
+            {
+                "type": "thinking",
+                "thinking": thinking,
+                "signature": _thinking_signature(thinking),
+            }
+        )
     if result.text:
         content.append({"type": "text", "text": result.text})
     for call in result.tool_calls:
@@ -89,7 +112,12 @@ def build_message(
 
 
 async def encode_sse(
-    events: AsyncIterator[StreamEvent], *, message_id: str, model: str, input_tokens: int
+    events: AsyncIterator[StreamEvent],
+    *,
+    message_id: str,
+    model: str,
+    input_tokens: int,
+    notices: tuple[str, ...] = (),
 ) -> AsyncIterator[bytes]:
     """Fold the event stream into an Anthropic Messages SSE byte stream."""
     yield _sse(
@@ -143,6 +171,32 @@ async def encode_sse(
             )
         out.append(_sse("content_block_stop", {"type": "content_block_stop", "index": index}))
         return out
+
+    # Notices open the thinking block; synthesizer reasoning appends to the same one, and the
+    # first real content closes and signs it. Emitted before the first event on purpose — on a
+    # passthrough or relay turn nothing else would ever open a block to carry them.
+    if notices:
+        thinking_index = next_index
+        next_index += 1
+        open_block = thinking_index
+        notice_text = _notice_text(notices)
+        thinking_text.append(notice_text)
+        yield _sse(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": thinking_index,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+        )
+        yield _sse(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": thinking_index,
+                "delta": {"type": "thinking_delta", "thinking": notice_text},
+            },
+        )
 
     async for event in events:
         if isinstance(event, AnswerDelta):

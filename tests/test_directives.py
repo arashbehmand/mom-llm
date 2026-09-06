@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
 from mom.domain.directives import SystemDirectives, extract_system_block
-from mom.domain.errors import InvalidRequestError
 from mom.domain.request import ImagePart, MessageIR, TextPart
 
 
@@ -287,18 +284,24 @@ def test_readme_documented_multi_directive_example_parses_as_documented():
     )
 
 
-def test_unknown_directive_key_raises_400():
+def test_unknown_directive_key_warns_and_ends_the_header_zone():
+    """A typo'd key can't be obeyed and mustn't cost the turn: the header stops there, the line
+    survives as instruction text, and the warning rides along to the think block."""
     messages = _msgs(MessageIR(role="user", content="<<SYSTEM>>skpi: k3\ntext<</SYSTEM>>"))
-    with pytest.raises(InvalidRequestError, match="skpi"):
-        extract_system_block(messages)
+    _, directives = extract_system_block(messages)
+    assert directives is not None
+    assert directives.instruction == "skpi: k3\ntext"
+    assert "skpi" in directives.warnings[0]
 
 
 def test_body_starting_with_non_directive_line_becomes_instruction_verbatim():
-    # "Note:" LOOKS key-shaped but appears before any directive has been recognized, so it is
-    # subject to the same unknown-key rule as anywhere else in the header zone.
+    # "Note:" LOOKS key-shaped, so it is read as an unknown directive — which now ends the header
+    # zone rather than failing, leaving the prose intact (with a warning naming the key).
     messages = _msgs(MessageIR(role="user", content="<<SYSTEM>>Note: be careful<</SYSTEM>>"))
-    with pytest.raises(InvalidRequestError):
-        extract_system_block(messages)
+    _, directives = extract_system_block(messages)
+    assert directives is not None
+    assert directives.instruction == "Note: be careful"
+    assert "note" in directives.warnings[0]
 
 
 def test_leading_blank_line_is_the_escape_hatch_for_key_shaped_prose():
@@ -319,8 +322,11 @@ def test_a_single_newline_after_the_opening_tag_is_not_the_blank_line_escape_hat
     # hatch above — silently discarding every directive and turning the whole header into inert
     # instruction text. `exclude:`/`synth:`/etc. must still be parsed here, not skipped.
     messages = _msgs(MessageIR(role="user", content="<<SYSTEM>>\nNote: be careful<</SYSTEM>>"))
-    with pytest.raises(InvalidRequestError, match="note"):
-        extract_system_block(messages)
+    _, directives = extract_system_block(messages)
+    assert directives is not None
+    # The warning is the proof the line reached the header scan at all: swallowed by the
+    # blank-line escape hatch it would have become instruction text silently, as it did then.
+    assert "note" in directives.warnings[0]
 
 
 def test_instruction_terminator_key_is_the_other_escape_hatch():
@@ -341,13 +347,26 @@ def test_instruction_terminator_with_no_inline_value_uses_the_next_lines():
     assert directives.instruction == "Note: be careful\nMore text."
 
 
-def test_a_directive_shaped_line_after_legitimate_directives_still_400s():
-    # Once we're mid-header-scan, a key-shaped-but-unknown line is still an error, not silently
-    # folded into the instruction — the parser can't tell "meant to end the header" from "typo".
+def test_a_directive_shaped_line_after_legitimate_directives_ends_the_header_with_a_warning():
+    # Mid-header-scan, a key-shaped-but-unknown line is folded into the instruction and warned
+    # about — the parser can't tell "meant to end the header" from "typo", so it does the lossless
+    # thing and says which key it didn't recognize.
     body = "exclude: k3\nWarning: something\nmore text"
     messages = _msgs(MessageIR(role="user", content=f"<<SYSTEM>>{body}<</SYSTEM>>"))
-    with pytest.raises(InvalidRequestError, match="warning"):
-        extract_system_block(messages)
+    _, directives = extract_system_block(messages)
+    assert directives is not None
+    assert directives.exclude == ("k3",)  # the directives above it still hold
+    assert directives.instruction == "Warning: something\nmore text"
+    assert "warning" in directives.warnings[0]
+
+
+def test_include_parses_and_accumulates_like_the_other_list_directives():
+    body = "include: g31p\ninclude: k3, G31P\n"
+    messages = _msgs(MessageIR(role="user", content=f"<<SYSTEM>>{body}<</SYSTEM>>"))
+    _, directives = extract_system_block(messages)
+    assert directives is not None
+    assert directives.include == ("g31p", "k3")
+    assert directives.warnings == ()
 
 
 def test_only_directives_no_instruction_when_every_line_is_a_directive():

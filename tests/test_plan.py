@@ -159,9 +159,29 @@ def test_exclude_by_as_alias_identity_works():
     assert "deep2" not in {m.identity for m in plan.members}
 
 
-def test_exclude_unknown_identity_raises_400_listing_the_roster():
-    with pytest.raises(InvalidRequestError, match="fast, seeker") as excinfo:
-        resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>exclude: nonexistent<</SYSTEM>>"))
+def test_unknown_identity_is_a_notice_and_the_turn_runs_anyway():
+    """A name typed from memory and missed by a character costs a seat on the panel, not the
+    turn — and says so where the human will see it."""
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>exclude: nonexistent<</SYSTEM>>"))
+
+    assert {m.identity for m in plan.members} == {"fast", "deep2", "seeker"}
+    assert len(plan.notices) == 1
+    assert "nonexistent" in plan.notices[0]
+    assert "fast, deep2, seeker" in plan.notices[0]  # the roster, when nothing is close enough
+
+
+def test_a_near_miss_notice_names_the_member_that_was_probably_meant():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>only: fastt, deep2<</SYSTEM>>"))
+
+    assert {m.identity for m in plan.members} == {"deep2"}  # the valid half of `only:` still holds
+    assert "Did you mean 'fast'?" in plan.notices[0]
+
+
+def test_an_only_that_matches_nothing_still_fails_before_any_spend():
+    """The one case a notice can't cover: nothing left to run. The message carries the notice, so
+    the typo is visible in the 400 too."""
+    with pytest.raises(InvalidRequestError, match="min_results") as excinfo:
+        resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>only: nonexistent<</SYSTEM>>"))
     assert "nonexistent" in str(excinfo.value)
 
 
@@ -201,10 +221,10 @@ def test_directives_on_a_tiered_ensemble_dont_affect_normal_requests():
     assert {m.identity for m in plan.members} == {"fast", "deep"}
 
 
-def test_exclude_on_a_passthrough_ensemble_is_a_400():
+def test_exclude_on_a_passthrough_ensemble_is_a_notice():
     block = "<<SYSTEM>>exclude: fast<</SYSTEM>>"
-    with pytest.raises(InvalidRequestError, match="passthrough"):
-        resolve_plan(_catalog(), _ir_with_block(block, model="passthru"))
+    plan = resolve_plan(_catalog(), _ir_with_block(block, model="passthru"))
+    assert "passthrough" in plan.notices[0]
 
 
 def test_show_work_directive_overrides_the_ensemble_default():
@@ -212,9 +232,11 @@ def test_show_work_directive_overrides_the_ensemble_default():
     assert plan.show_work == "inline"
 
 
-def test_invalid_show_work_directive_is_a_400():
-    with pytest.raises(InvalidRequestError, match="show_work"):
-        resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>show_work: verbose<</SYSTEM>>"))
+def test_invalid_show_work_directive_keeps_the_ensemble_default_and_says_so():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>show_work: verbose<</SYSTEM>>"))
+    assert plan.show_work == "off"  # the ensemble's own setting, untouched
+    assert "show_work" in plan.notices[0]
+    assert "verbose" in plan.notices[0]
 
 
 def test_dedupe_defaults_to_the_server_config():
@@ -246,10 +268,12 @@ def test_dedupe_directive_accepts_the_usual_spellings():
         ).dedupe
 
 
-def test_invalid_dedupe_directive_is_a_400():
-    """A mistyped directive must fail loudly, not silently fan out twice."""
-    with pytest.raises(InvalidRequestError, match="dedupe"):
-        resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>dedupe: maybe<</SYSTEM>>"))
+def test_invalid_dedupe_directive_keeps_the_configured_policy_and_says_so():
+    """A mistyped directive must be loud, not silent — but the turn still runs."""
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>dedupe: maybe<</SYSTEM>>"))
+    assert plan.dedupe is False  # `server.dedupe.enabled`, unchanged
+    assert "dedupe" in plan.notices[0]
+    assert "maybe" in plan.notices[0]
 
 
 def test_synth_directive_retargets_the_synthesizer():
@@ -258,9 +282,70 @@ def test_synth_directive_retargets_the_synthesizer():
     assert plan.synth.model == "openai/synth2"
 
 
-def test_unknown_synth_directive_is_a_400():
-    with pytest.raises(InvalidRequestError, match="synth"):
-        resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>synth: nonexistent<</SYSTEM>>"))
+def test_unknown_synth_directive_keeps_the_configured_synthesizer_and_says_so():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>synth: nonexistent<</SYSTEM>>"))
+    assert plan.synth.llm_name == "synth"  # the ensemble's own synthesizer answered the turn
+    assert "synth" in plan.notices[0]
+    assert "nonexistent" in plan.notices[0]
+
+
+def test_an_unknown_directive_key_is_a_notice_and_the_line_becomes_instruction_text():
+    block = "<<SYSTEM>>\nexlude: fast\nBe terse.<</SYSTEM>>"
+    plan = resolve_plan(_catalog(), _ir_with_block(block))
+
+    assert {m.identity for m in plan.members} == {"fast", "deep2", "seeker"}
+    assert plan.instruction == "exlude: fast\nBe terse."  # nothing the human typed is dropped
+    assert "exlude" in plan.notices[0]
+
+
+# -------------------------------------------------------------------------------------------
+# <<SYSTEM>> include: — adding a model to one turn's panel.
+# -------------------------------------------------------------------------------------------
+
+
+def test_include_adds_a_catalog_llm_that_is_not_a_member_of_the_ensemble():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>include: synth2<</SYSTEM>>"))
+
+    assert {m.identity for m in plan.members} == {"fast", "deep2", "seeker", "synth2"}
+    added = _member(plan, "synth2")
+    assert added.spec.model == "openai/synth2"  # joins under its own name, with its own params
+    assert plan.notices == ()
+
+
+def test_include_brings_back_a_tier_skipped_member_at_runnable_effort():
+    """`extra` is `effort: skip` at the low tier. Asked back explicitly, it runs at its llm's own
+    params — `skip` is a roster instruction and would be nonsense as a provider effort value."""
+    plan = resolve_plan(
+        _catalog(), _ir_with_block("<<SYSTEM>>include: extra<</SYSTEM>>", model="tiered")
+    )
+
+    assert {m.identity for m in plan.members} == {"fast", "deep", "extra"}
+    assert "reasoning_effort" not in _member(plan, "extra").spec.params
+
+
+def test_include_is_applied_last_so_it_wins_over_exclude():
+    block = "<<SYSTEM>>\nexclude: fast, deep2\ninclude: fast\n<</SYSTEM>>"
+    plan = resolve_plan(_catalog(), _ir_with_block(block))
+    assert {m.identity for m in plan.members} == {"fast", "seeker"}
+
+
+def test_include_composes_with_only_to_build_a_panel_from_scratch():
+    block = "<<SYSTEM>>\nonly: fast\ninclude: synth2\n<</SYSTEM>>"
+    plan = resolve_plan(_catalog(), _ir_with_block(block))
+    assert {m.identity for m in plan.members} == {"fast", "synth2"}
+
+
+def test_including_a_member_already_on_the_panel_does_not_seat_it_twice():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>include: fast<</SYSTEM>>"))
+    assert [m.identity for m in plan.members] == ["fast", "deep2", "seeker"]
+
+
+def test_include_of_an_unknown_name_is_a_notice_and_leaves_the_panel_alone():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>include: synth3<</SYSTEM>>"))
+
+    assert {m.identity for m in plan.members} == {"fast", "deep2", "seeker"}
+    assert "synth3" in plan.notices[0]
+    assert "Did you mean 'synth'?" in plan.notices[0]
 
 
 def test_instruction_alone_threads_through_unaffected_by_directives():

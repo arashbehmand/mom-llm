@@ -70,12 +70,17 @@ async def chat_completions(
             include_usage=ir.include_usage,
             stream_profile=profile,
             progress_url=headers[PROGRESS_URL_HEADER],
+            notices=plan.notices,
         )
         heartbeat = container.catalog.config.server.stream_heartbeat
         heartbeat_seconds = heartbeat.total_seconds() if heartbeat is not None else None
         return sse_response(stream, headers=headers, heartbeat_seconds=heartbeat_seconds)
     result = await collect(events)
     response = build_completion(
-        result, frame, show_work=plan.show_work, progress_url=headers[PROGRESS_URL_HEADER]
+        result,
+        frame,
+        show_work=plan.show_work,
+        progress_url=headers[PROGRESS_URL_HEADER],
+        notices=plan.notices,
     )
     return JSONResponse(response.model_dump(), headers=headers)

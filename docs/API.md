@@ -410,7 +410,9 @@ Every result also carries `ensemble`, `request_id`, `coalesced`, `progress_url`,
 `identity`, `status`, `cost_usd`, `duration_ms`, `cached` and client-safe `error`. A member the
 fan-out deadline passed by appears with status `abandoned` rather than vanishing from the list.
 `include_member_answers` adds each member's own text and reasoning; the synthesized answer and its
-reasoning come back either way.
+reasoning come back either way. `notices[]` carries anything a `<<SYSTEM>>` block in the prompt
+asked for and didn't get — an unknown member name, a value outside a directive's vocabulary — that
+the run went ahead without.
 
 On a `failed` result the cost and token figures are a floor: they cover the members observed
 before the failure, and a synthesizer that streamed and then failed emits nothing to count.

@@ -137,6 +137,13 @@ class ConsultResult(BaseModel):
     total_cost_usd: float = 0.0
     usage: UsageInfo = Field(default_factory=UsageInfo)
     members: list[MemberReport] = Field(default_factory=list)
+    notices: list[str] = Field(
+        default_factory=list,
+        description=(
+            "What a `<<SYSTEM>>` block in the prompt asked for and didn't get — an unknown "
+            "member name, an unusable directive value. The run went ahead without it."
+        ),
+    )
 
 
 class RunMemberReport(BaseModel):

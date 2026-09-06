@@ -121,6 +121,37 @@ All notable changes to this project are documented in this file. The format is b
   engine, so all three API surfaces and both streaming and non-streaming behave alike. Model
   output, prompts, and tool arguments are never logged.
 
+- **`<<SYSTEM>> include:` — add a model to one turn's panel.** The counterpart to `only:` and
+  `exclude:`, which could only ever subtract. `include: g31p` seats a member the ensemble skips at
+  this effort tier (at its llm's own params, since `skip` is a roster instruction and not a
+  provider effort value), or any `llm` in the catalog that isn't a member at all, under its own
+  name. Applied after the other two, so `include:` wins over `exclude:` on the same name and
+  `only: fast` + `include: k3` builds a panel from scratch. Names already on the panel are no-ops,
+  never a second seat.
+
+### Changed
+
+- **A `<<SYSTEM>>` directive MoM can't honor no longer costs you the turn.** An unknown member
+  name, an unknown `synth:` target, a value outside a directive's vocabulary (`show_work:
+  verbose`, `dedupe: maybe`), `only:`/`exclude:`/`include:` on a passthrough ensemble, a mistyped
+  key — each used to be a 400 that threw away the whole request. Each is now ignored, with the
+  reason carried on `ExecutionPlan.notices` and rendered at the top of the think block: as the
+  `<think>` preamble on `/v1/chat/completions`, in the leading reasoning item on `/v1/responses`,
+  as a `thinking` block on `/v1/messages` (which has no member-dump convention to hang it on), in
+  `notices[]` on an MCP `consult` result — and in the logs. It renders whatever `show_work` says,
+  since a panel that quietly ran the wrong roster is exactly what this was built to prevent, and
+  near misses name the likely culprit (`Did you mean 'k3'?`).
+
+  These names get typed from memory into a chat box, and one wrong character shouldn't cost a
+  panel run. The one case still fatal is a selection with nothing left to run — an `only:` that
+  matches nothing, or an `exclude:` below the ensemble's quorum — which stays a pre-flight 400
+  before any fan-out spend, since there's no answer to be had either way.
+
+  A mistyped *key* now ends the directive header rather than failing: that line and everything
+  after it become the instruction verbatim (with a warning naming the key), so nothing typed is
+  ever dropped. `<<SYSTEM>>Note: be careful<</SYSTEM>>` therefore works as prose now, where it
+  used to 400.
+
 ### Fixed
 
 - **`null` in `MOM_CONFIG_OVERLAY` now deletes an inherited key**, which is what

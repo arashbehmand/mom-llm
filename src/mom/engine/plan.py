@@ -2,12 +2,21 @@
 
 Unknown models/LLMs and unusable effort values fail here as typed ``MomError``s, so they become
 clean HTTP errors instead of mid-stream surprises after fan-out money is spent.
+
+A ``<<SYSTEM>>`` directive is the exception to that rule: one MoM can't honor — a member name off
+by a character, an unknown ``synth:`` target, a value outside a directive's vocabulary — is
+*ignored* and reported on ``ExecutionPlan.notices``, which every surface renders in the think
+block. A human types those names from memory into a chat box, and losing the turn to a typo costs
+more than running the panel one member short does. Only a directive that leaves nothing runnable
+(a panel below the ensemble's quorum) still fails, since there is no answer to be had either way.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
+from difflib import get_close_matches
+from types import MappingProxyType
 from typing import Any, Literal
 
 from mom.config.resolve import (
@@ -20,6 +29,7 @@ from mom.config.resolve import (
 from mom.config.types import (
     EFFORT_OFF,
     EFFORT_PASSTHROUGH,
+    EFFORT_SKIP,
     EffortLevel,
     nearest_tier,
     normalize_effort_cell,
@@ -101,6 +111,10 @@ class ExecutionPlan:
     # fan-out. Defaults to `server.dedupe.enabled`; a `<<SYSTEM>> dedupe:` directive overrides it
     # per request, in both directions.
     dedupe: bool = False
+    # What a `<<SYSTEM>>` block asked for and didn't get, in the reader's words. Rendered in the
+    # think block by every surface (regardless of `show_work`, since an ignored directive is the
+    # one thing a client must be told about) and logged for the operator.
+    notices: tuple[str, ...] = ()
 
 
 def _effort_param(token: str, client_effort: str | None) -> dict[str, object]:
@@ -244,7 +258,9 @@ _DEDUPE_ON = frozenset({"on", "true", "yes", "1"})
 _DEDUPE_OFF = frozenset({"off", "false", "no", "0"})
 
 
-def _resolve_dedupe(configured: bool, directives: SystemDirectives | None) -> bool:
+def _resolve_dedupe(
+    configured: bool, directives: SystemDirectives | None, notices: list[str]
+) -> bool:
     """``server.dedupe.enabled`` unless a ``<<SYSTEM>> dedupe:`` directive says otherwise.
 
     Overriding in *both* directions is the point. Turning it on for one turn is how you opt a
@@ -253,8 +269,8 @@ def _resolve_dedupe(configured: bool, directives: SystemDirectives | None) -> bo
     flight (re-rolling a panel you didn't like, or reproducing a result rather than joining it).
 
     Accepts the usual on/off spellings rather than only one, because this is typed by hand into a
-    chat box — but rejects anything else, matching the module's rule that a mistyped directive
-    must fail loudly instead of silently doing nothing.
+    chat box — and anything else keeps the configured policy with a notice, rather than costing
+    the turn over a word this switch was never going to need.
     """
     if directives is None or directives.dedupe is None:
         return configured
@@ -262,52 +278,133 @@ def _resolve_dedupe(configured: bool, directives: SystemDirectives | None) -> bo
         return True
     if directives.dedupe in _DEDUPE_OFF:
         return False
-    raise InvalidRequestError(
-        f"invalid <<SYSTEM>> dedupe: {directives.dedupe!r} "
-        f"(expected {', '.join(sorted(_DEDUPE_ON))} or {', '.join(sorted(_DEDUPE_OFF))})"
+    notices.append(
+        f"<<SYSTEM>> dedupe: {directives.dedupe!r} is not "
+        f"{'/'.join(sorted(_DEDUPE_ON))} or {'/'.join(sorted(_DEDUPE_OFF))} — ignored, keeping "
+        f"dedupe={'on' if configured else 'off'}."
     )
+    return configured
+
+
+def _suggest(name: str, candidates: Iterable[str]) -> str:
+    """`" Did you mean 'x'?"` when a mistyped name has one obvious neighbor, else nothing.
+
+    A name is typed from memory into a chat box, so the most useful thing a notice can carry is
+    the name that was probably meant — more useful than a roster of sixty llms, and short enough
+    to sit in a think block.
+    """
+    close = get_close_matches(name, list(candidates), n=1, cutoff=0.6)
+    return f" Did you mean {close[0]!r}?" if close else ""
+
+
+def _unskipped(member: ResolvedMember, tier: EffortLevel | None) -> ResolvedMember:
+    """A tier-skipped member made runnable at ``tier``, for ``include:``.
+
+    ``skip`` is a roster instruction, not a provider effort value — sent as one it would reach an
+    upstream as ``reasoning_effort: skip`` — so a member the operator parked at this tier and the
+    human explicitly asked back in runs at its llm's own configured params.
+    """
+    if tier is None or member.effort_by_tier.get(tier) != EFFORT_SKIP:
+        return member
+    return replace(
+        member, effort_by_tier=MappingProxyType({**member.effort_by_tier, tier: EFFORT_OFF})
+    )
+
+
+def _include_members(
+    ensemble: ResolvedEnsemble,
+    catalog: ResolvedCatalog,
+    tier: EffortLevel | None,
+    names: tuple[str, ...],
+    selected: tuple[ResolvedMember, ...],
+    notices: list[str],
+) -> tuple[ResolvedMember, ...]:
+    """Append this turn's ``include:`` names to the panel.
+
+    A name is looked up in the ensemble's own roster first — that's how a member this tier skips,
+    or one an ``only:`` just filtered out, comes back with its configured effort — and otherwise in
+    the llm catalog, where any configured llm can join a panel it isn't a member of, under its own
+    name and its own params. Applied last, so ``include:`` beats ``exclude:``: one rule to
+    remember instead of a precedence table. Already-present names are no-ops, never a second seat.
+    """
+    roster = {m.identity: m for m in ensemble.members}
+    present = {m.identity for m in selected}
+    added: list[ResolvedMember] = []
+    for name in names:
+        if name in present:
+            continue
+        present.add(name)
+        member = roster.get(name)
+        if member is not None:
+            added.append(_unskipped(member, tier))
+        elif name in catalog.llms:
+            added.append(
+                ResolvedMember(identity=name, llm=name, effort_by_tier=MappingProxyType({}))
+            )
+        else:
+            notices.append(
+                f"<<SYSTEM>> include: {name!r} is not a member of ensemble {ensemble.name!r} "
+                f"or an llm in the catalog — ignored.{_suggest(name, (*roster, *catalog.llms))}"
+            )
+    return (*selected, *added)
 
 
 def _select_members(
     ensemble: ResolvedEnsemble,
+    catalog: ResolvedCatalog,
     tier: EffortLevel | None,
     directives: SystemDirectives | None,
+    notices: list[str],
     *,
     min_results: int,
 ) -> tuple[ResolvedMember, ...]:
-    """Members participating at ``tier``, filtered by any ``<<SYSTEM>>`` ``only:``/``exclude:``.
+    """Members participating at ``tier``, after this turn's ``only:``/``exclude:``/``include:``.
 
-    Names are validated against the FULL roster (``ensemble.members``), not ``members_at(tier)``
-    — so "unknown member" never depends on which effort tier happened to be requested; a name
-    that's merely tier-skipped (``effort: skip``) is a harmless no-op, not an error. An exclusion
-    that would leave the panel below the ensemble's own quorum is a pre-flight 400 (before any
-    fan-out spend), not a mid-stream ``QuorumNotMet`` 502 arriving after the client already has a
-    200 response and SSE headers.
+    Names are matched against the FULL roster (``ensemble.members``), not ``members_at(tier)`` — so
+    a name that's merely tier-skipped (``effort: skip``) is never mistaken for a typo; ``include:``
+    reaches further, into the llm catalog. A name that matches nothing anywhere is dropped with a
+    notice for the think block rather than a 400: the panel is one seat off from what was asked
+    for, which beats no answer at all.
+
+    The one thing still worth a pre-flight 400 is a selection that leaves the panel below the
+    ensemble's quorum — including one an all-typos ``only:`` emptied. There is nothing to run
+    either way, and failing here costs no fan-out spend, unlike the mid-stream ``QuorumNotMet``
+    502 that would otherwise land after the client already holds a 200 and SSE headers.
     """
     tiered = ensemble.members_at(tier)
-    if directives is None or (not directives.exclude and not directives.only):
+    if directives is None or not (directives.exclude or directives.only or directives.include):
         return tiered
 
     roster = {m.identity: m for m in ensemble.members}
-    for name in (*directives.only, *directives.exclude):
-        if name not in roster:
-            raise InvalidRequestError(
-                f"unknown member {name!r} in <<SYSTEM>> directive; ensemble {ensemble.name!r} "
-                f"members: {', '.join(sorted(roster))}"
-            )
+
+    def matched(names: tuple[str, ...], key: str) -> set[str]:
+        known = set()
+        for name in names:
+            if name in roster:
+                known.add(name)
+            else:
+                hint = _suggest(name, roster) or f" Members: {', '.join(roster)}."
+                notices.append(
+                    f"<<SYSTEM>> {key}: {name!r} is not a member of ensemble "
+                    f"{ensemble.name!r} — ignored.{hint}"
+                )
+        return known
 
     selected = tiered
     if directives.only:
-        only_set = set(directives.only)
-        selected = tuple(m for m in selected if m.identity in only_set)
+        keep = matched(directives.only, "only")
+        selected = tuple(m for m in selected if m.identity in keep)
     if directives.exclude:
-        exclude_set = set(directives.exclude)
-        selected = tuple(m for m in selected if m.identity not in exclude_set)
+        drop = matched(directives.exclude, "exclude")
+        selected = tuple(m for m in selected if m.identity not in drop)
+    if directives.include:
+        selected = _include_members(ensemble, catalog, tier, directives.include, selected, notices)
 
     if len(selected) < max(min_results, 1):
+        detail = f" ({' '.join(notices)})" if notices else ""
         raise InvalidRequestError(
-            f"<<SYSTEM>> directive leaves {len(selected)} member(s) for ensemble "
-            f"{ensemble.name!r}, below its min_results={min_results}"
+            f"<<SYSTEM>> directives leave {len(selected)} member(s) for ensemble "
+            f"{ensemble.name!r}, below its min_results={min_results}{detail}"
         )
     return selected
 
@@ -381,6 +478,8 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         raise UnknownModelError(f"unknown model {ir.model!r}")
 
     messages, directives = extract_system_block(ir.messages)
+    # Seeded with what the parser itself couldn't make sense of; everything below adds to it.
+    notices: list[str] = list(directives.warnings) if directives is not None else []
     instruction = directives.instruction if directives is not None else None
     client_messages = messages_to_dicts(messages)
     tier = _resolve_tier(ensemble, ir.effort)
@@ -398,27 +497,28 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
 
     if (
         directives is not None
-        and (directives.exclude or directives.only)
+        and (directives.exclude or directives.only or directives.include)
         and ensemble.strategy == "passthrough"
     ):
-        # A static property of the ensemble, so an error here is informative rather than a
-        # confusing silent no-op — unlike a relay turn (below), which stays quiet because erroring
-        # mid-tool-loop would break a continuation the client has no way to amend.
-        raise InvalidRequestError(
-            f"exclude:/only: directives have no effect on ensemble {ir.model!r} "
-            "(strategy: passthrough fans out to at most one member already)"
+        # A static property of the ensemble, so saying so beats a silent no-op — unlike a relay
+        # turn (below), which stays quiet because a mid-tool-loop complaint would land in a
+        # continuation the client has no way to amend.
+        notices.append(
+            f"<<SYSTEM>> only:/exclude:/include: have no effect on ensemble {ir.model!r} "
+            "(strategy: passthrough fans out to at most one member already) — ignored."
         )
 
     show_work = ensemble.show_work
     if directives is not None and directives.show_work is not None:
-        if directives.show_work not in ("off", "inline", "native"):
-            raise InvalidRequestError(
-                f"invalid <<SYSTEM>> show_work: {directives.show_work!r} "
-                "(expected off, inline, or native)"
+        if directives.show_work in ("off", "inline", "native"):
+            show_work = directives.show_work
+        else:
+            notices.append(
+                f"<<SYSTEM>> show_work: {directives.show_work!r} is not off/inline/native "
+                f"— ignored, keeping {show_work!r}."
             )
-        show_work = directives.show_work
 
-    dedupe = _resolve_dedupe(catalog.config.server.dedupe.enabled, directives)
+    dedupe = _resolve_dedupe(catalog.config.server.dedupe.enabled, directives, notices)
 
     # vote/first make members the deciders: they get the real tool schemas so they can propose
     # structured calls. In arbitrate mode members stay advisory — a schema-free summary only (they
@@ -439,10 +539,15 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
     members: list[PlannedMember] = []
     if not skip_fanout:
         estimated_input_tokens = _estimate_input_tokens(member_messages)
-        # A relay turn ignores exclude:/only: (see above) — members_at(tier) unfiltered by
-        # directives in that case; _select_members no-ops when there's nothing to filter by.
+        # A relay turn ignores only:/exclude:/include: (see above) — members_at(tier) unfiltered
+        # by directives in that case; _select_members no-ops when there's nothing to apply.
         selected = _select_members(
-            ensemble, tier, None if is_relay else directives, min_results=fanout.min_results
+            ensemble,
+            catalog,
+            tier,
+            None if is_relay else directives,
+            notices,
+            min_results=fanout.min_results,
         )
         for member in selected:
             llm = catalog.llms[member.llm]
@@ -488,9 +593,13 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
 
     syn = ensemble.synthesizer
     if directives is not None and directives.synth is not None:
-        if directives.synth not in catalog.llms:
-            raise InvalidRequestError(f"unknown llm {directives.synth!r} in <<SYSTEM>> synth:")
-        syn = replace(syn, llm=directives.synth)
+        if directives.synth in catalog.llms:
+            syn = replace(syn, llm=directives.synth)
+        else:
+            notices.append(
+                f"<<SYSTEM>> synth: {directives.synth!r} is not an llm in the catalog — ignored, "
+                f"keeping {syn.llm!r}.{_suggest(directives.synth, catalog.llms)}"
+            )
     synth = _resolve_synth(
         catalog,
         syn,
@@ -500,6 +609,9 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         retries=retries,
         retry_backoff_seconds=retry_backoff_seconds,
     )
+
+    for notice in notices:
+        logger.warning("<<SYSTEM>> directive ignored", ensemble=ir.model, notice=notice)
 
     return ExecutionPlan(
         ensemble=ir.model,
@@ -520,4 +632,5 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         min_results=fanout.min_results,
         detach_on_disconnect=fanout.detach_on_disconnect,
         dedupe=dedupe,
+        notices=tuple(notices),
     )

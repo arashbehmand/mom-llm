@@ -5,7 +5,8 @@ call, a single centralized ``sequence_number`` counter, and both ``event:`` and 
 
 ``show_work: inline`` surfaces member perspectives as a reasoning item (this surface's native
 "thinking" convention — no ``<think>`` tags, unlike the Chat Completions encoder), closed off
-before any genuine synthesizer reasoning opens its own reasoning item.
+before any genuine synthesizer reasoning opens its own reasoning item. A plan's ``notices`` (a
+``<<SYSTEM>>`` directive MoM couldn't honor) lead that item whatever ``show_work`` says.
 """
 
 from __future__ import annotations
@@ -41,6 +42,10 @@ def _member_line(outcome: ModelOutcome) -> str:
     return f"Model: {outcome.model}\nContent: {body}\n---\n"
 
 
+def _notice_lines(notices: tuple[str, ...]) -> str:
+    return "".join(f"{notice}\n" for notice in notices) + "\n" if notices else ""
+
+
 def _response_obj(
     *, response_id: str, model: str, created: int, status: str, output: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -63,12 +68,14 @@ def build_response(
     created: int,
     show_work: str = "off",
     progress_url: str | None = None,
+    notices: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Non-streaming Responses object."""
     output: list[dict[str, Any]] = []
-    if show_work == "inline" and result.outcomes:
+    outcomes = result.outcomes if show_work == "inline" else ()
+    if outcomes or notices:
         header = f"Progress: {progress_url}\n\n" if progress_url else ""
-        member_text = header + "".join(_member_line(o) for o in result.outcomes)
+        member_text = header + _notice_lines(notices) + "".join(_member_line(o) for o in outcomes)
         output.append(
             {
                 "type": "reasoning",
@@ -126,6 +133,7 @@ async def encode_sse(
     created: int,
     show_work: str = "off",
     progress_url: str | None = None,
+    notices: tuple[str, ...] = (),
 ) -> AsyncIterator[bytes]:
     """Fold the event stream into a Responses SSE byte stream."""
     seq = 0
@@ -287,6 +295,14 @@ async def encode_sse(
             return []
         member_dump_started = True
         return reasoning_delta(f"Progress: {progress_url}\n\n")
+
+    # Notices lead the reasoning item, before the first event and whatever `show_work` says — a
+    # passthrough or relay turn has no FanoutStarted coming to open one later.
+    if notices:
+        for chunk in open_member_dump():
+            yield chunk
+        for chunk in reasoning_delta(_notice_lines(notices)):
+            yield chunk
 
     async for event in events:
         if isinstance(event, FanoutStarted) and show_work == "inline":

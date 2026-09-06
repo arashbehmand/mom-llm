@@ -7,6 +7,7 @@ auto-indentation would mangle)::
     <<SYSTEM>>
     only: oai56s, cl48op
     exclude: k3
+    include: g31p
     show_work: off
     dedupe: on
     Answer as a terse bullet list, no preamble.
@@ -18,8 +19,10 @@ doesn't look like ``key: value`` at all ends the header zone, and everything fro
 behavior: the whole thing is the instruction. Two escape hatches for an instruction that would
 otherwise start with something matching the ``key:`` shape: a leading blank line, or the explicit
 terminator key ``instruction:``. A line that DOES look like ``key: value`` but names an unknown
-key is a 400 — a typo'd directive silently doing nothing (and firing the fan-out anyway) is the
-failure mode this is built to avoid, not to walk into quietly.
+key ends the header zone like any other prose line — and records a warning on ``warnings``, which
+``engine/plan.py`` carries onto the plan and every surface renders in the think block. A typo'd
+directive silently doing nothing (and firing the fan-out anyway) is the failure mode this is built
+to avoid; taking the whole turn down over one is too blunt an instrument for it.
 
 The legacy ``<<CONCLUDING-INSTRUCTION>>...<</CONCLUDING-INSTRUCTION>>`` marker keeps working
 indefinitely, as the exact same block with header parsing disabled — a documented tag must never
@@ -32,7 +35,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import re
 
-from mom.domain.errors import InvalidRequestError
 from mom.domain.request import ImagePart, MessageIR, TextPart
 
 
@@ -45,26 +47,34 @@ _CONCLUDING_RE = re.compile(
 )
 
 _KEY_LINE_RE = re.compile(r"^([A-Za-z_]+):\s*(.*)$")
-_FILTER_KEYS = frozenset({"exclude", "only", "show_work", "synth", "dedupe"})
+_FILTER_KEYS = frozenset({"exclude", "only", "include", "show_work", "synth", "dedupe"})
+_KNOWN_KEYS = ", ".join(sorted({*_FILTER_KEYS, "instruction"}))
 
 
 @dataclass(frozen=True, slots=True)
 class SystemDirectives:
     """Parsed ``<<SYSTEM>>`` (or legacy ``<<CONCLUDING-INSTRUCTION>>``) block.
 
-    Names in ``exclude``/``only`` are lowercased, requested member *identities* (``member_as or
-    llm`` — the name shown in the think block and the progress dashboard) — validated against the
-    catalog by the caller (this module is catalog-agnostic; see ``engine/plan.py``).
+    Names in ``exclude``/``only``/``include`` are lowercased, requested member *identities*
+    (``member_as or llm`` — the name shown in the think block and the progress dashboard) —
+    matched against the catalog by the caller (this module is catalog-agnostic; see
+    ``engine/plan.py``).
     """
 
     instruction: str | None = None
     exclude: tuple[str, ...] = ()
     only: tuple[str, ...] = ()
+    # Names to ADD to this turn's panel: a member the tier or an `only:`/`exclude:` dropped, or any
+    # llm in the catalog that isn't on the panel at all. Resolved in ``engine/plan.py``.
+    include: tuple[str, ...] = ()
     show_work: str | None = None
     synth: str | None = None
     # Raw, un-validated like ``show_work`` — ``engine/plan.py`` owns the vocabulary check so every
     # directive reports a bad value the same way.
     dedupe: str | None = None
+    # What the block asked for and didn't get, in the reader's words — rendered in the think block
+    # alongside whatever notices plan resolution adds. Never a reason to fail the turn.
+    warnings: tuple[str, ...] = ()
 
 
 def _split_values(raw: str) -> tuple[str, ...]:
@@ -86,6 +96,7 @@ def _parse_body(body: str, *, legacy: bool) -> SystemDirectives:
     # works after this: it needs a second, deliberate newline, and one strip only ever removes one.
     lines = re.sub(r"^\r?\n", "", body, count=1).splitlines()
     collected: dict[str, list[str]] = {}
+    warnings: list[str] = []
     idx = 0
     for idx, raw_line in enumerate(lines):
         stripped = raw_line.strip()
@@ -102,10 +113,14 @@ def _parse_body(body: str, *, legacy: bool) -> SystemDirectives:
                 idx += 1  # bare "instruction:" line itself carries no text — drop it
             break
         if key not in _FILTER_KEYS:
-            raise InvalidRequestError(
-                f"unknown <<SYSTEM>> directive {key!r} "
-                f"(known: {', '.join(sorted(_FILTER_KEYS))}, instruction)"
+            # Not a directive we know: the header zone ends here and this line starts the
+            # instruction, exactly as an ordinary prose line would. Nothing the human typed is
+            # dropped — but nothing is silently obeyed either, hence the warning.
+            warnings.append(
+                f"unknown <<SYSTEM>> directive {key!r} — the header ends there, so that line "
+                f"and everything after it is instruction text (known keys: {_KNOWN_KEYS})"
             )
+            break
         collected.setdefault(key, []).append(value)
     else:
         idx = len(lines)  # every line was a recognized directive -> no instruction body at all
@@ -124,9 +139,11 @@ def _parse_body(body: str, *, legacy: bool) -> SystemDirectives:
         instruction=instruction,
         exclude=exclude,
         only=only,
+        include=_merged("include"),
         show_work=(show_work_lines[-1].lower() or None) if show_work_lines else None,
         synth=(synth_lines[-1].lower() or None) if synth_lines else None,
         dedupe=(dedupe_lines[-1].lower() or None) if dedupe_lines else None,
+        warnings=tuple(warnings),
     )
 
 

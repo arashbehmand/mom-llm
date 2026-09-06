@@ -20,7 +20,11 @@ from mom.domain.results import EnsembleResult, ModelOutcome, Usage
 
 
 async def _collect(
-    events: list[StreamEvent], *, show_work: str = "off", progress_url: str | None = None
+    events: list[StreamEvent],
+    *,
+    show_work: str = "off",
+    progress_url: str | None = None,
+    notices: tuple[str, ...] = (),
 ) -> list[dict]:
     async def gen():
         for event in events:
@@ -34,6 +38,7 @@ async def _collect(
         created=1,
         show_work=show_work,
         progress_url=progress_url,
+        notices=notices,
     ):
         payloads.extend(
             json.loads(line[len("data: ") :])
@@ -264,6 +269,50 @@ def test_build_response_show_work_inline_adds_member_dump_reasoning_item():
     assert "perspective A" in member_text
     assert "perspective B" in member_text
     assert obj["output"][1]["summary"][0]["text"] == "genuine synth thinking"
+
+
+async def test_a_notice_leads_the_reasoning_item_even_with_show_work_off():
+    """The Responses surface's native "thinking" convention carries an ignored `<<SYSTEM>>`
+    directive whatever the ensemble shows — there is no member dump to attach it to."""
+    payloads = await _collect(
+        [
+            SynthesisStarted(llm="s", model="openai/s"),
+            AnswerDelta(content="final answer"),
+            Completed(
+                finish_reason="stop",
+                usage=Usage(prompt_tokens=1, completion_tokens=1),
+                total_cost_usd=0.0,
+            ),
+        ],
+        show_work="off",
+        notices=("<<SYSTEM>> include: 'k33' is not a member — ignored.",),
+    )
+    deltas = [d["delta"] for d in _of_type(payloads, "response.reasoning_summary_text.delta")]
+    assert "k33" in deltas[0]
+    # And it is a closed reasoning item of its own, before the answer message.
+    items = [e["item"]["type"] for e in _of_type(payloads, "response.output_item.done")]
+    assert items == ["reasoning", "message"]
+
+
+def test_build_response_carries_notices_with_no_member_dump_to_attach_them_to():
+    result = EnsembleResult(
+        text="final answer",
+        outcomes=(_outcome("a", "perspective A"),),
+        usage=Usage(prompt_tokens=1, completion_tokens=1),
+        total_cost_usd=0.0,
+        finish_reason="stop",
+    )
+    obj = build_response(
+        result,
+        response_id="resp-1",
+        model="e",
+        created=1,
+        show_work="off",
+        notices=("<<SYSTEM>> only: 'k33' is not a member — ignored.",),
+    )
+    assert [o["type"] for o in obj["output"]] == ["reasoning", "message"]
+    assert "k33" in obj["output"][0]["summary"][0]["text"]
+    assert "perspective A" not in obj["output"][0]["summary"][0]["text"]  # show_work still off
 
 
 def test_build_response_show_work_off_has_no_member_dump():

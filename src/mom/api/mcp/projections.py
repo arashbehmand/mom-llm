@@ -176,6 +176,7 @@ def consult_success(
     coalesced: bool,
     progress_url: str | None,
     members: list[MemberReport],
+    notices: list[str],
 ) -> ConsultResult:
     """A completed run: text, a tool call the caller is expected to execute, or both."""
     tool_calls = [dict(call) for call in result.tool_calls]
@@ -197,6 +198,7 @@ def consult_success(
         total_cost_usd=result.total_cost_usd,
         usage=usage_info(result.usage),
         members=members,
+        notices=notices,
     )
 
 
@@ -209,6 +211,7 @@ def consult_failure(
     progress_url: str | None,
     members: list[MemberReport],
     usage: Usage,
+    notices: list[str],
 ) -> ConsultResult:
     """A run that died upstream. Members, tokens and cost are whatever completed first — spend
     that really happened is reported even though there is no answer to show for it.
@@ -228,6 +231,7 @@ def consult_failure(
         total_cost_usd=sum(m.cost_usd for m in members),
         usage=usage_info(usage),
         members=members,
+        notices=notices,
     )
 
 

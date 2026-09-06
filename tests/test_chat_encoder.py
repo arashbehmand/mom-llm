@@ -22,7 +22,11 @@ _FRAME = ChatFrame(id="chatcmpl-1", created=1, model="e")
 
 
 async def _collect(
-    events: list[StreamEvent], *, show_work: str = "inline", progress_url: str | None = None
+    events: list[StreamEvent],
+    *,
+    show_work: str = "inline",
+    progress_url: str | None = None,
+    notices: tuple[str, ...] = (),
 ) -> list[dict]:
     async def gen():
         for event in events:
@@ -30,7 +34,12 @@ async def _collect(
 
     payloads: list[dict] = []
     async for block in encode_sse(
-        gen(), _FRAME, show_work=show_work, include_usage=False, progress_url=progress_url
+        gen(),
+        _FRAME,
+        show_work=show_work,
+        include_usage=False,
+        progress_url=progress_url,
+        notices=notices,
     ):
         payloads.extend(
             json.loads(line[len("data: ") :])
@@ -151,3 +160,37 @@ async def test_fanout_started_without_show_work_inline_does_nothing():
         show_work="off",
     )
     assert _content_deltas(payloads) == []
+
+
+async def test_a_notice_opens_its_own_think_block_even_with_show_work_off():
+    """An ignored `<<SYSTEM>>` directive is the one thing a client must be told regardless of what
+    the ensemble shows: with no member dump coming, the notice gets the block to itself."""
+    payloads = await _collect(
+        [
+            FanoutStarted("a", "openai/a"),
+            SynthesisStarted("s", "openai/s"),
+            AnswerDelta(content="answer"),
+            Completed(finish_reason="stop", usage=Usage(), total_cost_usd=0.0),
+        ],
+        show_work="off",
+        notices=("<<SYSTEM>> exclude: 'k33' is not a member — ignored.",),
+    )
+    deltas = _content_deltas(payloads)
+    assert deltas[0] == "<think>\n"
+    assert "k33" in deltas[1]
+    assert deltas[2] == "</think>\n\n"
+    assert deltas[3] == "answer"
+
+
+async def test_a_notice_heads_the_member_dump_it_shares_a_block_with():
+    payloads = await _collect(
+        [FanoutStarted("a", "openai/a"), MemberCompleted(_outcome("a"))],
+        show_work="inline",
+        progress_url="http://p/1",
+        notices=("<<SYSTEM>> synth: 'nope' is not an llm — ignored.",),
+    )
+    deltas = _content_deltas(payloads)
+    assert deltas[0] == "<think>\n"
+    assert deltas[1] == "Progress: http://p/1\n\n"
+    assert "nope" in deltas[2]
+    assert "Model: openai/a" in deltas[3]  # one block: notice first, then the panel

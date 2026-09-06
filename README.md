@@ -203,7 +203,7 @@ Content: [that member's answer]
 `show_work: native` routes it through the provider's reasoning channel instead; `off` (the default)
 hides it.
 
-### `<<SYSTEM>>` — steer synthesis, or exempt specific members, for one turn
+### `<<SYSTEM>>` — steer synthesis, or reshape the panel, for one turn
 
 Wrap directives in `<<SYSTEM>>…<</SYSTEM>>` in the **last** message of your turn. MoM **strips the
 block from what the fan-out members see**; a plain-text body becomes an instruction handed **only
@@ -224,6 +224,7 @@ Compare these two approaches.
 <<SYSTEM>>
 exclude: k3, glm52
 only: oai56s, cl48op
+include: g31p
 show_work: off
 synth: cl48op
 dedupe: on
@@ -235,16 +236,32 @@ Weigh whichever response cites real sources most heavily.
 |---|---|
 | `exclude: a, b` | drop these member identities from this turn's panel |
 | `only: a, b` | run *just* these member identities (combine with `exclude` to remove some of those) |
+| `include: a, b` | add these to this turn's panel: a member the ensemble skips at this effort tier, or any configured `llm` that isn't a member at all |
 | `show_work: off\|inline\|native` | override the ensemble's configured `show_work` for this turn |
 | `synth: llm-name` | run synthesis on a different configured `llm` for this turn |
 | `dedupe: on\|off` | override [`server.dedupe`](docs/CONFIGURATION.md#server) for this turn: `on` attaches an identical concurrent turn to the run already in flight, `off` forces a fresh one |
 
-Identities are the `as:`/`llm` names shown in the think block and the progress dashboard. An
-unknown identity, an exclusion that empties the panel below the ensemble's quorum, or an unknown
-`synth:` target all fail with a clean 400 **before** any fan-out spend — a typo silently doing
-nothing (and firing the panel anyway) is exactly what this is built to avoid. If your instruction
-text genuinely needs to start with something shaped like `Word: …`, either leave a blank line
-before it or prefix it with the `instruction:` directive, which ends the header explicitly.
+Identities are the `as:`/`llm` names shown in the think block and the progress dashboard;
+`include:` also takes any `llm` name from the catalog, which joins the panel under its own name
+running its own configured params. The three are applied in order — `only:`, then `exclude:`, then
+`include:` — so `include:` wins over `exclude:` on the same name, and `only: fast` + `include: k3`
+builds a two-model panel from scratch.
+
+**A directive MoM can't honor doesn't cost you the turn.** An unknown member name, an unknown
+`synth:` target, a value outside a directive's vocabulary, a mistyped key: each is ignored and
+reported at the top of the think block — on every surface and whatever `show_work` says, because a
+panel that quietly ran the wrong roster is the failure this exists to prevent. Near misses name
+the likely culprit (`'k33' is not a member of ensemble 'emom' — ignored. Did you mean 'k3'?`), and
+every notice is logged. The one thing still fatal is a selection with nothing left to run — an
+`only:` that matches nothing, or an `exclude:` that drops the panel below the ensemble's quorum —
+which stays a clean 400 **before** any fan-out spend, since there is no answer to be had either
+way.
+
+An unknown key ends the directive header instead of being swallowed: that line and everything
+after it become the instruction, verbatim, with a warning naming the key — nothing you typed is
+lost. If your instruction text genuinely needs to start with something shaped like `Word: …`,
+leave a blank line before it or prefix it with the `instruction:` directive, which ends the header
+explicitly and skips the warning.
 
 The older `<<CONCLUDING-INSTRUCTION>>…<</CONCLUDING-INSTRUCTION>>` marker still works exactly as
 before (instruction-only, no directive header) — `<<SYSTEM>>` is just the generalized form.

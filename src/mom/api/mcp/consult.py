@@ -292,6 +292,7 @@ async def run_consult(
             progress_url=progress_url,
             members=observer.reports(include_answers=include_member_answers),
             usage=observer.usage,
+            notices=list(plan.notices),
         )
 
     # The observer for both outcomes, not `result.outcomes` here and the observer there: the two
@@ -304,4 +305,5 @@ async def run_consult(
         coalesced=coalesced,
         progress_url=progress_url,
         members=observer.reports(include_answers=include_member_answers),
+        notices=list(plan.notices),
     )

@@ -3,7 +3,9 @@
 The single chunk shape lives here. Rules enforced: the first delta carries the assistant role;
 a terminal ``finish_reason`` chunk is always emitted (synthesized if the provider omits one);
 ``[DONE]`` is always last; ``show_work: inline`` renders member perspectives as a ``<think>``
-block in the content stream (v1-compatible).
+block in the content stream (v1-compatible). A plan's ``notices`` (a ``<<SYSTEM>>`` directive MoM
+couldn't honor) head that same block whatever ``show_work`` says — opening it for them alone if
+need be, since a client that never sees the panel still has to be told its directive was dropped.
 """
 
 from __future__ import annotations
@@ -64,14 +66,27 @@ def _member_line(outcome: ModelOutcome) -> str:
     return f"Model: {html.escape(outcome.model)}\nContent: {html.escape(body)}\n---\n"
 
 
+def _notice_lines(notices: tuple[str, ...]) -> str:
+    """Escaped like member content is: a name quoted back from a directive is user text, and the
+    block it lands in is parsed as markup by every client that renders `<think>`. Quotes are left
+    alone (`quote=False`) — nothing here becomes an attribute value, and a notice is mostly
+    quoted names, which `&#x27;` would turn into noise for a client that doesn't render markup."""
+    if not notices:
+        return ""
+    return "".join(f"{html.escape(notice, quote=False)}\n" for notice in notices) + "\n"
+
+
 def render_think_block(
-    outcomes: tuple[ModelOutcome, ...], *, progress_url: str | None = None
+    outcomes: tuple[ModelOutcome, ...],
+    *,
+    progress_url: str | None = None,
+    notices: tuple[str, ...] = (),
 ) -> str:
-    if not outcomes:
+    if not outcomes and not notices:
         return ""
     header = f"Progress: {progress_url}\n\n" if progress_url else ""
     lines = "".join(_member_line(o) for o in outcomes)
-    return f"<think>\n{header}{lines}</think>\n\n"
+    return f"<think>\n{header}{_notice_lines(notices)}{lines}</think>\n\n"
 
 
 def _chunk(frame: ChatFrame, delta: dict[str, Any], finish_reason: str | None) -> bytes:
@@ -115,6 +130,7 @@ async def encode_sse(
     include_usage: bool,
     stream_profile: str = "compat",
     progress_url: str | None = None,
+    notices: tuple[str, ...] = (),
 ) -> AsyncIterator[bytes]:
     """Fold the event stream into an OpenAI SSE byte stream.
 
@@ -148,7 +164,19 @@ async def encode_sse(
         chunks = [_chunk(frame, {"content": "<think>\n"}, None)]
         if progress_url:
             chunks.append(_chunk(frame, {"content": f"Progress: {progress_url}\n\n"}, None))
+        if notices:
+            chunks.append(_chunk(frame, {"content": _notice_lines(notices)}, None))
         return chunks
+
+    # Notices open the block immediately, before the first event and whatever `show_work` says:
+    # an ignored directive is news the human needs *before* the answer it shaped, and on a
+    # passthrough or relay turn there is no FanoutStarted coming to open it later.
+    if notices:
+        first = open_role()
+        if first:
+            yield first
+        for chunk in open_think():
+            yield chunk
 
     async for event in events:
         if isinstance(event, FanoutStarted) and show_work == "inline":
@@ -237,12 +265,18 @@ async def encode_sse(
 
 
 def build_completion(
-    result: EnsembleResult, frame: ChatFrame, *, show_work: str, progress_url: str | None = None
+    result: EnsembleResult,
+    frame: ChatFrame,
+    *,
+    show_work: str,
+    progress_url: str | None = None,
+    notices: tuple[str, ...] = (),
 ) -> ChatCompletionResponse:
     """Build a non-streaming Chat Completions response from a collected result."""
     content = result.text
-    if show_work == "inline":
-        content = render_think_block(result.outcomes, progress_url=progress_url) + content
+    outcomes = result.outcomes if show_work == "inline" else ()
+    if outcomes or notices:
+        content = render_think_block(outcomes, progress_url=progress_url, notices=notices) + content
     usage = result.usage
     message = ChatMessageOut(
         content=content or None,

@@ -295,6 +295,50 @@ class ReasoningFakeLLM(FakeLLM):
         )
 
 
+async def test_an_ignored_directive_reaches_this_surface_as_a_thinking_block():
+    """`/v1/messages` has no member-dump convention to hang a notice on, so an unhonored
+    `<<SYSTEM>>` directive opens the thinking block instead — a client here learns its directive
+    was dropped exactly as one on the other two surfaces does."""
+    async with _client(FakeLLM()) as client:
+        resp = await client.post(
+            "/v1/messages",
+            json={
+                "model": "e",
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "hi <<SYSTEM>>exclude: zzz<</SYSTEM>>"}],
+            },
+        )
+    blocks = resp.json()["content"]
+    assert blocks[0]["type"] == "thinking"
+    assert "zzz" in blocks[0]["thinking"]
+    assert blocks[0]["signature"]
+    assert blocks[1] == {"type": "text", "text": "synthesized answer"}
+
+
+async def test_an_ignored_directive_opens_the_streamed_thinking_block():
+    async with _client(FakeLLM()) as client:
+        resp = await client.post(
+            "/v1/messages",
+            json={
+                "model": "e",
+                "max_tokens": 100,
+                "stream": True,
+                "messages": [{"role": "user", "content": "hi <<SYSTEM>>exclude: zzz<</SYSTEM>>"}],
+            },
+        )
+    events = _events(resp.text)
+    thinking = "".join(
+        d["delta"]["thinking"]
+        for k, d in events
+        if k == "content_block_delta" and d["delta"]["type"] == "thinking_delta"
+    )
+    assert "zzz" in thinking
+    # Signed and closed before the answer text opens, like any other thinking block here.
+    assert any(
+        k == "content_block_delta" and d["delta"]["type"] == "signature_delta" for k, d in events
+    )
+
+
 async def test_streaming_reasoning_emits_thinking_block():
     async with _client(ReasoningFakeLLM()) as client:
         resp = await client.post(
