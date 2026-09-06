@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Request
 
 from mom.api.auth import require_api_key
 from mom.api.deps import ContainerDep
-from mom.config.capabilities import ModelCard, ensemble_card
+from mom.config.capabilities import ModelCard, describe, ensemble_card
 from mom.domain.errors import UnknownModelError
 
 
@@ -49,7 +49,7 @@ def _openai_model(card: ModelCard, created: int) -> dict[str, Any]:
         "created": created,
         "owned_by": "mom",
         "name": card.id,
-        "description": card.description,
+        "description": describe(card),
         "architecture": {
             "modality": "text+image->text" if card.supports_vision else "text->text",
             "input_modalities": modalities,
@@ -65,7 +65,10 @@ def _openai_model(card: ModelCard, created: int) -> dict[str, Any]:
         "search": card.supports_web_search,
         "mom": {
             "members": list(card.members),
+            "member_models": list(card.member_models),
             "synthesizer": card.synthesizer,
+            "synthesizer_model": card.synthesizer_model,
+            "strategy": card.strategy,
             "supports_tools": card.supports_tools,
             "supports_vision": card.supports_vision,
             "supports_reasoning": card.supports_reasoning,
@@ -112,8 +115,17 @@ async def list_models(
     cards = _cards(container)
     if _is_anthropic(request):
         created_at = datetime.fromtimestamp(created, tz=UTC).isoformat()
+        # `description` is not part of Anthropic's model object; it rides along because a
+        # client that renders one has nowhere else to learn what an ensemble name contains, and
+        # one that doesn't ignores the field. `display_name` stays the id — it is the picker label.
         data = [
-            {"type": "model", "id": c.id, "display_name": c.id, "created_at": created_at}
+            {
+                "type": "model",
+                "id": c.id,
+                "display_name": c.id,
+                "created_at": created_at,
+                "description": describe(c),
+            }
             for c in cards
         ]
         return {
@@ -139,6 +151,7 @@ def _model_info_entry(card: ModelCard) -> dict[str, Any]:
         "model_name": card.id,
         "litellm_params": {"model": f"mom/{card.id}"},
         "model_info": {
+            "description": describe(card),
             "max_input_tokens": card.context_length,
             "max_output_tokens": card.max_output_tokens,
             "supports_function_calling": card.supports_tools,

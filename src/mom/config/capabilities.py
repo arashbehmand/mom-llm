@@ -25,6 +25,7 @@ from mom.config.resolve import ResolvedCatalog, ResolvedEnsemble, ResolvedLlm
 @dataclass(frozen=True, slots=True)
 class ModelCard:
     id: str
+    #: The ensemble's own ``description:``, verbatim. ``describe()`` is what a wire surface shows.
     description: str | None
     supports_tools: bool
     supports_vision: bool
@@ -34,8 +35,14 @@ class ModelCard:
     effort_levels: tuple[str, ...]
     context_length: int | None
     max_output_tokens: int | None
+    #: Member *identities* (the `as:`/llm names a `<<SYSTEM>>` directive addresses).
     members: tuple[str, ...]
     synthesizer: str
+    strategy: str = "synthesize"
+    #: The provider model each member runs, aligned with ``members``; the same for the synthesizer.
+    #: A name in a model list means nothing on its own — these are what the panel actually is.
+    member_models: tuple[str, ...] = ()
+    synthesizer_model: str = ""
 
 
 def _vision(llm: ResolvedLlm) -> bool:
@@ -68,6 +75,7 @@ def ensemble_card(name: str, ensemble: ResolvedEnsemble, catalog: ResolvedCatalo
     card = ModelCard(
         id=name,
         description=ensemble.description,
+        strategy=ensemble.strategy,
         supports_tools=supports_tools,
         supports_vision=supports_vision,
         supports_reasoning=supports_reasoning,
@@ -78,8 +86,50 @@ def ensemble_card(name: str, ensemble: ResolvedEnsemble, catalog: ResolvedCatalo
         max_output_tokens=max_output_tokens,
         members=tuple(m.identity for m in ensemble.members),
         synthesizer=ensemble.synthesizer.llm,
+        member_models=tuple(llm.model for llm in member_llms),
+        synthesizer_model=synth_llm.model,
     )
     return _apply_advertise(card, ensemble.advertise)
+
+
+#: How many model names a panel line spells out before it starts counting. A `members: all` panel
+#: can hold the whole catalog, and a description nobody can read is worse than a shorter one.
+_PANEL_NAMES_SHOWN = 12
+
+
+def _model_name(model: str) -> str:
+    """``openrouter/z-ai/glm-5.3`` -> ``glm-5.3`` — the part a human reads as the model."""
+    return model.rsplit("/", 1)[-1]
+
+
+def _panel_line(card: ModelCard) -> str:
+    """One sentence naming the models behind the ensemble name."""
+    synth = _model_name(card.synthesizer_model)
+    if card.strategy == "passthrough" or not card.member_models:
+        return f"Answers directly with {synth} — no panel."
+    # Deduplicated: the same model can hold several seats (one llm at two efforts, or an `as:`
+    # alias), and a list that repeats a name four times reads like a bug.
+    names = list(dict.fromkeys(_model_name(model) for model in card.member_models))
+    # One name over the cap is shorter spelled out than counted, and reads better besides.
+    hidden = 0 if len(names) <= _PANEL_NAMES_SHOWN + 1 else len(names) - _PANEL_NAMES_SHOWN
+    shown = ", ".join(names if not hidden else names[:_PANEL_NAMES_SHOWN])
+    if hidden:
+        shown = f"{shown}, +{hidden} more"
+    plural = "model" if len(names) == 1 else "models"
+    return f"Fans out to {len(names)} {plural} — {shown} — then synthesizes with {synth}."
+
+
+def describe(card: ModelCard) -> str:
+    """The description a client shows in a model picker: what the ensemble is, and what is in it.
+
+    A model list is where a human chooses, and an ensemble name (`emom`, `bmom`) tells them nothing
+    about the panel behind it — so the configured ``description:`` is followed by the models that
+    actually answer. An ensemble with no ``description:`` still gets the panel line, which is the
+    half a client cannot reconstruct from the id alone.
+    """
+    configured = (card.description or "").strip()
+    panel = _panel_line(card)
+    return f"{configured}\n\n{panel}" if configured else panel
 
 
 def _min_context(llms: list[ResolvedLlm]) -> int | None:

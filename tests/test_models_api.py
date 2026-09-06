@@ -29,6 +29,10 @@ CONFIG = dedent("""
         default_tier: low
         members: [{ llm: a }, { llm: b }]
         synthesizer: { llm: syn }
+      direct:
+        strategy: passthrough
+        members: [a]
+        synthesizer: { llm: a }
 """)
 
 
@@ -58,6 +62,10 @@ async def test_openai_models_rich_metadata():
     assert mom["supports_web_search"] is True  # member `a` declares search
     assert mom["supports_vision"] is True  # `a` is vision-capable (only `b` is not)
     assert mom["members"] == ["a", "b"]
+    # Identities are what a `<<SYSTEM>>` directive addresses; the models are what a human reads.
+    assert mom["member_models"] == ["openai/a", "openai/b"]
+    assert mom["synthesizer_model"] == "openai/syn"
+    assert mom["strategy"] == "synthesize"
     assert mom["remote_mcp"] is False
     # Flat booleans some OpenAI-compatible clients (e.g. lobe-chat) read directly off the list
     # entry instead of the nested `mom` block.
@@ -65,6 +73,18 @@ async def test_openai_models_rich_metadata():
     assert model["vision"] is True
     assert model["functionCall"] == mom["supports_tools"]
     assert model["reasoning"] == mom["supports_reasoning"]
+
+
+async def test_description_names_the_panel_behind_the_ensemble():
+    """A model list is where a human chooses, and `tiered` says nothing about what answers it."""
+    async with _client() as client:
+        resp = await client.get("/v1/models")
+    by_id = {m["id"]: m for m in resp.json()["data"]}
+    assert by_id["tiered"]["description"] == (
+        "A tiered ensemble.\n\nFans out to 2 models — a, b — then synthesizes with syn."
+    )
+    # No fan-out to describe on a passthrough ensemble, and no `description:` configured either.
+    assert by_id["direct"]["description"] == "Answers directly with a — no panel."
 
 
 async def test_get_single_model():
@@ -85,12 +105,14 @@ async def test_anthropic_list_shape_on_header():
         resp = await client.get("/v1/models", headers={"x-api-key": "whatever"})
     body = resp.json()
     assert body["has_more"] is False
-    assert body["data"][0] == {
-        "type": "model",
-        "id": "tiered",
-        "display_name": "tiered",
-        "created_at": body["data"][0]["created_at"],
-    }
+    entry = body["data"][0]
+    assert entry["type"] == "model"
+    assert entry["id"] == "tiered"
+    assert entry["display_name"] == "tiered"  # the picker label stays the id
+    assert entry["created_at"]
+    # Not part of Anthropic's model object: it rides along for a client that renders one, since
+    # nothing else on this surface says what an ensemble name contains.
+    assert entry["description"].endswith("then synthesizes with syn.")
 
 
 async def test_model_info_litellm_shape():
@@ -101,6 +123,7 @@ async def test_model_info_litellm_shape():
     assert entry["litellm_params"]["model"] == "mom/tiered"
     assert entry["model_info"]["max_input_tokens"] == 200000
     assert entry["model_info"]["supports_web_search"] is True
+    assert entry["model_info"]["description"].startswith("A tiered ensemble.")
 
 
 async def test_codex_dialect_returns_its_own_catalog_envelope():

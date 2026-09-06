@@ -222,11 +222,35 @@ Ensembles are advertised as models with **capability cards** computed from the p
 
 An ensemble's `advertise:` block overrides any computed field with an explicit value.
 
+### The description names the panel
+
+An ensemble id (`emom`, `bmom`) tells a human nothing about what answers it, so every discovery
+surface that has a description field gets the ensemble's own `description:` **followed by the
+models behind it**:
+
+```
+Elite Mom — flagship models pushed to their maximum reasoning effort, reserved for the hardest
+problems where quality matters more than cost or latency.
+
+Fans out to 13 models — gpt-5.6-sol, gpt-6-astra, claude-opus-5, … , +1 more — then synthesizes
+with claude-sonnet-5.
+```
+
+Names are the model's own (the last path segment of `provider/model`), deduplicated — one llm
+seated twice at different efforts is one model — and capped at twelve spelled out, the rest
+counted, so a `members: all` panel stays readable. An ensemble with no configured `description:`
+still gets the panel line; a `passthrough` ensemble reports the single model that answers instead
+(`Answers directly with gpt-5.6-sol — no panel.`). The MCP `catalog` tool is the exception, and
+does not need it: its `EnsembleInfo` already carries every member as structured
+`{identity, llm, model}`.
+
 ### `GET /v1/models` and `GET /v1/models/{id}`
 
 Lists the ensembles. Each entry carries OpenAI's fields plus OpenRouter-convention fields
 (`architecture`, `supported_parameters`, `context_length`, `top_provider`) and a `mom` vendor block
-(`members`, `synthesizer`, the `supports_*` flags, `client_managed_mcp: true`, `remote_mcp: false`).
+(`members` and `member_models`, `synthesizer` and `synthesizer_model`, `strategy`, the `supports_*`
+flags, `client_managed_mcp: true`, `remote_mcp: false`). `members` are the *identities* a
+`<<SYSTEM>>` directive addresses; `member_models` are the provider model strings behind them.
 `supported_parameters` grows with capability — tools/response_format when tool-capable,
 `reasoning_effort`/`reasoning` when reasoning-capable, `web_search*` when search-capable.
 
@@ -236,6 +260,11 @@ Those two MCP flags are about MoM as an MCP *client* and are unrelated to
 means MoM does not itself connect out to remote MCP servers on your behalf.
 
 `GET /v1/models/{id}` returns the OpenAI single-model object, or **404** for an unknown ensemble.
+`GET /v1/model/info` (the LiteLLM shape) carries the same description inside `model_info`.
+
+`description` is not part of Anthropic's model object; MoM sends it anyway, because a client that
+renders one has nowhere else to learn what an ensemble contains and a client that doesn't ignores
+the field. `display_name` stays the ensemble id — it is the picker label.
 
 #### Discovery dialects
 
@@ -246,7 +275,7 @@ every dialect; only the wrapper changes.
 | Request carries | Envelope |
 | --- | --- |
 | *(nothing)* | OpenAI — `{object:"list", data:[…]}` |
-| `anthropic-version` or `x-api-key` header | Anthropic — `{data:[{type:"model", id, display_name, created_at}], has_more, first_id, last_id}` |
+| `anthropic-version` or `x-api-key` header | Anthropic — `{data:[{type:"model", id, display_name, created_at, description}], has_more, first_id, last_id}` |
 | `?client_version=` query param | Codex — `{"models": []}` |
 
 Codex CLI refreshes its model picker with `GET /v1/models?client_version=<v>`. Given the OpenAI

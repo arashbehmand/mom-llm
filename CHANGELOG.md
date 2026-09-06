@@ -129,6 +129,18 @@ All notable changes to this project are documented in this file. The format is b
   `only: fast` + `include: k3` builds a panel from scratch. Names already on the panel are no-ops,
   never a second seat.
 
+- **A model's description now names the panel behind it.** `emom` in a model picker told a human
+  nothing about what answers it. Every discovery surface with a description field — `/v1/models`
+  (OpenAI and Anthropic dialects), `/v1/models/{id}`, `/v1/model/info` — now returns the ensemble's
+  configured `description:` followed by the models themselves: *"Fans out to 13 models — gpt-5.6-sol,
+  gpt-6-astra, claude-opus-5, … , +1 more — then synthesizes with claude-sonnet-5."* Names are
+  deduplicated (one llm seated twice is one model) and capped at twelve spelled out with the rest
+  counted, so a `members: all` panel stays readable; an ensemble with no configured description
+  still gets the panel line, and a `passthrough` one reports the single model that answers. The
+  `mom` vendor block gained `member_models`, `synthesizer_model` and `strategy` alongside the
+  identities it already carried. `description` is not part of Anthropic's model object — it rides
+  along for the clients that render one, and `display_name` stays the id.
+
 - **`members_exclude` / `members_include` — shape a panel from a layer that didn't author it.**
   Config layering deep-merges maps, but a **list** replaces wholesale, and `ensembles.<name>.
   members` is a list: an override that wanted a panel minus one model had to restate the entire
