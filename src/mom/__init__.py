@@ -7,6 +7,7 @@ default below — and otherwise defines the version and nothing else. All wiring
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
 import os
 
 
@@ -32,6 +33,13 @@ import os
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 
-__version__ = "2.0.0"
+# Read from the installed distribution rather than restated here: two literals to bump is one
+# too many, and the one that gets forgotten is this one — 2.1.0 shipped with `mom --version`
+# still answering 2.0.0. `pyproject.toml` is the single source of truth now. The fallback covers
+# an uninstalled source tree (PYTHONPATH=src), where there is no distribution to ask.
+try:
+    __version__ = version("mom-llm")
+except PackageNotFoundError:  # pragma: no cover — an uninstalled checkout, not a shipped path
+    __version__ = "0+unknown"
 
 __all__ = ["__version__"]
