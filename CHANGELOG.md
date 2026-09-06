@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-09-07
+
 ### Fixed
 
 - **A `<<SYSTEM>>` block typed into a chat box did nothing, silently.** A blank line ended the
