@@ -70,10 +70,11 @@ llms:
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
 
-  # GPT-6 Astra — OpenAI's fable-class flagship ($10/$50, 1M ctx). Deliberately seated on NO
-  # panel (owner's call, same treatment as cl5f1): at this price it is included manually when a
-  # request warrants it, not burned on every fan-out. The `p` variant is the served pro mode
-  # (higher-quality responses, same pricing). Ladder verified live 2026-09-06.
+  # GPT-6 Astra — OpenAI's fable-class flagship ($10/$50, 1M ctx). Seated on emom (with cl5f1)
+  # since 2026-09-06: at this price whether it runs on a fan-out is a *deployment's* call, taken in
+  # that deployment's overlay (`members_exclude`), not by editing the panel here — a metered box
+  # drops it, one with a subscription channel in front of it keeps it. Ladder verified live
+  # 2026-09-06; the `p` variant is the served pro mode (higher-quality responses, same pricing).
   oai6a:
     model: openai/gpt-6-astra
     api: responses
@@ -576,10 +577,15 @@ ensembles:
     default_tier: max
     members:
       - { llm: oai56s, effort: [medium, high, xhigh] }
+      # The two priciest flagships sit on the panel HERE, where emom describes the ideal roster.
+      # A deployment that doesn't want them on every fan-out drops them in its own overlay with
+      # `ensembles.emom.members_exclude` — an edit here changes the panel for every deployment.
+      - { llm: oai6a,  effort: [medium, high, xhigh] }   # same cells as its oai56s sibling
       # Opus 5's ladder gained `xhigh`, so the calibration rule above now lands one rung higher at
       # emom's lower tiers; the default (`max`) tier cell is unchanged.
       - { llm: cl5op,  effort: [high, xhigh, max] }
       - { llm: cl5st,  effort: [high, xhigh, max] }
+      - { llm: cl5f1,  effort: [high, xhigh, max] }   # 5.1's ladder gained `xh`, same as Opus 5
       - { llm: g31p,   effort: high }   # 'high' is g31p's own ceiling — nowhere higher to go
       - { llm: g38f,   effort: high }   # ditto
       - { llm: grok46, effort: high }   # ditto
