@@ -70,7 +70,7 @@ llms:
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
 
-  # GPT-6 Astra — OpenAI's fable-class flagship ($10/$50, 1M ctx). Seated on emom (with cl5f1)
+  # GPT-6 Astra — OpenAI's fable-class flagship ($10/$50, 1M ctx). Seated on emom (with cl51f)
   # since 2026-09-06: at this price whether it runs on a fan-out is a *deployment's* call, taken in
   # that deployment's overlay (`members_exclude`), not by editing the panel here — a metered box
   # drops it, one with a subscription channel in front of it keeps it. Ladder verified live
@@ -145,7 +145,7 @@ llms:
       xh: { params: { reasoning_effort: xhigh, thinking: { type: adaptive } } }
       am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
 
-  cl5f1:
+  cl51f:
     model: anthropic/claude-fable-5-1
     search: { web_search_options: { search_context_size: high } }
     variants:
@@ -585,7 +585,7 @@ ensembles:
       # emom's lower tiers; the default (`max`) tier cell is unchanged.
       - { llm: cl5op,  effort: [high, xhigh, max] }
       - { llm: cl5st,  effort: [high, xhigh, max] }
-      - { llm: cl5f1,  effort: [high, xhigh, max] }   # 5.1's ladder gained `xh`, same as Opus 5
+      - { llm: cl51f,  effort: [high, xhigh, max] }   # 5.1's ladder gained `xh`, same as Opus 5
       - { llm: g31p,   effort: high }   # 'high' is g31p's own ceiling — nowhere higher to go
       - { llm: g38f,   effort: high }   # ditto
       - { llm: grok46, effort: high }   # ditto

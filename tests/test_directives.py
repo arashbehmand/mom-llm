@@ -319,13 +319,13 @@ def test_blank_lines_never_hide_the_directives_below_them():
     markdown chat box, `<<SYSTEM>>` comes back with a blank line after the tag and between every
     line the human pressed Enter on. A blank line used to end the header zone, so the whole thing
     read as prose — the `include:` never applied, nothing warned, and the panel ran unchanged."""
-    body = "\n\ninclude: cl5f1, oai6a\n\nonly: cl5op\n\nAnswer tersely.\n\n"
+    body = "\n\ninclude: cl51f, oai6a\n\nonly: cl5op\n\nAnswer tersely.\n\n"
     messages = _msgs(
         MessageIR(role="user", content=f"<<SYSTEM>>{body}<</SYSTEM>>\n\nWhat is life?")
     )
     stripped, directives = extract_system_block(messages)
     assert directives is not None
-    assert directives.include == ("cl5f1", "oai6a")
+    assert directives.include == ("cl51f", "oai6a")
     assert directives.only == ("cl5op",)
     assert directives.instruction == "Answer tersely."
     assert directives.warnings == ()

@@ -340,7 +340,7 @@ class EnsembleConfig(_Model):
     @field_validator("members_exclude", mode="before")
     @classmethod
     def _coerce_single_excluded_name(cls, value: object) -> object:
-        # `members_exclude: cl5f1` for the common case of dropping exactly one model.
+        # `members_exclude: cl51f` for the common case of dropping exactly one model.
         return [value] if isinstance(value, str) else value
 
     @model_validator(mode="after")
