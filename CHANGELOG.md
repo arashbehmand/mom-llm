@@ -6,6 +6,17 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `<<SYSTEM>>` block typed into a chat box did nothing, silently.** A blank line ended the
+  directive header — an escape hatch for prose starting with `Word:` — and a markdown editor puts
+  one after the opening tag and between every line you press Enter on. So the whole header read as
+  prose: directives inert, no warning, the panel firing unchanged. Seen live on a block whose
+  `include:` never applied. Blank lines inside the header are now skipped rather than ending it;
+  the header still ends at the first line that isn't `key: value`, and `instruction:` is still the
+  explicit terminator. The hatch it replaces is barely missed — since 2.1.0 an unknown key ends the
+  header and survives verbatim with a warning, so `Note: …` prose already worked.
+
 ## [2.1.1] - 2026-09-06
 
 ### Fixed

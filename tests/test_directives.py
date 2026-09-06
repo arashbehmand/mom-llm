@@ -304,29 +304,32 @@ def test_body_starting_with_non_directive_line_becomes_instruction_verbatim():
     assert "note" in directives.warnings[0]
 
 
-def test_leading_blank_line_is_the_escape_hatch_for_key_shaped_prose():
-    # "Leave a blank line before it" (per the README) means a genuinely empty line — two newlines,
-    # not one. The one newline that unavoidably follows `<<SYSTEM>>` when it's written on its own
-    # line (see the header-parsing block below) must NOT by itself be mistaken for this.
+def test_key_shaped_prose_after_a_blank_line_survives_verbatim():
+    # A blank line no longer ends the header zone (an editor writes those, not the human), so this
+    # reaches the scan as an unknown key — which keeps the line and warns, losing nothing.
     messages = _msgs(MessageIR(role="user", content="<<SYSTEM>>\n\nNote: be careful<</SYSTEM>>"))
     _, directives = extract_system_block(messages)
     assert directives is not None
     assert directives.instruction == "Note: be careful"
-
-
-def test_a_single_newline_after_the_opening_tag_is_not_the_blank_line_escape_hatch():
-    # Regression for a real bug: writing `<<SYSTEM>>` on its own line (the only way a human types
-    # it, and exactly how the README's own multi-directive example is formatted) put exactly one
-    # newline at the start of the captured body. `splitlines()` on a string starting with `\n`
-    # yields a leading empty string, which the parser mistook for the deliberate blank-line escape
-    # hatch above — silently discarding every directive and turning the whole header into inert
-    # instruction text. `exclude:`/`synth:`/etc. must still be parsed here, not skipped.
-    messages = _msgs(MessageIR(role="user", content="<<SYSTEM>>\nNote: be careful<</SYSTEM>>"))
-    _, directives = extract_system_block(messages)
-    assert directives is not None
-    # The warning is the proof the line reached the header scan at all: swallowed by the
-    # blank-line escape hatch it would have become instruction text silently, as it did then.
     assert "note" in directives.warnings[0]
+
+
+def test_blank_lines_never_hide_the_directives_below_them():
+    """Regression for a block that silently did nothing in production (2026-09-06): typed into a
+    markdown chat box, `<<SYSTEM>>` comes back with a blank line after the tag and between every
+    line the human pressed Enter on. A blank line used to end the header zone, so the whole thing
+    read as prose — the `include:` never applied, nothing warned, and the panel ran unchanged."""
+    body = "\n\ninclude: cl5f1, oai6a\n\nonly: cl5op\n\nAnswer tersely.\n\n"
+    messages = _msgs(
+        MessageIR(role="user", content=f"<<SYSTEM>>{body}<</SYSTEM>>\n\nWhat is life?")
+    )
+    stripped, directives = extract_system_block(messages)
+    assert directives is not None
+    assert directives.include == ("cl5f1", "oai6a")
+    assert directives.only == ("cl5op",)
+    assert directives.instruction == "Answer tersely."
+    assert directives.warnings == ()
+    assert stripped[0].content == "What is life?"
 
 
 def test_instruction_terminator_key_is_the_other_escape_hatch():

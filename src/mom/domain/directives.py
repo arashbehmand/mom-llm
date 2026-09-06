@@ -16,10 +16,19 @@ auto-indentation would mangle)::
 Header lines are consumed from the top *while the key is a known directive*; the first line that
 doesn't look like ``key: value`` at all ends the header zone, and everything from there on
 (inclusive) is the instruction, verbatim. A bare body with no header lines is exactly today's
-behavior: the whole thing is the instruction. Two escape hatches for an instruction that would
-otherwise start with something matching the ``key:`` shape: a leading blank line, or the explicit
-terminator key ``instruction:``. A line that DOES look like ``key: value`` but names an unknown
-key ends the header zone like any other prose line — and records a warning on ``warnings``, which
+behavior: the whole thing is the instruction.
+
+**Blank lines inside the header zone are skipped, not terminators.** They used to end it — an
+escape hatch for an instruction that starts with something ``key:``-shaped — and that quietly cost
+every block typed into a markdown chat box, which puts a blank line after the opening tag and
+between every line the human presses Enter on. The whole header then read as prose: directives
+silently inert, no warning, the fan-out fired anyway (observed live 2026-09-06 on a block whose
+``include:`` never applied). The escape hatch that remains is the explicit terminator key
+``instruction:``; prose starting with an unrecognized ``key:`` needs no hatch at all, since an
+unknown key ends the header and survives verbatim (below).
+
+A line that DOES look like ``key: value`` but names an unknown key ends the header zone like any
+other prose line — and records a warning on ``warnings``, which
 ``engine/plan.py`` carries onto the plan and every surface renders in the think block. A typo'd
 directive silently doing nothing (and firing the fan-out anyway) is the failure mode this is built
 to avoid; taking the whole turn down over one is too blunt an instrument for it.
@@ -87,21 +96,17 @@ def _parse_body(body: str, *, legacy: bool) -> SystemDirectives:
     if legacy:
         return SystemDirectives(instruction=body.strip() or None)
 
-    # The canonical, documented way to write this block puts `<<SYSTEM>>` on its own line, so the
-    # very first character of `body` is ALWAYS the newline that follows it — that's an artifact of
-    # how a human (or the README's own example) types the tag, not a deliberate blank-line escape
-    # hatch. Strip exactly that one leading line break before splitting, so `splitlines()` doesn't
-    # hand the loop below a leading empty string it can't tell apart from a genuine blank line. A
-    # REAL blank-line escape hatch (an instruction that starts with something `key:`-shaped) still
-    # works after this: it needs a second, deliberate newline, and one strip only ever removes one.
-    lines = re.sub(r"^\r?\n", "", body, count=1).splitlines()
+    # No leading-newline surgery and no counting of blank lines: they are skipped wherever they
+    # appear in the header zone (see the module docstring). What a human's editor does to
+    # whitespace is not a directive.
+    lines = body.splitlines()
     collected: dict[str, list[str]] = {}
     warnings: list[str] = []
     idx = 0
     for idx, raw_line in enumerate(lines):
         stripped = raw_line.strip()
         if not stripped:
-            break  # a blank line ends the header zone (escape hatch #1)
+            continue  # blank lines are the editor's, not the human's
         match = _KEY_LINE_RE.match(stripped)
         if match is None:
             break  # doesn't look like a directive at all -> header zone ends here

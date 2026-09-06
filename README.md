@@ -257,11 +257,12 @@ every notice is logged. The one thing still fatal is a selection with nothing le
 which stays a clean 400 **before** any fan-out spend, since there is no answer to be had either
 way.
 
-An unknown key ends the directive header instead of being swallowed: that line and everything
-after it become the instruction, verbatim, with a warning naming the key — nothing you typed is
-lost. If your instruction text genuinely needs to start with something shaped like `Word: …`,
-leave a blank line before it or prefix it with the `instruction:` directive, which ends the header
-explicitly and skips the warning.
+Blank lines inside the header are ignored, so the block works typed into a markdown chat box —
+which puts one after the opening tag and between every line you press Enter on. An unknown key ends
+the directive header instead of being swallowed: that line and everything after it become the
+instruction, verbatim, with a warning naming the key — nothing you typed is lost. If your
+instruction text genuinely needs to start with something shaped like `Word: …`, prefix it with the
+`instruction:` directive, which ends the header explicitly and skips the warning.
 
 For the same shaping made permanent — this machine always runs `emom` without a particular model
 — use [`members_exclude` / `members_include`](docs/CONFIGURATION.md#ensembles) in a config layer
