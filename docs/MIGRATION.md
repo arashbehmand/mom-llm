@@ -57,7 +57,9 @@ progress dashboard, and the two processes talked over Redis. v2 folds it into th
   page; anything else gets the raw SSE event stream.
 - It is authenticated. Send the bearer token, or — since a plain link can't carry a header —
   append `?token=…`. MoM hands you a ready-made link per request in the **`X-MoM-Progress-Url`**
-  response header (and inside the think block when the ensemble sets `show_work: inline`).
+  response header (and inside the think block when the ensemble sets `show_work: inline`); the
+  token in that link is a per-request [link token](API.md#how-the-link-authenticates), not your
+  API token.
 - Behind a reverse proxy, set `server.public_url` in the config so that link points at your public
   hostname rather than the internal one.
 - **Stop running the 8001 service** and drop `REPORTING_SERVICE_URL` from your environment; it is

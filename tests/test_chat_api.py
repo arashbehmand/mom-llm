@@ -130,9 +130,10 @@ async def test_show_work_inline_renders_think_block():
 
 
 async def test_show_work_inline_includes_progress_link_in_think_block():
-    # A plain link/EventSource can't carry an Authorization header, so the progress link (and
-    # the token it carries) needs to be somewhere the user actually sees it — the think block,
-    # since lobe-chat has no UI for surfacing an arbitrary response header.
+    # A plain link/EventSource can't carry an Authorization header, so the progress link needs to
+    # be somewhere the user actually sees it — the think block, since lobe-chat has no UI for
+    # surfacing an arbitrary response header. What it carries is a link token scoped to this one
+    # request, never the API token: this string is printed into content the client keeps.
     settings = Settings(_env_file=None, MOM_API_TOKEN="secret-token")
     catalog = _catalog(auth="bearer", show_work="inline")
     async with _client(_container(catalog=catalog, settings=settings)) as client:
@@ -143,7 +144,8 @@ async def test_show_work_inline_includes_progress_link_in_think_block():
         )
     content = resp.json()["choices"][0]["message"]["content"]
     request_id = resp.headers["x-request-id"]
-    assert f"Progress: http://test/v1/progress/{request_id}?token=secret-token" in content
+    assert f"Progress: http://test/v1/progress/{request_id}?token=" in content
+    assert "secret-token" not in content  # a scoped link token, not the gateway credential
     # the progress line precedes the member dump, inside the think block
     assert content.index("Progress:") < content.index("Model:")
 
@@ -167,7 +169,8 @@ async def test_show_work_inline_streaming_includes_progress_link():
         for p in _sse_payloads(resp.text)
         if p.get("choices") and p["choices"][0].get("delta")
     )
-    assert f"Progress: http://test/v1/progress/{request_id}?token=secret-token" in text
+    assert f"Progress: http://test/v1/progress/{request_id}?token=" in text
+    assert "secret-token" not in text  # a scoped link token, not the gateway credential
 
 
 async def test_show_work_off_has_no_progress_link():

@@ -333,6 +333,20 @@ so opening the stream a moment after the call still replays the events already e
 Backed by an in-memory bus by default; set `MOM_REDIS_URL` to fan progress across worker processes
 via Redis (`pip install 'mom-llm[redis]'`).
 
+### How the link authenticates
+
+A browser opening a link — navigation, or the page's own `EventSource` — cannot attach an
+`Authorization` header, so something has to ride in the query string. That something is a **link
+token**: `HMAC(api_token, request_id)`, minted per request and scoped to that one id. It is what
+`X-MoM-Progress-Url` and the think-block `Progress:` line carry, because those strings end up in
+response headers, chat content and saved transcripts, where a gateway credential has no business
+being. A leaked link is worth one run's progress feed and nothing else; forging one needs the API
+token. Nothing to configure and nothing extra to rotate — the key *is* the API token, so rotating
+that invalidates every outstanding link.
+
+The endpoint also still accepts the API token itself, by header or `?token=`, which is how a client
+that holds it watches any run (and how links minted before this existed keep working).
+
 ### In-flight request coalescing (`server.dedupe`)
 
 When enabled (off by default — see [`CONFIGURATION.md`](CONFIGURATION.md#server)), a chat
@@ -448,10 +462,11 @@ before the failure, and a synthesizer that streamed and then failed emits nothin
 `usage` and `runs` remain the authority on what a run finally cost.
 
 `progress_url` is `null` over stdio unless `server.public_url` is set (there is no request to
-derive a host from). Unlike the `X-MoM-Progress-Url` response header, it never embeds the API
-token: a tool result is data that lands in a model's context and travels with that agent's
-transcript, and a stdio caller never presented a token in the first place. With `auth: bearer`
-the link therefore needs your own token attached to open — an HTTP MCP client already has one.
+derive a host from). Unlike the `X-MoM-Progress-Url` response header it carries no token at all —
+not even the scoped [link token](#how-the-link-authenticates): a tool result is data that lands in
+a model's context and travels with that agent's transcript, and a stdio caller never presented a
+token in the first place. With `auth: bearer` the link therefore needs your own token attached to
+open — an HTTP MCP client already has one.
 
 Both a failed run and a malformed call come back as MCP `isError` results, and the difference is
 what rides along: a **failed run** carries the full `ConsultResult` as structured content, so the

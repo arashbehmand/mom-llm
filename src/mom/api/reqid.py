@@ -9,10 +9,10 @@ minted. The id is echoed back in the ``X-Request-Id`` response header either way
 from __future__ import annotations
 
 import re
-from urllib.parse import quote
 
 from fastapi import Request
 
+from mom.api.auth import link_token
 from mom.api.deps import Container
 from mom.domain.ports import IdFactory
 
@@ -40,27 +40,31 @@ def progress_url_from_base(
     when neither exists — the stdio MCP server, which has no request to derive a host from and so
     genuinely cannot name a reachable link rather than guessing at one.
 
-    ``with_token`` is what makes the link openable by a browser, and therefore what must be off
-    anywhere the link is *data* rather than a response header: the MCP surface returns it inside a
-    tool result, which lands in a model's context and travels wherever that agent sends its
-    transcript. Over stdio the caller never presented the token in the first place.
+    ``with_token`` is what makes the link openable by a browser. What rides in the query string
+    is a **link token** scoped to this one request id (see ``auth.link_token``), never the gateway
+    credential — the URL is printed in think blocks, response headers and saved transcripts, and a
+    credential has no business in any of them. It stays off where the link is *data* rather than a
+    response header: the MCP surface returns it inside a tool result, and a run's progress feed is
+    not something an agent's transcript should hand out either. Over stdio the caller never
+    presented a token in the first place.
     """
     public_url = container.catalog.config.server.public_url
     resolved = f"{public_url.rstrip('/')}/" if public_url else base
     if resolved is None:
         return None
     url = f"{resolved.rstrip('/')}/v1/progress/{request_id}"
-    token = container.settings.api_token
-    if with_token and container.catalog.config.server.auth != "none" and token is not None:
-        url = f"{url}?token={quote(token.get_secret_value())}"
+    token = link_token(container, request_id) if with_token else None
+    if token is not None:
+        url = f"{url}?token={token}"  # hex, nothing to quote
     return url
 
 
 def progress_url(http_request: Request, request_id: str, container: Container) -> str:
     """The browser-openable URL for this request's live progress feed.
 
-    Carries the API token as a query param when auth is enabled: a plain link that a browser
-    opens directly (navigation, ``EventSource``) can't attach an ``Authorization`` header.
+    Carries a per-request link token as a query param when auth is enabled: a plain link that a
+    browser opens directly (navigation, ``EventSource``) can't attach an ``Authorization`` header,
+    and the gateway's own token must not be what fills that gap.
 
     Prefers ``server.public_url`` over the request's own ``Host`` when configured: behind a
     reverse proxy the request typically arrives over an internal network (its ``base_url`` is an

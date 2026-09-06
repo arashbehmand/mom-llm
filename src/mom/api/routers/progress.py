@@ -6,8 +6,10 @@ terminal event; a periodic heartbeat comment keeps an otherwise-idle connection 
 
 A browser navigating here (``Accept: text/html``) gets a small self-contained page that opens an
 ``EventSource`` against this same URL and renders the milestones live; any other ``Accept`` gets
-the raw SSE feed. Since a plain link can't carry an ``Authorization`` header, auth also accepts the
-API token as a ``?token=`` query param (see ``X-MoM-Progress-Url`` in :mod:`mom.api.reqid`).
+the raw SSE feed. Since a plain link can't carry an ``Authorization`` header, auth also accepts a
+``?token=`` query param — the per-request link token MoM mints for this id (``auth.link_token``),
+or the API token itself for a client that holds it (see ``X-MoM-Progress-Url`` in
+:mod:`mom.api.reqid`).
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from mom.api.auth import check_token
+from mom.api.auth import check_link_access
 from mom.api.deps import ContainerDep
 from mom.api.sse import SSE_HEADERS
 from mom.domain.progress import ProgressEvent
@@ -40,7 +42,10 @@ def _presented_token(request: Request) -> str | None:
 
 
 async def _progress_auth(request: Request, container: ContainerDep) -> None:
-    check_token(container, _presented_token(request))
+    # Path-scoped: a link token unlocks its own request id and nothing else, so authorization
+    # cannot be decided from the credential alone the way every other route can.
+    request_id = request.path_params.get("request_id", "")
+    check_link_access(container, request_id, _presented_token(request))
 
 
 def _frame(event: ProgressEvent) -> bytes:

@@ -316,7 +316,8 @@ async def test_show_work_inline_includes_progress_link_non_streaming():
     request_id = resp.headers["x-request-id"]
     member_dump = next(o for o in body["output"] if o["type"] == "reasoning")
     text = member_dump["summary"][0]["text"]
-    assert f"Progress: http://test/v1/progress/{request_id}?token=secret-token" in text
+    assert f"Progress: http://test/v1/progress/{request_id}?token=" in text
+    assert "secret-token" not in text  # a scoped link token, not the gateway credential
     assert text.index("Progress:") < text.index("Model:")
 
 
@@ -332,7 +333,8 @@ async def test_show_work_inline_includes_progress_link_streaming():
     reasoning_text = "".join(
         d["delta"] for k, d in events if k == "response.reasoning_summary_text.delta"
     )
-    assert f"Progress: http://test/v1/progress/{request_id}?token=secret-token" in reasoning_text
+    assert f"Progress: http://test/v1/progress/{request_id}?token=" in reasoning_text
+    assert "secret-token" not in reasoning_text  # a scoped link token, not the gateway credential
 
 
 async def test_mcp_tool_forwarded_when_synth_supports_it():

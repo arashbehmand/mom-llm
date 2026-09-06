@@ -248,6 +248,18 @@ All notable changes to this project are documented in this file. The format is b
   finishes and records a metric for its spend, but nothing was logged, so the logs under-reported
   cost relative to the metrics DB. It now logs `detached member completed` when it lands.
 
+### Security
+
+- **The progress link no longer carries your API token.** A browser opening a link cannot attach an
+  `Authorization` header, so something has to ride in the query string — and what MoM put there was
+  the gateway credential, in a URL it then printed into the `X-MoM-Progress-Url` header, the
+  think-block `Progress:` line, and every transcript a client saved. It is now a **link token**:
+  `HMAC(api_token, request_id)`, minted per request and worth exactly one run's progress feed.
+  Forging one needs the API token; leaking one costs a progress page. Nothing to configure and
+  nothing extra to rotate — the key is the API token itself, so rotating it invalidates every
+  outstanding link. The endpoint still accepts the API token by header or `?token=`, so a client
+  that holds it can still watch any run and older links keep opening.
+
 ## [2.0.0] - 2026-08-18
 
 A ground-up rebuild of MoM as the `mom` package (src-layout, distribution `mom-llm`, CLI `mom`).

@@ -337,7 +337,9 @@ async def test_progress_url_prefers_configured_public_url():
     assert url == f"https://mom.example.com/v1/progress/{resp.headers['x-request-id']}"
 
 
-async def test_progress_url_header_carries_token_when_auth_enabled():
+async def test_progress_url_carries_a_scoped_link_token_never_the_api_token():
+    """The URL is printed in think blocks, response headers and saved transcripts. What
+    authenticates it is derived from the API token, not the API token."""
     bus = InMemoryEventBus()
     async with _asgi(_authed_container(bus)) as client:
         resp = await client.post(
@@ -346,7 +348,31 @@ async def test_progress_url_header_carries_token_when_auth_enabled():
             headers={"authorization": "Bearer secret-token"},
         )
     url = resp.headers["x-mom-progress-url"]
-    assert "token=secret-token" in url
+    assert "?token=" in url
+    assert "secret-token" not in url
+
+
+async def test_the_link_token_opens_its_own_request_and_nothing_else():
+    """That is the whole point of scoping it: a link that leaks out of a transcript is worth one
+    run's progress feed, not the gateway."""
+    bus = InMemoryEventBus()
+    for request_id in ("req-mine", "req-yours"):
+        bus.publish(request_id, ProgressEvent(kind="completed", ensemble="e", status="stop"))
+
+    container = _authed_container(bus)
+    async with _asgi(container) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "e", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"authorization": "Bearer secret-token", "x-request-id": "req-mine"},
+        )
+        token = resp.headers["x-mom-progress-url"].split("?token=")[1]
+
+        mine = await client.get("/v1/progress/req-mine", params={"token": token})
+        assert mine.status_code == 200
+
+        someone_elses = await client.get("/v1/progress/req-yours", params={"token": token})
+        assert someone_elses.status_code == 401
 
 
 async def test_progress_query_token_auth():
@@ -369,5 +395,7 @@ async def test_progress_query_token_auth():
         )
         assert via_header.status_code == 200
 
+        # The API token itself still opens any run — a client that holds it is already trusted,
+        # and links minted before link tokens existed keep working.
         via_query = await client.get("/v1/progress/req-secure", params={"token": "secret-token"})
         assert via_query.status_code == 200
