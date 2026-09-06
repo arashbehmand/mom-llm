@@ -173,6 +173,36 @@ def test_null_in_a_later_layer_masks_an_inherited_key(tree: Path, monkeypatch):
     assert sorted(bootstrap().catalog().llms) == ["a"]
 
 
+def test_an_override_can_drop_one_model_from_a_panel_it_did_not_author(tree: Path, monkeypatch):
+    """The reason `members_exclude` exists. `members:` is a LIST, and a list replaces wholesale on
+    merge — so an override that wanted this panel minus one model used to have to restate the
+    whole roster (and then quietly stop tracking the tracked config it copied). This is the
+    machine-local shape: a tracked config with the full panel, an untracked override that thins
+    it, and a base file nobody has to edit."""
+    _write(
+        tree / "home" / ".mom" / "config.yaml",
+        USER_LLMS
+        + dedent("""
+            ensembles:
+              panel:
+                members: [a, doomed]
+                synthesizer: { llm: a }
+        """),
+    )
+    _write(
+        tree / "home" / ".mom" / "config.override.yaml",
+        "ensembles: { panel: { members_exclude: doomed } }\n",
+    )
+    monkeypatch.chdir(tree / "proj")
+    monkeypatch.setenv("HOME", str(tree / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    catalog = bootstrap().catalog()
+    assert [m.identity for m in catalog.ensembles["panel"].members] == ["a"]
+    # The llm itself is untouched — still callable by name, just no longer on this panel.
+    assert "doomed" in catalog.llms
+
+
 def test_config_overlay_merges_last_and_is_deduped(tree: Path):
     """An MOM_CONFIG_OVERLAY that names a file discovery already picked up must not be merged
     twice — harmless for YAML, but a lie in `mom config where`."""

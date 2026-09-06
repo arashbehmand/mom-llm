@@ -274,6 +274,116 @@ def test_members_all_exclude_of_unknown_llm_is_rejected():
         )
 
 
+# ---- roster patches: members_exclude / members_include ---------------------------------------
+# The list-in-a-layered-config problem: `members:` REPLACES wholesale when one layer merges over
+# another, so before these an override could only drop a model from a panel by restating the whole
+# roster — which then silently stops tracking the roster it was copied from.
+ROSTER = """
+version: 2
+llms:
+  a: { model: x/a }
+  b: { model: x/b }
+  c: { model: x/c }
+ensembles:
+  e:
+    effort_tiers: [high, max]
+    default_tier: max
+    members:
+      - { llm: a, effort: [high, max] }
+      - { llm: b, effort: high }
+      - { llm: a, as: a2, effort: high }
+    synthesizer: { llm: a }
+"""
+
+
+def _roster(patch: str = "") -> list[str]:
+    catalog = _resolve(ROSTER + patch)
+    return [m.identity for m in catalog.ensembles["e"].members]
+
+
+def test_members_exclude_drops_a_seat_by_identity():
+    assert _roster("    members_exclude: [b, a2]\n") == ["a"]
+
+
+def test_members_exclude_takes_a_bare_name_for_the_one_model_case():
+    assert _roster("    members_exclude: b\n") == ["a", "a2"]
+
+
+def test_members_exclude_of_a_name_that_is_not_seated_is_a_no_op():
+    """Deliberately not an error, unlike the same typo in `members: {all, exclude}`: an exclusion
+    lives in a different file from the roster it patches (usually an untracked override) and has
+    to survive the base config dropping that model on its own."""
+    assert _roster("    members_exclude: [ghost]\n") == ["a", "b", "a2"]
+
+
+def test_members_include_appends_a_model_that_is_not_on_the_roster():
+    catalog = _resolve(ROSTER + "    members_include: [{ llm: c, effort: high }]\n")
+    members = catalog.ensembles["e"].members
+    assert [m.identity for m in members] == ["a", "b", "a2", "c"]
+    assert members[-1].effort_by_tier[EffortLevel.MAX] == "high"
+
+
+def test_members_include_redeclares_a_seated_member_in_place():
+    """Not a second seat, and not appended: keeping its position is what makes this the way a
+    layer retunes one member's effort without restating the roster."""
+    catalog = _resolve(ROSTER + "    members_include: [{ llm: b, effort: max }]\n")
+    members = catalog.ensembles["e"].members
+    assert [m.identity for m in members] == ["a", "b", "a2"]
+    assert members[1].effort_by_tier[EffortLevel.HIGH] == "max"
+
+
+def test_members_include_wins_over_members_exclude_on_the_same_name():
+    patch = "    members_exclude: [b]\n    members_include: [b]\n"
+    assert _roster(patch) == ["a", "a2", "b"]
+
+
+def test_members_exclude_composes_with_the_all_shorthand():
+    catalog = _resolve(
+        """
+        version: 2
+        llms:
+          a: { model: x/a }
+          b: { model: x/b }
+        ensembles:
+          e:
+            members: all
+            members_exclude: [b]
+            synthesizer: { llm: a }
+        """
+    )
+    assert [m.identity for m in catalog.ensembles["e"].members] == ["a"]
+
+
+def test_members_include_of_an_unknown_llm_is_rejected():
+    """The other half of the asymmetry: an exclusion that matches nothing is already satisfied,
+    but a member that cannot be built is a broken panel — the same error `members:` would give."""
+    with pytest.raises(ConfigError, match="unknown llm"):
+        _resolve(ROSTER + "    members_include: [ghost]\n")
+
+
+def test_excluding_every_member_is_rejected():
+    with pytest.raises(ConfigError, match="no members"):
+        _resolve(ROSTER + "    members_exclude: [a, b, a2]\n")
+
+
+def test_members_include_cannot_grow_a_passthrough_ensemble():
+    with pytest.raises(ConfigError, match="at most one"):
+        _resolve(
+            """
+            version: 2
+            llms:
+              a: { model: x/a }
+              b: { model: x/b }
+            ensembles:
+              e:
+                strategy: passthrough
+                members: [a]
+                members_include: [b]
+                synthesizer: { llm: a }
+            """
+        )
+
+
 def test_members_all_rejected_for_passthrough():
     with pytest.raises(ConfigError, match="at most one member"):
         _resolve(

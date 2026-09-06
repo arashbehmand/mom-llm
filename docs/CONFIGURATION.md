@@ -71,6 +71,20 @@ Merge semantics are the same as `extends:` (see below), at every layer: nested m
 key-by-key, a scalar replaces the base value, and `null` **masks an inherited key** — which is
 how a project drops an llm the user level defines.
 
+A **list**, though, replaces wholesale — and `ensembles.<name>.members` is a list. So a layer that
+wants a panel minus one model cannot get there through the merge; restating the whole roster is
+the only option the merge itself offers, and a restated roster silently stops tracking the one it
+was copied from. [`members_exclude` / `members_include`](#ensembles) are the way through: they
+patch whatever roster the merge produced, so an override can thin (or extend) a panel it does not
+author:
+
+```yaml
+# ~/.mom/config.override.yaml — this machine only, untracked
+ensembles:
+  emom:
+    members_exclude: [fable, astra]   # everything else about emom stays wherever it was defined
+```
+
 ### Pinning one file
 
 `--config <file>` (or `MOM_CONFIG`) turns discovery **off entirely**. Only that file, its sibling
@@ -639,6 +653,29 @@ ensembles:
   (the per-tier matrix cell). Identities must be unique within the ensemble. Or `all` /
   `{all: true, exclude: [...]}` for a self-maintaining kitchen-sink panel — see
   [`members: all`](#members-all--a-self-maintaining-kitchen-sink-panel).
+- **`members_exclude`** / **`members_include`** — patches applied to the roster **after** all
+  config layers are merged, which is what makes a panel shapeable from a file that did not
+  declare it (an override, an `MOM_CONFIG_OVERLAY`, a project file over a user-level catalog).
+  `members_exclude` takes identities to drop — a bare name for the single-model case, a list
+  otherwise. `members_include` takes members in the same shape `members` does; one whose identity
+  is already seated is **redeclared in place** rather than seated twice, which is also how a layer
+  retunes a single member's effort. Inclusions are applied last, so `members_include` wins over
+  `members_exclude` on the same name — the same rule the per-turn `<<SYSTEM>> include:` directive
+  follows (see the `<<SYSTEM>>` section in [`README.md`](../README.md)).
+
+  Excluding a name that is *not* on the roster is a deliberate no-op (unlike the same typo inside
+  `members: {all: true, exclude: [...]}`, which is an error): the exclusion lives in a different
+  file from the roster it patches and has to keep working when the base config drops that model on
+  its own. Including an llm that does not exist is still an error — a member that cannot be built
+  is a broken panel. An exclusion that empties the panel, or an inclusion that gives a
+  `passthrough` ensemble a second member, fails at load like any other unrunnable config.
+
+  ```yaml
+  ensembles:
+    emom:
+      members_exclude: fable                       # drop one seat
+      members_include: [{ llm: astra, effort: max }]  # add one, or retune one already there
+  ```
 - **`synthesizer`** *(required)* — the concluding model: `llm`, an optional `prompt` (a key
   from `prompts`), and an optional `effort`. The synthesizer owns the client-visible output,
   its tool calls, and structured-output/`response_format`. Client sampling controls

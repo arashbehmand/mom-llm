@@ -1,11 +1,14 @@
 """Resolve a validated :class:`~mom.config.schema.Config` into an immutable catalog.
 
-Resolution does the three things structural validation cannot:
+Resolution does the four things structural validation cannot:
 
 1. ``extends`` chains — deep-merging ``params`` (a ``null`` value deletes an inherited key) and
    inheriting explicitly-set scalar fields, with cycle and missing-target detection.
 2. Provider → ``api_key_env`` inference where omitted.
-3. Cross-references (members / synthesizer / prompt targets exist) and the per-member effort
+3. Ensemble roster patches (``members_exclude`` / ``members_include``), applied to the merged
+   ``members:`` — the one part of the config a layer above cannot reach through the merge itself,
+   because a list replaces wholesale.
+4. Cross-references (members / synthesizer / prompt targets exist) and the per-member effort
    matrix aligned to each ensemble's ``effort_tiers``.
 
 The result is a frozen ``ResolvedCatalog`` the rest of the app consumes; the input ``Config`` is
@@ -243,6 +246,33 @@ def _resolve_effort_matrix(
     raise ConfigError(f"{where}: unsupported effort spec {spec!r}")
 
 
+def _patch_roster(specs: list[MemberConfig], ens: EnsembleConfig) -> list[MemberConfig]:
+    """The merged ``members:`` with this ensemble's ``members_exclude``/``members_include`` applied.
+
+    Exclusions drop by identity (``as:`` or ``llm``); inclusions are appended, except one whose
+    identity is already seated, which is redeclared **in place** — that keeps panel order stable
+    and gives a layer a way to retune a single member's effort without restating the roster.
+    Inclusions run last, so ``members_include`` wins over ``members_exclude`` on the same name.
+
+    Excluding a name that isn't on the roster is deliberately a no-op, unlike the same typo in
+    ``members: {all: true, exclude: [...]}`` (a hard error, authored beside the roster it filters).
+    The whole point of an exclusion is that it lives in a *different* file from the roster —
+    usually an untracked override — and outlives edits to it. A base config that drops the model
+    on its own must not take the gateway down with it.
+    """
+    dropped = set(ens.members_exclude)
+    patched = [member for member in specs if member.identity not in dropped]
+    seats = {member.identity: index for index, member in enumerate(patched)}
+    for member in ens.members_include:
+        seat = seats.get(member.identity)
+        if seat is None:
+            seats[member.identity] = len(patched)
+            patched.append(member)
+        else:
+            patched[seat] = member
+    return patched
+
+
 def resolve_ensemble(
     name: str,
     ens: EnsembleConfig,
@@ -273,7 +303,22 @@ def resolve_ensemble(
         excluded = set(ens.members.exclude)
         member_specs = [MemberConfig(llm=n) for n in llms if n not in excluded]
     else:
-        member_specs = ens.members
+        member_specs = list(ens.members)
+
+    if ens.members_exclude or ens.members_include:
+        member_specs = _patch_roster(member_specs, ens)
+        # Both are re-checks of what the schema already enforces on `members:` alone — the roster
+        # it validated is not the roster that ends up running.
+        if ens.strategy == "synthesize" and not member_specs:
+            raise ConfigError(
+                f"ensemble {name!r}: members_exclude leaves it with no members "
+                f"(excluded: {', '.join(ens.members_exclude)})"
+            )
+        if ens.strategy == "passthrough" and len(member_specs) > 1:
+            raise ConfigError(
+                f"ensemble {name!r}: members_include leaves {len(member_specs)} members on a "
+                "'passthrough' ensemble, which takes at most one"
+            )
 
     members: list[ResolvedMember] = []
     for member in member_specs:

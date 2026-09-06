@@ -129,6 +129,30 @@ All notable changes to this project are documented in this file. The format is b
   `only: fast` + `include: k3` builds a panel from scratch. Names already on the panel are no-ops,
   never a second seat.
 
+- **`members_exclude` / `members_include` — shape a panel from a layer that didn't author it.**
+  Config layering deep-merges maps, but a **list** replaces wholesale, and `ensembles.<name>.
+  members` is a list: an override that wanted a panel minus one model had to restate the entire
+  roster, which then silently stops tracking the roster it was copied from. That is why models
+  kept getting dropped from tracked ensembles for machine-local reasons. These two keys patch
+  whatever roster the merge produced, so the tracked config keeps the full panel and the
+  gitignored override next to it decides what this machine runs:
+
+  ```yaml
+  # ~/.mom/config.override.yaml
+  ensembles:
+    emom:
+      members_exclude: [fable, astra]
+  ```
+
+  `members_exclude` takes identities (a bare name, or a list); `members_include` takes members in
+  the same shape `members:` does, and one whose identity is already seated is redeclared **in
+  place** rather than seated twice — which is also how a layer retunes a single member's effort.
+  Inclusions apply last, so `members_include` wins over `members_exclude` on the same name, the
+  same rule the per-turn `<<SYSTEM>> include:` directive follows. Excluding a name that isn't on
+  the roster is a deliberate no-op: the exclusion outlives edits to the config it patches, and a
+  base config dropping that model on its own must not take the gateway down. Including an llm that
+  doesn't exist is still an error, as is an exclusion that empties the panel.
+
 ### Changed
 
 - **A `<<SYSTEM>>` directive MoM can't honor no longer costs you the turn.** An unknown member

@@ -235,6 +235,17 @@ class LlmConfig(_Model):
 EffortSpec = EffortCell | list[EffortCell] | dict[str, EffortCell]
 
 
+def _member_mappings(value: object) -> object:
+    """``[name, ...]`` -> ``[{llm: name}, ...]``; anything else passes through untouched.
+
+    For a seat with no per-member effort override, a flow-style list of names is far more compact
+    than one ``- llm: name`` mapping per line.
+    """
+    if not isinstance(value, list):
+        return value
+    return [{"llm": item} if isinstance(item, str) else item for item in value]
+
+
 class MemberConfig(_Model):
     llm: str
     member_as: str | None = Field(default=None, alias="as")
@@ -287,6 +298,16 @@ class EnsembleConfig(_Model):
     default_tier: Tier | None = None
     # See AllMembersConfig for the "all"/{all: true, exclude: [...]} kitchen-sink shorthand.
     members: AllMembersConfig | list[MemberConfig] = Field(default_factory=list)
+    # Roster patches, applied to whatever `members:` the merged config ended up with (resolve.py).
+    # They exist because a LIST replaces wholesale when one config layer merges over another: an
+    # override/overlay that wanted a panel minus one model had to restate the entire roster, and a
+    # restated roster silently stops tracking the one it was copied from. `members_exclude` drops
+    # identities; `members_include` adds members, redeclaring one already on the roster in place
+    # rather than seating it twice — which is also how a layer retunes a single member's effort.
+    # Include is applied last, so it wins over exclude: the same rule `<<SYSTEM>> include:`
+    # follows for one turn.
+    members_exclude: list[str] = Field(default_factory=list)
+    members_include: list[MemberConfig] = Field(default_factory=list)
     synthesizer: SynthesizerConfig
     show_work: Literal["off", "inline", "native"] = "off"
     tools: EnsembleToolsConfig = Field(default_factory=EnsembleToolsConfig)
@@ -309,12 +330,18 @@ class EnsembleConfig(_Model):
         # `members: all` is shorthand for `members: {all: true}` (no exclusions).
         if value == "all":
             return {"all": True}
-        # `members: [name, ...]` is shorthand for `members: [{llm: name}, ...]` — for a panel
-        # with no per-member effort override (e.g. a debug/kitchen-sink ensemble), a flow-style
-        # list of names is far more compact than one `- llm: name` mapping per line.
-        if not isinstance(value, list):
-            return value
-        return [{"llm": item} if isinstance(item, str) else item for item in value]
+        return _member_mappings(value)
+
+    @field_validator("members_include", mode="before")
+    @classmethod
+    def _coerce_bare_included_names(cls, value: object) -> object:
+        return _member_mappings(value)
+
+    @field_validator("members_exclude", mode="before")
+    @classmethod
+    def _coerce_single_excluded_name(cls, value: object) -> object:
+        # `members_exclude: cl5f1` for the common case of dropping exactly one model.
+        return [value] if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _validate_tiers_and_members(self) -> EnsembleConfig:

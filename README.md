@@ -263,6 +263,10 @@ lost. If your instruction text genuinely needs to start with something shaped li
 leave a blank line before it or prefix it with the `instruction:` directive, which ends the header
 explicitly and skips the warning.
 
+For the same shaping made permanent — this machine always runs `emom` without a particular model
+— use [`members_exclude` / `members_include`](docs/CONFIGURATION.md#ensembles) in a config layer
+instead of retyping a directive every turn.
+
 The older `<<CONCLUDING-INSTRUCTION>>…<</CONCLUDING-INSTRUCTION>>` marker still works exactly as
 before (instruction-only, no directive header) — `<<SYSTEM>>` is just the generalized form.
 
@@ -288,6 +292,20 @@ One YAML file, `version: 2`, with three name-keyed maps: `llms:` (individual mod
 inheritance), `prompts:` (synthesis instructions), and `ensembles:` (what clients call). Each
 ensemble lists advisory `members`, a `synthesizer`, a `strategy` (`synthesize` or `passthrough`),
 and per-member effort. Secrets never appear — only env-var names.
+
+Config comes from a **search path**, deep-merged like git config: a user level
+(`~/.mom/config.yaml`) for the models a machine has once, a project level (`./mom.yaml`) for what a
+directory adds, and a gitignored `*.override.yaml` beside each for what belongs to this machine
+alone. A later layer masks an inherited key with `null` — and shapes a panel it did not author with
+`members_exclude` / `members_include`, since a `members:` list would otherwise have to be restated
+in full to drop one model from it:
+
+```yaml
+# ~/.mom/config.override.yaml — untracked, this machine only
+ensembles:
+  emom:
+    members_exclude: [fable, astra]    # the tracked roster keeps them; this machine doesn't run them
+```
 
 Start from **[`config.example.yaml`](config.example.yaml)** and see
 **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** for the full reference. Validate and inspect with:

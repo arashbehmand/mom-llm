@@ -114,6 +114,11 @@ ensembles:
       - { llm: flash,  effort: [skip, m, h] }  # excluded at the low tier
     synthesizer: { llm: claude, effort: [m, h, h], prompt: synth_default }
     show_work: native
+    # A `members:` list REPLACES wholesale when one config layer merges over another, so an
+    # override that wants this panel minus one model would have to restate the whole roster.
+    # These patch the merged roster instead — meant for a gitignored `config.override.yaml`
+    # rather than here: `members_exclude: flash` drops a seat, `members_include: [{llm: x,
+    # effort: h}]` adds one (or retunes one already seated). See docs/CONFIGURATION.md#ensembles.
 
   # A single-model agent variant for coding agents — no fan-out, low latency.
   mom-code:
