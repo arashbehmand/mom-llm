@@ -6,6 +6,12 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-06
+
+Shape a panel without editing its roster — per turn from the chat box, per machine from a config
+layer — plus a model list that says what each ensemble contains, and a progress link that no longer
+hands out the gateway credential.
+
 ### Added
 
 - **Config discovery — a search path, not one env var.** `mom` now finds its own config. Two
