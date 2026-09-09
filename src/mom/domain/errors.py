@@ -15,6 +15,10 @@ from typing import Literal
 ErrorKind = Literal[
     "timeout",
     "rate_limit",
+    # The account is out of resource: a plan's usage limit, an exhausted balance, a model that
+    # needs credits. Shaped like a rate limit or a 5xx by most providers, but nothing about it is
+    # transient — the next attempt fails identically until someone pays or the cycle resets.
+    "quota",
     "auth",
     "bad_request",
     "context_length",

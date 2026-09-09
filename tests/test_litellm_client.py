@@ -397,6 +397,52 @@ def test_classify_falls_back_to_status_code_when_not_a_litellm_exception():
     assert _classify(_RawHttpError(503)) == "server_error"
 
 
+def test_exhausted_quota_is_not_retried_whatever_class_it_arrives_as():
+    """Providers dress exhaustion as whatever they like: Anthropic a rate_limit_error for
+    "Usage credits are required", cli-proxy-api a 503 for "no auth available (... monthly usage
+    limit)", xAI a 402 for "usage balance exhausted". All three are retryable classes, so mom
+    spent three attempts on each. None of them can succeed until someone pays."""
+    import litellm.exceptions as le
+
+    exhausted = [
+        le.ServiceUnavailableError(
+            message=(
+                "auth_unavailable: no auth available (providers=claude, model=kimi/k3; last "
+                "upstream error: permission_error: You've reached your monthly usage limit "
+                "for this billing cycle."
+            ),
+            model="m",
+            llm_provider="anthropic",
+        ),
+        le.RateLimitError(
+            message=(
+                "All credentials for model claude-fable-5-1 are cooling down via provider claude "
+                "(last error: rate_limit_error: Usage credits are required for this model.)"
+            ),
+            model="m",
+            llm_provider="anthropic",
+        ),
+        le.APIError(
+            status_code=402,
+            message='XaiException - {"error":"Grok Build usage balance exhausted"}',
+            model="m",
+            llm_provider="xai",
+        ),
+    ]
+    for exc in exhausted:
+        assert _classify(exc) == "quota", exc
+    assert "quota" not in _RETRYABLE_KINDS
+
+    # A genuinely transient rate limit is still retried — the point is the message, not the class.
+    transient = le.RateLimitError(
+        message="Rate limit reached for gpt-5.6-sol, please retry after 20s",
+        model="m",
+        llm_provider="openai",
+    )
+    assert _classify(transient) == "rate_limit"
+    assert "rate_limit" in _RETRYABLE_KINDS
+
+
 def test_a_truncated_stream_is_transport_not_a_bad_request():
     """Observed live on the Codex/ChatGPT OAuth channel: members at 234s, 240s and 620s each
     discarded after minutes of generation, because the upstream reports a stream that died

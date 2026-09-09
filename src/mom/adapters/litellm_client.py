@@ -541,6 +541,24 @@ _TRUNCATED_STREAM = re.compile(
 )
 
 
+# Exhaustion, wearing whatever class the provider felt like: Anthropic sends a rate_limit_error
+# for "Usage credits are required for this model", cli-proxy-api a 503 for "no auth available
+# (last upstream error: ... monthly usage limit)", xAI a 402 for "usage balance exhausted". All
+# three are retryable classes, so mom spent three attempts on each before giving up — on failures
+# that cannot succeed until someone pays or the billing cycle resets.
+_EXHAUSTED = re.compile(
+    r"usage limit|usage balance|credits are required|insufficient[_ ](?:quota|credit|balance)|"
+    r"quota (?:exceeded|exhausted)|balance exhausted|billing (?:cycle|hard limit)|"
+    r"no auth available|cooling down|payment required",
+    re.IGNORECASE,
+)
+
+
+def _exhausted(exc: Exception) -> bool:
+    """Whether a failure means the account is out of resource, not that the call went wrong."""
+    return bool(_EXHAUSTED.search(str(exc)))
+
+
 def _truncated_stream(exc: Exception) -> bool:
     """Whether a 400-shaped failure is really a stream that stopped early."""
     return bool(_TRUNCATED_STREAM.search(str(exc)))
@@ -554,6 +572,12 @@ def _classify(exc: Exception) -> ErrorKind:
     class-name substrings are the fallback for anything litellm doesn't wrap (a proxy/httpx
     failure, a provider SDK quirk litellm hasn't seen yet).
     """
+    # Checked before the class ladder: exhaustion arrives dressed as a rate limit, a 503 and a
+    # 402 depending on the provider, and only the message tells the three apart from the transient
+    # failures those classes normally mean.
+    if _exhausted(exc):
+        return "quota"
+
     try:
         import litellm.exceptions as le
 
