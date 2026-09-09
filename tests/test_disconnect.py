@@ -109,6 +109,86 @@ async def test_default_cancels_members_on_disconnect() -> None:
     assert recorder.records == []  # cancelled before completing -> nothing to record
 
 
+class _GatedStream:
+    """A synthesizer whose stream stalls mid-answer until `release` is set."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.drained = False
+
+    async def complete(self, spec: CallSpec) -> Completion:
+        return Completion(content="m", reasoning=None, finish_reason="stop", usage=Usage())
+
+    async def stream(self, spec: CallSpec) -> Any:
+        yield CompletionChunk(content="half ")
+        await self.release.wait()
+        yield CompletionChunk(content="an answer")
+        yield CompletionChunk(finish_reason="stop", usage=Usage(completion_tokens=3))
+        self.drained = True
+
+
+async def _synth_plan(cache_synthesis: bool):
+    catalog: ResolvedCatalog = resolve_catalog(
+        Config.model_validate(
+            yaml.safe_load(
+                f"""
+                version: 2
+                defaults: {{ fanout: {{ detach_on_disconnect: true }} }}
+                cache: {{ synthesis: {str(cache_synthesis).lower()} }}
+                llms:
+                  a: {{ model: openai/a }}
+                  s: {{ model: openai/s }}
+                prompts: {{ p: synth }}
+                ensembles:
+                  e:
+                    members: [{{ llm: a }}]
+                    synthesizer: {{ llm: s, prompt: p }}
+                """
+            )
+        )
+    )
+    ir = ChatRequestIR(model="e", messages=(MessageIR(role="user", content="hi"),))
+    return resolve_plan(catalog, ir)
+
+
+async def _disconnect_mid_synthesis(cache_synthesis: bool) -> _GatedStream:
+    """Read until the synthesizer's first token, then hang up like a client would."""
+    from mom.engine.pipeline import run_ensemble
+
+    plan = await _synth_plan(cache_synthesis)
+    client = _GatedStream()
+    gen = run_ensemble(plan, PipelineDeps(client=client, clock=ManualClock()))
+    async for event in gen:  # pull events until the first piece of the answer
+        if getattr(event, "content", None):
+            break
+    pull = asyncio.ensure_future(gen.__anext__())
+    await asyncio.sleep(0.05)
+    pull.cancel()  # the client is gone; the outstanding pull is cancelled
+    with contextlib.suppress(asyncio.CancelledError):
+        await pull
+    with contextlib.suppress(RuntimeError, asyncio.CancelledError):
+        await gen.aclose()
+    return client
+
+
+async def test_a_disconnected_synthesis_finishes_in_the_background() -> None:
+    """The expensive half of a run used to be binned on disconnect while the cheap half cached."""
+    client = await _disconnect_mid_synthesis(cache_synthesis=True)
+    assert not client.drained  # still stalled where the client left it
+    client.release.set()
+    await asyncio.sleep(0.05)
+    assert client.drained  # drained to the end in the background, so it lands in the cache
+
+
+async def test_a_disconnected_synthesis_is_dropped_when_it_cannot_be_cached() -> None:
+    """With `cache.synthesis` off there is nowhere for the work to land, so finishing it would
+    just burn tokens nobody can use."""
+    client = await _disconnect_mid_synthesis(cache_synthesis=False)
+    client.release.set()
+    await asyncio.sleep(0.05)
+    assert not client.drained
+
+
 async def _collect(stream, limit: int) -> list[bytes]:
     out: list[bytes] = []
     async for chunk in stream:

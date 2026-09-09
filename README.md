@@ -240,6 +240,7 @@ Weigh whichever response cites real sources most heavily.
 | `show_work: off\|inline\|native` | override the ensemble's configured `show_work` for this turn |
 | `synth: llm-name` | run synthesis on a different configured `llm` for this turn |
 | `dedupe: on\|off` | override [`server.dedupe`](docs/CONFIGURATION.md#server) for this turn: `on` attaches an identical concurrent turn to the run already in flight, `off` forces a fresh one |
+| `cache_synth: on\|off` | override [`cache.synthesis`](docs/CONFIGURATION.md#cache) for this turn: `on` keeps the synthesized answer for the next identical turn (and lets it finish in the background if you disconnect), `off` forces a fresh one |
 
 Identities are the `as:`/`llm` names shown in the think block and the progress dashboard;
 `include:` also takes any `llm` name from the catalog, which joins the panel under its own name

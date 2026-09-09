@@ -137,6 +137,7 @@ def _record_synth(
     finish_reason: str | None = None,
     attempts: int = 1,
     duration_ms: float | None = None,
+    cached: bool = False,
 ) -> None:
     if deps.recorder is None:
         return
@@ -149,6 +150,7 @@ def _record_synth(
             model=plan.synth.model,
             role="synthesis",
             status="ok",
+            cache_hit=cached,
             duration_ms=duration_ms,
             turn_type=turn_type,
             prompt_tokens=usage.prompt_tokens,
@@ -388,6 +390,78 @@ def _warn_once_if_free(model: str, usage: Usage, cost: float) -> None:
 # Members detached on client disconnect keep running here so they finish and cache; the strong
 # reference stops the event loop from GC-ing them, and the callback clears it when they're done.
 _DETACHED: set[asyncio.Task[ModelOutcome]] = set()
+# Same idea for a synthesis the client walked out on (see `_detach_synth`).
+_DETACHED_STREAMS: set[asyncio.Task[None]] = set()
+
+
+class _SynthesisPump:
+    """Reads the synthesizer's stream in its own task, so a disconnect can leave it running.
+
+    The consumer takes chunks from a queue instead of pulling the provider stream directly. That
+    indirection is the whole point: cancelling a consumer that is suspended *inside* the
+    provider's own ``__anext__`` unwinds that generator for good, which is how a client
+    disconnect used to throw away a synthesis already minutes in. A task owns it instead, so
+    teardown can choose — detach it and let the answer land in the cache, or cancel it — exactly
+    as it already chooses for fan-out members.
+    """
+
+    def __init__(self, stream: AsyncIterator[CompletionChunk], timeout_seconds: float) -> None:
+        self._queue: asyncio.Queue[CompletionChunk | BaseException | None] = asyncio.Queue()
+        self._task = asyncio.create_task(self._pump(stream, timeout_seconds))
+
+    async def _pump(self, stream: AsyncIterator[CompletionChunk], timeout_seconds: float) -> None:
+        try:
+            async for chunk in _stream_with_timeout(stream, timeout_seconds):
+                self._queue.put_nowait(chunk)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # handed to the consumer below, which re-raises it
+            self._queue.put_nowait(exc)
+        else:
+            self._queue.put_nowait(None)
+
+    async def chunks(self) -> AsyncIterator[CompletionChunk]:
+        """Yield what the pump has read; a failure it caught is re-raised here, in the consumer."""
+        while True:
+            item = await self._queue.get()
+            if item is None:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+
+    def detach(self, deps: PipelineDeps, plan: ExecutionPlan) -> None:
+        """Let it finish with nobody reading, so the caching client stores the answer."""
+        if self._task.done():
+            return
+        _DETACHED_STREAMS.add(self._task)
+
+        def _done(t: asyncio.Task[None]) -> None:
+            _DETACHED_STREAMS.discard(t)
+            if t.cancelled():
+                return
+            if t.exception() is not None:
+                logger.warning(
+                    "detached synthesis errored",
+                    request_id=deps.request_id,
+                    ensemble=plan.ensemble,
+                    error=str(t.exception()),
+                )
+                return
+            logger.info(
+                "detached synthesis completed",
+                request_id=deps.request_id,
+                ensemble=plan.ensemble,
+                llm=plan.synth.llm_name,
+                model=plan.synth.model,
+            )
+
+        self._task.add_done_callback(_done)
+
+    def cancel(self) -> None:
+        """Stop it. Used when there is no cache for the work to land in."""
+        if not self._task.done():
+            self._task.cancel()
 
 
 def _detach_member(
@@ -603,6 +677,7 @@ def _synth_spec(plan: ExecutionPlan, messages: list[dict[str, object]]) -> CallS
         retries=plan.synth.retries,
         retry_backoff_seconds=plan.synth.retry_backoff_seconds,
         timeout_seconds=plan.synth.timeout_seconds,
+        cache_stream=plan.cache_synthesis,
     )
 
 
@@ -621,6 +696,8 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
     # a fan-out-stage error is never mistakenly recorded as a synthesis failure.
     synthesizing = False
     synth_started: float | None = None
+    # The synthesis reader while it is in flight; None once it finished or was never opened.
+    synth_pump: _SynthesisPump | None = None
     # The DISPATCHED roster size, not len(outcomes): a member abandoned at the fan-out deadline
     # never yields a MemberCompleted, so counting outcomes would report "2 of 2 ok" as "1 of 1 ok"
     # — erasing the shortfall from the one line that exists to summarize it.
@@ -841,9 +918,15 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         started_tools: set[int] = set()
         synth_text: list[str] = []
         synthesizing = True  # a real LLM call from here on — gates failure recording below
+        synth_cached = False
         synth_started = deps.clock.now()  # also read by the failure handlers below
-        synth_stream = deps.client.stream(_synth_spec(plan, synth_messages))
-        async for chunk in _stream_with_timeout(synth_stream, plan.synth.timeout_seconds):
+        # Owned by a task, so teardown can detach it (see `_SynthesisPump`).
+        synth_pump = _SynthesisPump(
+            deps.client.stream(_synth_spec(plan, synth_messages)), plan.synth.timeout_seconds
+        )
+        async for chunk in synth_pump.chunks():
+            if chunk.cached:
+                synth_cached = True
             if chunk.attempts is not None:
                 synth_attempts = chunk.attempts
             if chunk.content is not None or chunk.reasoning is not None:
@@ -874,8 +957,11 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             if chunk.finish_reason:
                 finish = _coerce_finish(chunk.finish_reason)
 
+        synth_pump = None  # ran to the end; nothing to detach
         synth_duration_ms = (deps.clock.now() - synth_started) * 1000.0
-        if plan.synth.pricing is not None:
+        if synth_cached:
+            synth_cost = 0.0
+        elif plan.synth.pricing is not None:
             synth_cost = compute_cost(usage, plan.synth.pricing)
         else:
             synth_cost = synth_llm_cost or 0.0
@@ -889,6 +975,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             finish_reason=finish,
             attempts=synth_attempts,
             duration_ms=synth_duration_ms,
+            cached=synth_cached,
         )
         if deps.tracer is not None:
             deps.tracer.observe(
@@ -987,6 +1074,14 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         )
         yield PipelineFailed(code="internal_error", message="Internal server error")
     finally:
+        if synth_pump is not None:
+            # The client left mid-answer. Fan-out members already survive this; the synthesizer
+            # does too now, but only when there is a cache for the answer to land in — finishing
+            # it otherwise would burn tokens nobody can read.
+            if plan.detach_on_disconnect and plan.cache_synthesis:
+                synth_pump.detach(deps, plan)
+            else:
+                synth_pump.cancel()
         if not terminal_published:
             # Some path left without ever publishing completed/failed — most likely the
             # generator was torn down (a client disconnect propagates as GeneratorExit at

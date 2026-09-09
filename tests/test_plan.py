@@ -276,6 +276,39 @@ def test_invalid_dedupe_directive_keeps_the_configured_policy_and_says_so():
     assert "maybe" in plan.notices[0]
 
 
+def test_synthesis_caching_is_off_unless_configured():
+    assert resolve_plan(_catalog(), _ir()).cache_synthesis is False
+
+
+def test_cache_synth_directive_turns_it_on_for_one_turn():
+    """The setting is deliberately off by default — this is the client-visible answer — so the
+    per-turn switch is how you say "keep this one"."""
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>cache_synth: on<</SYSTEM>>"))
+    assert plan.cache_synthesis is True
+
+
+def test_cache_synth_directive_can_force_a_fresh_answer():
+    text = dedent(CONFIG) + "\ncache: { synthesis: true }\n"
+    catalog = resolve_catalog(Config.model_validate(yaml.safe_load(text)))
+    assert resolve_plan(catalog, _ir()).cache_synthesis is True
+    plan = resolve_plan(catalog, _ir_with_block("<<SYSTEM>>cache_synth: off<</SYSTEM>>"))
+    assert plan.cache_synthesis is False
+
+
+def test_invalid_cache_synth_directive_keeps_the_configured_policy_and_says_so():
+    plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>cache_synth: sure<</SYSTEM>>"))
+    assert plan.cache_synthesis is False
+    assert "cache_synth" in plan.notices[0]
+    assert "sure" in plan.notices[0]
+
+
+def test_synthesis_caching_needs_the_cache_at_all():
+    """`cache.enabled: false` turns off the store, so there is nowhere for an answer to land."""
+    text = dedent(CONFIG) + "\ncache: { enabled: false, synthesis: true }\n"
+    catalog = resolve_catalog(Config.model_validate(yaml.safe_load(text)))
+    assert resolve_plan(catalog, _ir()).cache_synthesis is False
+
+
 def test_synth_directive_retargets_the_synthesizer():
     plan = resolve_plan(_catalog(), _ir_with_block("<<SYSTEM>>synth: synth2<</SYSTEM>>"))
     assert plan.synth.llm_name == "synth2"

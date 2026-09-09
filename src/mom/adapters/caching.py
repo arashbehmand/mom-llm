@@ -1,8 +1,11 @@
-"""Caching middleware: a response cache in front of any ``LLMClient`` (non-streaming only).
+"""Caching middleware: a response cache in front of any ``LLMClient``.
 
-Fan-out member calls are cached; the synthesizer stream is not. Cache hits cost $0 and are marked
-so the pipeline records them as cache hits. Optional in-flight *coalescing* collapses identical
-concurrent calls onto a single upstream request (the first computes; the rest await its result).
+Fan-out member calls are cached by their non-streaming path. The synthesizer streams, so it is
+cached only when its spec asks (``cache_stream``, from ``cache.synthesis``): the chunks are
+buffered as they pass through and stored once the stream completes, and a hit is replayed as a
+stream. Cache hits cost $0 and are marked so the pipeline records them as cache hits. Optional
+in-flight *coalescing* collapses identical concurrent calls onto a single upstream request (the
+first computes; the rest await its result).
 """
 
 from __future__ import annotations
@@ -114,4 +117,70 @@ class CachingClient:
         return result
 
     def stream(self, spec: CallSpec) -> AsyncIterator[CompletionChunk]:
-        return self._inner.stream(spec)
+        if not spec.cache_stream:
+            return self._inner.stream(spec)
+        return self._cached_stream(spec)
+
+    async def _cached_stream(self, spec: CallSpec) -> AsyncIterator[CompletionChunk]:
+        """Stream through the cache: replay a hit, otherwise buffer and store on completion.
+
+        Storing happens when the stream RUNS OUT, not when the consumer stops reading — that is
+        deliberate. A client that disconnects mid-answer leaves this generator suspended, and the
+        pipeline can hand it to a background task to drain (see ``_detach_synth``); the work then
+        lands in the cache instead of being thrown away, which is the whole point of the setting.
+        """
+        key = cache_key(
+            llm_name=spec.llm_name,
+            model=spec.model,
+            messages=spec.messages,
+            params=spec.params,
+        )
+        now = self._clock.now()
+        hit = await self._cache.get(key, now=now)
+        if hit is not None:
+            cached = _deserialize(hit)
+            # One content chunk then a terminal chunk, which is the shape every encoder already
+            # folds. `cached` on both so the pipeline records a hit that cost nothing.
+            if cached.reasoning:
+                yield CompletionChunk(reasoning=cached.reasoning, cached=True)
+            yield CompletionChunk(content=cached.content, cached=True)
+            yield CompletionChunk(
+                finish_reason=cached.finish_reason, usage=cached.usage, cached=True
+            )
+            return
+
+        content: list[str] = []
+        reasoning: list[str] = []
+        usage = Usage()
+        finish = "stop"
+        saw_tool_call = False
+        async for chunk in self._inner.stream(spec):
+            if chunk.content:
+                content.append(chunk.content)
+            if chunk.reasoning:
+                reasoning.append(chunk.reasoning)
+            if chunk.usage is not None:
+                usage = chunk.usage
+            if chunk.finish_reason:
+                finish = chunk.finish_reason
+            if chunk.tool_call is not None:
+                saw_tool_call = True
+            yield chunk
+
+        text = "".join(content)
+        # Same rule the non-streaming path uses: never store a tool call, an empty answer, or a
+        # truncated one — a `length`-capped answer would otherwise be served forever.
+        if not saw_tool_call and text.strip() and finish != "length":
+            await self._cache.put(
+                key,
+                spec.llm_name,
+                _serialize(
+                    Completion(
+                        content=text,
+                        reasoning="".join(reasoning) or None,
+                        finish_reason=finish,
+                        usage=usage,
+                    )
+                ),
+                now=self._clock.now(),
+            )

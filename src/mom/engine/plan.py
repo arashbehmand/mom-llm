@@ -120,6 +120,10 @@ class ExecutionPlan:
     # think block by every surface (regardless of `show_work`, since an ignored directive is the
     # one thing a client must be told about) and logged for the operator.
     notices: tuple[str, ...] = ()
+    # Cache the synthesizer's streamed answer (`cache.synthesis`, or a `<<SYSTEM>> cache_synth:`
+    # directive). With `detach_on_disconnect` it also lets a synthesis the client walked out on
+    # finish in the background, so the next identical turn replays it instead of paying again.
+    cache_synthesis: bool = False
 
 
 def _effort_param(token: str, client_effort: str | None) -> dict[str, object]:
@@ -263,6 +267,27 @@ _DEDUPE_ON = frozenset({"on", "true", "yes", "1"})
 _DEDUPE_OFF = frozenset({"off", "false", "no", "0"})
 
 
+def _resolve_toggle(key: str, raw: str | None, configured: bool, notices: list[str]) -> bool:
+    """A configured on/off policy, unless a ``<<SYSTEM>>`` directive overrides it for this turn.
+
+    Accepts the usual on/off spellings rather than only one, because this is typed by hand into a
+    chat box — and anything else keeps the configured policy with a notice, rather than costing
+    the turn over a word the switch was never going to need.
+    """
+    if raw is None:
+        return configured
+    if raw in _DEDUPE_ON:
+        return True
+    if raw in _DEDUPE_OFF:
+        return False
+    notices.append(
+        f"<<SYSTEM>> {key}: {raw!r} is not "
+        f"{'/'.join(sorted(_DEDUPE_ON))} or {'/'.join(sorted(_DEDUPE_OFF))} — ignored, keeping "
+        f"{key}={'on' if configured else 'off'}."
+    )
+    return configured
+
+
 def _resolve_dedupe(
     configured: bool, directives: SystemDirectives | None, notices: list[str]
 ) -> bool:
@@ -273,22 +298,9 @@ def _resolve_dedupe(
     turning it off is how you force a genuinely fresh run when an identical turn is already in
     flight (re-rolling a panel you didn't like, or reproducing a result rather than joining it).
 
-    Accepts the usual on/off spellings rather than only one, because this is typed by hand into a
-    chat box — and anything else keeps the configured policy with a notice, rather than costing
-    the turn over a word this switch was never going to need.
     """
-    if directives is None or directives.dedupe is None:
-        return configured
-    if directives.dedupe in _DEDUPE_ON:
-        return True
-    if directives.dedupe in _DEDUPE_OFF:
-        return False
-    notices.append(
-        f"<<SYSTEM>> dedupe: {directives.dedupe!r} is not "
-        f"{'/'.join(sorted(_DEDUPE_ON))} or {'/'.join(sorted(_DEDUPE_OFF))} — ignored, keeping "
-        f"dedupe={'on' if configured else 'off'}."
-    )
-    return configured
+    raw = directives.dedupe if directives is not None else None
+    return _resolve_toggle("dedupe", raw, configured, notices)
 
 
 def _suggest(name: str, candidates: Iterable[str]) -> str:
@@ -524,6 +536,12 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
             )
 
     dedupe = _resolve_dedupe(catalog.config.server.dedupe.enabled, directives, notices)
+    cache_synthesis = catalog.config.cache.enabled and _resolve_toggle(
+        "cache_synth",
+        directives.cache_synth if directives is not None else None,
+        catalog.config.cache.synthesis,
+        notices,
+    )
 
     # vote/first make members the deciders: they get the real tool schemas so they can propose
     # structured calls. In arbitrate mode members stay advisory — a schema-free summary only (they
@@ -657,4 +675,5 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
         detach_on_disconnect=fanout.detach_on_disconnect,
         dedupe=dedupe,
         notices=tuple(notices),
+        cache_synthesis=cache_synthesis,
     )

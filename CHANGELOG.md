@@ -6,6 +6,22 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **`cache.synthesis` — keep the expensive half of a run.** The response cache covered fan-out
+  members only; the synthesizer streams, so it was never cached, and `detach_on_disconnect` covered
+  members only, so a synthesis the client walked out on was cancelled outright. On a long panel
+  that is exactly backwards: a retry replayed 11 members from cache in milliseconds and then paid
+  for the six-minute synthesis again. With `cache.synthesis: true` the streamed answer is buffered
+  on the way past and stored when it completes, replayed on the next identical turn, and — with
+  `detach_on_disconnect` — allowed to finish in the background when the client disconnects, so the
+  work lands in the cache rather than in the bin. Off by default (an unchanged turn asked twice
+  returns the identical text), and settable per request with `<<SYSTEM>> cache_synth: on|off`.
+
+  The synthesizer's stream now runs in its own task. Cancelling a consumer suspended inside the
+  provider's `__anext__` unwinds that generator for good, which is why holding a reference to it
+  was not enough to detach it — the same reason fan-out members have always been owned by tasks.
+
 ## [2.1.3] - 2026-09-09
 
 A second route for a model whose subscription ran out, and an end to retrying failures that

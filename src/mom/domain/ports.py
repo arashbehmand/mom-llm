@@ -32,6 +32,10 @@ class CallSpec:
     # why). None -> the adapter's own default.
     retry_backoff_seconds: float | None = None
     timeout_seconds: float | None = None
+    # Opt this call's STREAM into the response cache (`cache.synthesis`). Off for everything but
+    # the synthesizer: a member call is cached by its non-streaming path already, and a streamed
+    # answer has to be buffered to completion before it can be stored.
+    cache_stream: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +60,9 @@ class CompletionChunk:
     reasoning: str | None = None
     finish_reason: str | None = None
     usage: Usage | None = None
+    # Set on every chunk of a stream replayed from cache, so the pipeline can record the call as
+    # a cache hit that cost nothing rather than as a fresh upstream call.
+    cached: bool = False
     tool_call: dict[str, Any] | None = None
     cost_usd: float | None = None
     # How many upstream connection attempts it took to establish this stream (mom's own retry

@@ -124,6 +124,12 @@ class CacheConfig(_Model):
     ttl: Duration = timedelta(days=14)
     max_size: ByteSize = 1024**3  # 1 GiB
     coalesce: bool = True
+    # Cache the SYNTHESIZER's streamed answer too, and — with `defaults.fanout.detach_on_disconnect`
+    # — let it finish in the background when the client goes, so the next identical turn replays it
+    # instead of paying for it again. Off by default: this is the client-visible answer, so a
+    # regenerate of an unchanged turn returns the identical text, which is a deliberate choice
+    # rather than a default. A `<<SYSTEM>> cache_synth:` directive overrides it per request.
+    synthesis: bool = False
 
 
 class StorageConfig(_Model):

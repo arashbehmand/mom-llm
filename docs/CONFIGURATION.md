@@ -331,11 +331,26 @@ cache:
   ttl: 14d              # how long an entry is reused
   max_size: 1GB         # on-disk ceiling (base-1024 size string)
   coalesce: true        # collapse identical concurrent fan-out calls into one upstream call
+  synthesis: false      # also cache the synthesizer's streamed answer
 ```
 
 `coalesce` deduplicates *in-flight* identical calls (common when two ensembles share a member),
 so a burst of identical requests results in a single upstream call. A cache hit is billed at
 **$0**.
+
+**`synthesis`** extends the cache to the concluding model. It is off by default because that
+answer is the client-visible product: with it on, an unchanged turn asked twice returns the
+identical text, the same way an unchanged member call already does.
+
+It earns its keep on long runs. The panel is cached, so a retry replays the members in
+milliseconds and then waits out the synthesizer again — the expensive half, every time. With
+`synthesis: true` the answer is stored on the way past and replayed on the next identical turn,
+and — together with [`defaults.fanout.detach_on_disconnect`](#defaults) — a synthesis the client
+walked out on **finishes in the background** so the work lands in the cache instead of being
+thrown away. Members have always behaved that way; this is the same deal for the synthesizer.
+
+Nothing tool-shaped, empty or `length`-truncated is stored, on either path. Set it per request
+with a `<<SYSTEM>> cache_synth: on|off` directive, in both directions.
 
 ---
 

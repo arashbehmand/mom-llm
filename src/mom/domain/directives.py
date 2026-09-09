@@ -10,6 +10,7 @@ auto-indentation would mangle)::
     include: g31p
     show_work: off
     dedupe: on
+    cache_synth: on
     Answer as a terse bullet list, no preamble.
     <</SYSTEM>>
 
@@ -56,7 +57,9 @@ _CONCLUDING_RE = re.compile(
 )
 
 _KEY_LINE_RE = re.compile(r"^([A-Za-z_]+):\s*(.*)$")
-_FILTER_KEYS = frozenset({"exclude", "only", "include", "show_work", "synth", "dedupe"})
+_FILTER_KEYS = frozenset(
+    {"exclude", "only", "include", "show_work", "synth", "dedupe", "cache_synth"}
+)
 _KNOWN_KEYS = ", ".join(sorted({*_FILTER_KEYS, "instruction"}))
 
 
@@ -81,6 +84,9 @@ class SystemDirectives:
     # Raw, un-validated like ``show_work`` — ``engine/plan.py`` owns the vocabulary check so every
     # directive reports a bad value the same way.
     dedupe: str | None = None
+    # `cache.synthesis` for one turn, in both directions: keep this answer for the next identical
+    # turn, or force a fresh one when the config says to keep it.
+    cache_synth: str | None = None
     # What the block asked for and didn't get, in the reader's words — rendered in the think block
     # alongside whatever notices plan resolution adds. Never a reason to fail the turn.
     warnings: tuple[str, ...] = ()
@@ -140,6 +146,7 @@ def _parse_body(body: str, *, legacy: bool) -> SystemDirectives:
     show_work_lines = collected.get("show_work", [])
     synth_lines = collected.get("synth", [])
     dedupe_lines = collected.get("dedupe", [])
+    cache_lines = collected.get("cache_synth", [])
     return SystemDirectives(
         instruction=instruction,
         exclude=exclude,
@@ -148,6 +155,7 @@ def _parse_body(body: str, *, legacy: bool) -> SystemDirectives:
         show_work=(show_work_lines[-1].lower() or None) if show_work_lines else None,
         synth=(synth_lines[-1].lower() or None) if synth_lines else None,
         dedupe=(dedupe_lines[-1].lower() or None) if dedupe_lines else None,
+        cache_synth=(cache_lines[-1].lower() or None) if cache_lines else None,
         warnings=tuple(warnings),
     )
 

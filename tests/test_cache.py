@@ -44,6 +44,92 @@ async def test_size_eviction_keeps_most_recently_used(tmp_path: Path):
     await store.close()
 
 
+class _ScriptedStream:
+    """An LLMClient whose `stream` yields a fixed script and counts how often it was called."""
+
+    def __init__(self, chunks: list[CompletionChunk]) -> None:
+        self._chunks = chunks
+        self.calls = 0
+
+    async def complete(self, spec: CallSpec) -> Completion:  # pragma: no cover - unused here
+        raise AssertionError("not used")
+
+    async def stream(self, spec: CallSpec) -> AsyncIterator[CompletionChunk]:
+        self.calls += 1
+        for chunk in self._chunks:
+            yield chunk
+
+
+SYNTH_CHUNKS = [
+    CompletionChunk(reasoning="thinking"),
+    CompletionChunk(content="the "),
+    CompletionChunk(content="answer"),
+    CompletionChunk(finish_reason="stop", usage=Usage(prompt_tokens=9, completion_tokens=2)),
+]
+
+
+async def test_a_synthesis_stream_is_stored_then_replayed(tmp_path: Path):
+    """The expensive half of a run is the synthesizer, and it streams — so it is buffered on the
+    way past and replayed from cache on the next identical turn."""
+    store = await SqliteCacheStore.open(tmp_path / "c.db", ttl_seconds=100, max_bytes=10**6)
+    inner = _ScriptedStream(SYNTH_CHUNKS)
+    client = CachingClient(inner, store, ManualClock())
+    spec = CallSpec(
+        llm_name="s",
+        model="openai/s",
+        messages=[{"role": "user", "content": "hi"}],
+        cache_stream=True,
+    )
+
+    first = [c async for c in client.stream(spec)]
+    assert "".join(c.content or "" for c in first) == "the answer"
+    assert not any(c.cached for c in first)
+
+    second = [c async for c in client.stream(spec)]
+    assert inner.calls == 1  # the second turn never reached the provider
+    assert "".join(c.content or "" for c in second) == "the answer"
+    assert "".join(c.reasoning or "" for c in second) == "thinking"
+    assert all(c.cached for c in second)
+    assert second[-1].finish_reason == "stop"
+    assert second[-1].usage == Usage(prompt_tokens=9, completion_tokens=2)
+    await store.close()
+
+
+async def test_a_synthesis_stream_is_not_cached_unless_the_spec_asks(tmp_path: Path):
+    store = await SqliteCacheStore.open(tmp_path / "c.db", ttl_seconds=100, max_bytes=10**6)
+    inner = _ScriptedStream(SYNTH_CHUNKS)
+    client = CachingClient(inner, store, ManualClock())
+    spec = CallSpec(llm_name="s", model="openai/s", messages=[{"role": "user", "content": "hi"}])
+
+    for _ in range(2):
+        assert [c async for c in client.stream(spec)]
+    assert inner.calls == 2  # `cache.synthesis` is off: straight through, both times
+    await store.close()
+
+
+async def test_a_stream_abandoned_midway_stores_nothing_until_it_finishes(tmp_path: Path):
+    """Storing happens when the stream runs out, not when the reader stops. That is what lets the
+    pipeline hand a half-read synthesis to a background drain and still keep the answer."""
+    store = await SqliteCacheStore.open(tmp_path / "c.db", ttl_seconds=100, max_bytes=10**6)
+    inner = _ScriptedStream(SYNTH_CHUNKS)
+    client = CachingClient(inner, store, ManualClock())
+    spec = CallSpec(
+        llm_name="s",
+        model="openai/s",
+        messages=[{"role": "user", "content": "hi"}],
+        cache_stream=True,
+    )
+
+    stream = client.stream(spec)
+    await stream.__anext__()  # one chunk, then walk away
+    assert (await store.stats())["entries"] == 0
+
+    async for _ in stream:  # drain the rest, as _detach_synth does
+        pass
+    assert (await store.stats())["entries"] == 1
+    await store.close()
+
+
 async def test_caching_client_dedups(tmp_path: Path):
     store = await SqliteCacheStore.open(tmp_path / "c.db", ttl_seconds=100, max_bytes=10**6)
     inner = FakeLLM(replies={"a": "hello"})
