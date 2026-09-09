@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-09-09
+
+A second route for a model whose subscription ran out, and an end to retrying failures that
+cannot succeed.
+
 ### Added
 
 - **`fallback:` on an llm — a second route for the same model.** Names another llm to call when
