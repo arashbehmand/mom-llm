@@ -528,6 +528,24 @@ def _call_params(spec: CallSpec) -> dict[str, Any]:
     return params
 
 
+# A stream that dies mid-generation comes back shaped as a 400: litellm wraps whatever the
+# upstream said, and an OpenAI-compatible upstream reports the truncation as an
+# `invalid_request_error`. Nothing about the request was bad — the connection ended before the
+# terminal event — and the same request often succeeds on the next attempt. Observed live on the
+# Codex/ChatGPT OAuth channel (2026-09-07..09): three members, at 234s, 240s and 620s, each
+# discarded after minutes of generation because `bad_request` is not retryable.
+_TRUNCATED_STREAM = re.compile(
+    r"stream (?:disconnected|closed|ended) before|incomplete chunked read|"
+    r"response ended prematurely|peer closed connection",
+    re.IGNORECASE,
+)
+
+
+def _truncated_stream(exc: Exception) -> bool:
+    """Whether a 400-shaped failure is really a stream that stopped early."""
+    return bool(_TRUNCATED_STREAM.search(str(exc)))
+
+
 def _classify(exc: Exception) -> ErrorKind:
     """Best-effort mapping from a caught exception to a mom-owned, client-safe ``ErrorKind``.
 
@@ -554,7 +572,8 @@ def _classify(exc: Exception) -> ErrorKind:
         if isinstance(exc, le.InternalServerError | le.ServiceUnavailableError):
             return "server_error"
         if isinstance(exc, le.BadRequestError):
-            return "bad_request"
+            # `connection`, not `bad_request`: transport, and therefore worth another attempt.
+            return "connection" if _truncated_stream(exc) else "bad_request"
     except ImportError:
         pass
 
@@ -567,7 +586,7 @@ def _classify(exc: Exception) -> ErrorKind:
         if status == 429:
             return "rate_limit"
         if status in (400, 422):
-            return "bad_request"
+            return "connection" if _truncated_stream(exc) else "bad_request"
         if status >= 500:
             return "server_error"
 
@@ -585,7 +604,7 @@ def _classify(exc: Exception) -> ErrorKind:
     if "connection" in name:
         return "connection"
     if "badrequest" in name or "invalidrequest" in name:
-        return "bad_request"
+        return "connection" if _truncated_stream(exc) else "bad_request"
     if "internalserver" in name or "serviceunavailable" in name:
         return "server_error"
     return "unknown"

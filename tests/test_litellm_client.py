@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from mom.adapters.litellm_client import (
+    _RETRYABLE_KINDS,
     LiteLLMTokenEstimator,
     _call_params,
     _classify,
@@ -394,6 +395,33 @@ def test_classify_falls_back_to_status_code_when_not_a_litellm_exception():
     assert _classify(_RawHttpError(408)) == "timeout"
     assert _classify(_RawHttpError(400)) == "bad_request"
     assert _classify(_RawHttpError(503)) == "server_error"
+
+
+def test_a_truncated_stream_is_transport_not_a_bad_request():
+    """Observed live on the Codex/ChatGPT OAuth channel: members at 234s, 240s and 620s each
+    discarded after minutes of generation, because the upstream reports a stream that died
+    mid-flight as an `invalid_request_error` and `bad_request` is not retryable."""
+    import litellm.exceptions as le
+
+    truncated = le.BadRequestError(
+        message=(
+            'OpenAIException - {"error":{"message":"stream error: stream disconnected before '
+            'completion: stream closed before response.completed","type":"invalid_request_error"}}'
+        ),
+        model="m",
+        llm_provider="openai",
+    )
+    assert _classify(truncated) == "connection"
+    assert "connection" in _RETRYABLE_KINDS  # and therefore actually retried
+
+    class _RawHttpError(Exception):
+        def __init__(self, status_code: int, message: str) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+
+    assert _classify(_RawHttpError(400, "stream ended before the final chunk")) == "connection"
+    # A genuinely bad request still is one — the signature has to be about the stream.
+    assert _classify(_RawHttpError(400, "model does not support this parameter")) == "bad_request"
 
 
 class _ConnectionResetLikeError(Exception):

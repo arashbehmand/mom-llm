@@ -6,6 +6,16 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- **A stream that died mid-generation was thrown away instead of retried.** An OpenAI-compatible
+  upstream reports a truncated stream as an `invalid_request_error`, litellm wraps that as
+  `BadRequestError`, and `bad_request` is deliberately not retryable — so a member that had been
+  generating for minutes was discarded on a transport hiccup. Seen live on the Codex/ChatGPT OAuth
+  channel: three members lost at 234s, 240s and 620s. A 400-shaped failure whose message says the
+  stream ended early is now classified `connection`, which the existing retry loop already covers.
+  A genuinely bad request is still a bad request — the signature has to be about the stream.
+
 ## [2.1.2] - 2026-09-07
 
 ### Fixed
