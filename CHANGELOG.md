@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-09-09
+
 ### Added
 
 - **`cache.synthesis` — keep the expensive half of a run.** The response cache covered fan-out
