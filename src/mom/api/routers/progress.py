@@ -254,7 +254,9 @@ _PAGE = """<!doctype html>
     const ok = data.status === 'ok';
     const warn = !ok && WARN_STATUSES.has(data.status);
     const dotClass = ok ? 'ok' : (warn ? 'warn' : 'err');
-    const meta = (data.model || '') + (typeof data.duration_ms === 'number'
+    const fellBack = data.fallback_from
+      ? '  \\u00b7  fallback from ' + data.fallback_from : '';
+    const meta = (data.model || '') + fellBack + (typeof data.duration_ms === 'number'
       ? '  \\u00b7  ' + formatDuration(data.duration_ms) : '');
     slot.className = 'card';
     slot.innerHTML = cardHead(dotClass, data.member || '?', meta);

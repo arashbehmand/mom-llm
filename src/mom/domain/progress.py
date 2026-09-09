@@ -42,6 +42,7 @@ _OPTIONAL_FIELDS: tuple[str, ...] = (
     "duration_ms",
     "preview",
     "cost_usd",
+    "fallback_from",
 )
 
 
@@ -55,6 +56,8 @@ class ProgressEvent:
     model: str | None = None  # provider model id
     status: str | None = None  # member outcome status, or finish_reason on completion
     detail: str | None = None  # human-readable message (failures)
+    # The model whose route failed, when this member answered on its `fallback:` route instead.
+    fallback_from: str | None = None
     members_total: int | None = None  # members fanned out (fanout_started / member_completed)
     # (identity, model) for every fanned-out member, known upfront (fanout_started only) — lets an
     # observer label a still-pending member instead of showing a bare "waiting" placeholder.

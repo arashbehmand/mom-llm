@@ -133,6 +133,7 @@ def member_report(outcome: ModelOutcome, *, include_answers: bool) -> MemberRepo
         cost_usd=outcome.cost_usd,
         duration_ms=outcome.duration_ms,
         cached=outcome.cached,
+        fallback_from=outcome.fallback_from,
         finish_reason=outcome.finish_reason,
         error=outcome.error,
         answer=outcome.content if include_answers else None,

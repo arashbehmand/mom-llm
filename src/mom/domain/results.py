@@ -65,6 +65,10 @@ class ModelOutcome:
     error_kind: ErrorKind | None = None
     error_detail: str | None = None
     attempts: int = 1  # how many upstream attempts mom's own retry loop made for this member
+    # Set when this answer came from the llm's `fallback:` route: the model whose route failed.
+    # Client-visible on purpose — a panel that quietly switched routes is a panel you cannot
+    # reason about, so it is named in the think block, the dashboard, the logs and the MCP report.
+    fallback_from: str | None = None
 
     @property
     def ok(self) -> bool:

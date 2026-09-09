@@ -3,6 +3,7 @@ first member completion (Issue 2), and closes cleanly on every exit path."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 
 from mom.api.encoders.chat import ChatFrame, encode_sse
@@ -160,6 +161,17 @@ async def test_fanout_started_without_show_work_inline_does_nothing():
         show_work="off",
     )
     assert _content_deltas(payloads) == []
+
+
+async def test_the_think_block_names_a_seat_that_switched_route():
+    """The model name alone does not carry it: the reader would have to know which route the
+    panel normally uses."""
+    outcome = replace(_outcome("a"), fallback_from="anthropic/kimi/k3")
+    payloads = await _collect(
+        [FanoutStarted("a", "openai/a"), MemberCompleted(outcome)], show_work="inline"
+    )
+    line = next(d for d in _content_deltas(payloads) if d.startswith("Model:"))
+    assert line.startswith("Model: openai/a (fallback from anthropic/kimi/k3)")
 
 
 async def test_a_notice_opens_its_own_think_block_even_with_show_work_off():

@@ -471,10 +471,11 @@ async def _fan_out(
                 error_kind=outcome.error_kind,
                 backstop_model=member.fallback.model,
             )
-            return await _run_member(
+            rescued = await _run_member(
                 deps,
                 replace(member, spec=member.fallback, pricing=member.fallback_pricing),
             )
+            return replace(rescued, fallback_from=member.spec.model)
 
     tasks = [asyncio.create_task(run(m)) for m in plan.members]
     # task -> its PlannedMember, so an abandoned task can be named (identity/model) in its event.
@@ -705,6 +706,7 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
                             members_total=members_total,
                             completed=len(outcomes),
                             cost_usd=outcome.cost_usd,
+                            fallback_from=outcome.fallback_from,
                             preview=_preview(
                                 outcome.content if outcome.ok else outcome.error or ""
                             ),

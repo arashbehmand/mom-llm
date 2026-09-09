@@ -39,7 +39,8 @@ def _summary_part(text: str) -> dict[str, Any]:
 
 def _member_line(outcome: ModelOutcome) -> str:
     body = outcome.content if outcome.ok else (outcome.error or outcome.status)
-    return f"Model: {outcome.model}\nContent: {body}\n---\n"
+    switched = f" (fallback from {outcome.fallback_from})" if outcome.fallback_from else ""
+    return f"Model: {outcome.model}{switched}\nContent: {body}\n---\n"
 
 
 def _notice_lines(notices: tuple[str, ...]) -> str:

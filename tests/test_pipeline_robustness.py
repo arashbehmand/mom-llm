@@ -94,6 +94,8 @@ async def test_a_spent_subscription_falls_back_to_the_metered_route():
     assert outcomes[0].identity == "k3"
     assert outcomes[0].status == "ok"
     assert outcomes[0].model == "openrouter/moonshotai/kimi-k3"  # the backstop answered
+    # ... and says so, on the outcome every surface renders from.
+    assert outcomes[0].fallback_from == "anthropic/kimi/k3"
     # The dead route is still in the ledger — otherwise nobody can see the subscription is spent.
     assert [(m.model, m.status) for m in recorded] == [("anthropic/kimi/k3", "error")]
     assert [c.model for c in client.completions] == [

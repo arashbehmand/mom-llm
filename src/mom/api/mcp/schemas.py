@@ -109,6 +109,11 @@ class MemberReport(BaseModel):
     cost_usd: float = 0.0
     duration_ms: float = 0.0
     cached: bool = False
+    fallback_from: str | None = Field(
+        default=None,
+        description="Set when this seat answered on its llm's `fallback:` route; the model whose "
+        "route failed.",
+    )
     finish_reason: str | None = None
     error: str | None = None
     answer: str | None = Field(default=None, description="Only when include_member_answers.")

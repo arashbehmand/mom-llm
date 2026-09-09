@@ -487,8 +487,11 @@ Rules:
   backstop, so it does not fall back. A timeout does not either: the backstop is the same model
   and would be just as slow.
 - One hop. The backstop's own `fallback:` is ignored.
-- The seat keeps its identity, its effort cell and its tools. Only the route changes, so the think
-  block and the panel are unchanged; the metrics row carries the backstop's model.
+- The seat keeps its identity, its effort cell and its tools. Only the route changes, and the
+  switch is visible: `Model: <backstop> (fallback from <primary>)` in the think block and the
+  Responses reasoning item, `fallback from <primary>` on the progress dashboard card,
+  `fallback_from` on an MCP `consult` member report, and a `member falling back to its backstop
+  route` warning in the log. The metrics row carries the backstop's model.
 - The failed primary is recorded in the metrics ledger as its own row. An exhausted subscription
   stays visible instead of being hidden by the rescue.
 - mom retries the primary first, under the usual rules — except for `quota`, which is never

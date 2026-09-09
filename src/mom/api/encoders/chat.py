@@ -63,7 +63,12 @@ def resolve_stream_profile(configured: str, user_agent: str | None) -> str:
 
 def _member_line(outcome: ModelOutcome) -> str:
     body = outcome.content if outcome.ok else (outcome.error or outcome.status)
-    return f"Model: {html.escape(outcome.model)}\nContent: {html.escape(body)}\n---\n"
+    # A seat that answered on its backstop route says so on its own line. The model name alone
+    # does not carry it: the reader would have to know which route the panel normally uses.
+    switched = (
+        f" (fallback from {html.escape(outcome.fallback_from)})" if outcome.fallback_from else ""
+    )
+    return f"Model: {html.escape(outcome.model)}{switched}\nContent: {html.escape(body)}\n---\n"
 
 
 def _notice_lines(notices: tuple[str, ...]) -> str:

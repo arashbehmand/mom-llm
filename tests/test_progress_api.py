@@ -337,6 +337,20 @@ async def test_progress_url_prefers_configured_public_url():
     assert url == f"https://mom.example.com/v1/progress/{resp.headers['x-request-id']}"
 
 
+def test_a_progress_event_ships_the_route_switch():
+    """The dashboard cannot show what the bus does not carry, and a Redis-backed bus ships this
+    as one JSON line."""
+    event = ProgressEvent(
+        kind="member_completed",
+        ensemble="e",
+        member="k3",
+        model="openrouter/moonshotai/kimi-k3",
+        status="ok",
+        fallback_from="anthropic/kimi/k3",
+    )
+    assert json.loads(event.to_json())["fallback_from"] == "anthropic/kimi/k3"
+
+
 async def test_progress_url_carries_a_scoped_link_token_never_the_api_token():
     """The URL is printed in think blocks, response headers and saved transcripts. What
     authenticates it is derived from the API token, not the API token."""

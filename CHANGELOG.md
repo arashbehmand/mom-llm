@@ -15,6 +15,11 @@ All notable changes to this project are documented in this file. The format is b
   would reject identically, and never chains past one hop. The failed primary is recorded as its
   own metrics row, so a spent subscription stays visible instead of being hidden by the rescue.
 
+  A switched seat says so everywhere it is rendered: `Model: <backstop> (fallback from <primary>)`
+  in the think block and the Responses reasoning item, `fallback from <primary>` on the progress
+  dashboard card, `fallback_from` on an MCP `consult` member report, and a
+  `member falling back to its backstop route` warning in the log.
+
 ### Fixed
 
 - **A stream that died mid-generation was thrown away instead of retried.** An OpenAI-compatible
