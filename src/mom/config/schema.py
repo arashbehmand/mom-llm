@@ -211,6 +211,11 @@ class LlmConfig(_Model):
     max_input_tokens: int | None = Field(default=None, ge=1)
     timeout: Duration | None = None
     cache_ttl: Duration | None = None
+    # Another llm to call when this one's ROUTE fails — an exhausted subscription, a dead proxy,
+    # an auth error. Meant for a deployment that fronts a model with a subscription channel and
+    # keeps the metered vendor key as the backstop. One hop only: a fallback's own fallback is
+    # ignored, which is also why there is no cycle check to get wrong.
+    fallback: str | None = None
     # A compact way to author an effort/variant family without repeating `model:` per sibling —
     # see LlmVariantConfig. Expanded into ordinary sibling llm entries at resolve time.
     variants: dict[str, LlmVariantConfig] | None = None

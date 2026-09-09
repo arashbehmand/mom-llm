@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import traceback
 from typing import Any
@@ -248,6 +248,23 @@ def _cause_text(exc: BaseException, *, max_chars: int = 500) -> str:
     return combined[:max_chars]
 
 
+# Failures about the ROUTE, not the request: the account is spent, the credential is refused,
+# the proxy is down or unreachable. Re-sending the same messages to the same seat over a
+# different route is worth one attempt. A bad_request/context_length/content_filter is about
+# what was sent and would fail identically on the backstop, so it does not fall back.
+_FALLBACK_KINDS: frozenset[ErrorKind] = frozenset(
+    {"quota", "auth", "connection", "server_error", "rate_limit"}
+)
+
+
+def _should_fall_back(member: PlannedMember, outcome: ModelOutcome) -> bool:
+    return (
+        member.fallback is not None
+        and outcome.status == "error"
+        and outcome.error_kind in _FALLBACK_KINDS
+    )
+
+
 async def _run_member(deps: PipelineDeps, member: PlannedMember) -> ModelOutcome:
     start = deps.clock.now()
     common = {"identity": member.identity, "llm": member.identity, "model": member.spec.model}
@@ -437,7 +454,27 @@ async def _fan_out(
                 llm=member.identity,
                 model=member.spec.model,
             )
-            return await _run_member(deps, member)
+            outcome = await _run_member(deps, member)
+            if not _should_fall_back(member, outcome):
+                return outcome
+            # Record the dead route before leaving it. The seat's metric will carry the backstop's
+            # model, so without this row the exhausted subscription is invisible in the ledger —
+            # which is the number an operator needs to decide whether to keep paying for it.
+            _record_member(deps, plan, outcome, turn_type)
+            assert member.fallback is not None  # noqa: S101 — _should_fall_back checked it
+            logger.warning(
+                "member falling back to its backstop route",
+                request_id=deps.request_id,
+                ensemble=plan.ensemble,
+                llm=member.identity,
+                failed_model=member.spec.model,
+                error_kind=outcome.error_kind,
+                backstop_model=member.fallback.model,
+            )
+            return await _run_member(
+                deps,
+                replace(member, spec=member.fallback, pricing=member.fallback_pricing),
+            )
 
     tasks = [asyncio.create_task(run(m)) for m in plan.members]
     # task -> its PlannedMember, so an abandoned task can be named (identity/model) in its event.

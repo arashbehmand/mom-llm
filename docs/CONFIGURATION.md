@@ -464,6 +464,36 @@ Field by field:
 - **`timeout`** — per-model call timeout, overriding `defaults.call.timeout`.
 - **`cache_ttl`** — per-model override of the response-cache TTL.
 
+### `fallback` — a second route for the same model
+
+`fallback: <llm name>` names another llm to call when this one's **route** fails: an exhausted
+subscription, a refused credential, a proxy that is down. It exists for a deployment that fronts
+models with a subscription channel and keeps the metered vendor key as the backstop.
+
+```yaml
+llms:
+  k3-metered: { model: openrouter/moonshotai/kimi-k3 }        # the paid route
+  k3:                                                          # the subscription route
+    model: anthropic/kimi/k3
+    params: { api_base: http://cli-proxy-api:8317 }
+    api_key_env: CLIPROXY_API_KEY
+    fallback: k3-metered
+```
+
+Rules:
+
+- It fires on failures about the route: `quota`, `auth`, `connection`, `server_error`,
+  `rate_limit`. A `bad_request`, `context_length` or `content_filter` failure would repeat on the
+  backstop, so it does not fall back. A timeout does not either: the backstop is the same model
+  and would be just as slow.
+- One hop. The backstop's own `fallback:` is ignored.
+- The seat keeps its identity, its effort cell and its tools. Only the route changes, so the think
+  block and the panel are unchanged; the metrics row carries the backstop's model.
+- The failed primary is recorded in the metrics ledger as its own row. An exhausted subscription
+  stays visible instead of being hidden by the rescue.
+- mom retries the primary first, under the usual rules — except for `quota`, which is never
+  retried because it cannot succeed until someone pays.
+
 ### `extends` — inheritance
 
 `extends` is the single inheritance primitive. A child inherits every field it does not set

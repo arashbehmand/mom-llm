@@ -62,6 +62,11 @@ class PlannedMember:
     identity: str
     spec: CallSpec
     pricing: Pricing | None = None
+    # The same seat on a different route (the llm's `fallback:`), used when the primary route
+    # fails for a reason about the route rather than the request — see `_FALLBACK_KINDS` in the
+    # pipeline. Resolved here so the pipeline never touches the catalog.
+    fallback: CallSpec | None = None
+    fallback_pricing: Pricing | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -564,30 +569,49 @@ def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
                         f"max_input_tokens={llm.max_input_tokens} for llm {member.llm!r}"
                     )
                 continue
-            params = _member_params(llm, dict(member.effort_by_tier), tier, ir.effort)
-            params = _apply_search(params, llm, ir.web_search)
-            if members_propose and ir.tools:
-                params["tools"] = tools_to_wire(ir.tools)
-                params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)
-                if ir.parallel_tool_calls is not None:
-                    params["parallel_tool_calls"] = ir.parallel_tool_calls
-            _warn_search_tools_conflict(llm, params, member.identity)
+
+            def spec_for(
+                target: ResolvedLlm,
+                *,
+                identity: str = member.identity,
+                effort: Mapping[EffortLevel, str] = member.effort_by_tier,
+            ) -> CallSpec:
+                """One call spec for this seat against ``target`` — the member's own llm, or the
+                llm it falls back to. The seat's effort cell, the request's search params and the
+                tool schemas belong to the SEAT, so they apply to either route. (The seat is bound
+                as a default rather than captured, so the closure cannot outlive its loop pass.)
+                """
+                params = _member_params(target, dict(effort), tier, ir.effort)
+                params = _apply_search(params, target, ir.web_search)
+                if members_propose and ir.tools:
+                    params["tools"] = tools_to_wire(ir.tools)
+                    params["tool_choice"] = tool_choice_to_wire(ir.tool_choice)
+                    if ir.parallel_tool_calls is not None:
+                        params["parallel_tool_calls"] = ir.parallel_tool_calls
+                _warn_search_tools_conflict(target, params, identity)
+                return CallSpec(
+                    llm_name=identity,
+                    model=target.model,
+                    messages=member_messages,
+                    params=params,
+                    api=target.api,
+                    proxy_url_env=target.proxy_url_env,
+                    key_env_candidates=target.key_env_candidates,
+                    retries=retries,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                    timeout_seconds=_timeout_seconds(catalog, target),
+                )
+
+            # One hop: the backstop's own `fallback:` is not followed. A chain of dead routes is
+            # a config to fix, not a request to spend three upstream calls on.
+            backstop = catalog.llms.get(llm.fallback) if llm.fallback is not None else None
             members.append(
                 PlannedMember(
                     identity=member.identity,
-                    spec=CallSpec(
-                        llm_name=member.identity,
-                        model=llm.model,
-                        messages=member_messages,
-                        params=params,
-                        api=llm.api,
-                        proxy_url_env=llm.proxy_url_env,
-                        key_env_candidates=llm.key_env_candidates,
-                        retries=retries,
-                        retry_backoff_seconds=retry_backoff_seconds,
-                        timeout_seconds=_timeout_seconds(catalog, llm),
-                    ),
+                    spec=spec_for(llm),
                     pricing=_pricing_of(llm),
+                    fallback=None if backstop is None else spec_for(backstop),
+                    fallback_pricing=None if backstop is None else _pricing_of(backstop),
                 )
             )
 

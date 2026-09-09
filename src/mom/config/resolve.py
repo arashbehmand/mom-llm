@@ -78,6 +78,8 @@ class ResolvedLlm:
     max_input_tokens: int | None
     timeout: Any | None
     cache_ttl: Any | None
+    #: Another llm to call when this one's route fails. One hop; never followed twice.
+    fallback: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +158,7 @@ def _resolve_llm(
         max_input_tokens = cfg.max_input_tokens
         timeout = cfg.timeout
         cache_ttl = cfg.cache_ttl
+        fallback = cfg.fallback
     else:
         parent = _resolve_llm(cfg.extends, raw, memo, (*stack, name))
         provided = cfg.model_fields_set
@@ -172,6 +175,7 @@ def _resolve_llm(
         )
         timeout = cfg.timeout if "timeout" in provided else parent.timeout
         cache_ttl = cfg.cache_ttl if "cache_ttl" in provided else parent.cache_ttl
+        fallback = cfg.fallback if "fallback" in provided else parent.fallback
 
     if not model:
         raise ConfigError(f"llm {name!r} has no 'model' (directly or via 'extends')")
@@ -199,6 +203,7 @@ def _resolve_llm(
         max_input_tokens=max_input_tokens,
         timeout=timeout,
         cache_ttl=cache_ttl,
+        fallback=fallback,
     )
     memo[name] = resolved
     return resolved
@@ -414,6 +419,10 @@ def resolve_catalog(config: Config) -> ResolvedCatalog:
     llms = _expand_variants(config.llms)
     for llm_name in llms:
         _resolve_llm(llm_name, llms, memo, ())
+
+    for llm in memo.values():
+        if llm.fallback is not None and llm.fallback not in memo:
+            raise ConfigError(f"llm {llm.name!r} falls back to unknown llm {llm.fallback!r}")
 
     ensembles: dict[str, ResolvedEnsemble] = {}
     for ens_name, ens in config.ensembles.items():

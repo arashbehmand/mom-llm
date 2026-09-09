@@ -56,11 +56,16 @@ class FakeLLM:
     """A scripted :class:`~mom.domain.ports.LLMClient`.
 
     ``replies`` maps an llm identity to its non-streaming content (fan-out); ``fail`` is a set of
-    identities whose ``complete`` raises. ``synth_chunks`` are streamed by ``stream`` (the
-    synthesizer), preceded by any ``synth_reasoning`` deltas and followed by a terminal
-    usage/finish chunk. ``delays`` maps an identity to seconds to ``asyncio.sleep`` before
-    ``complete`` returns/raises — for scripting a straggler in fan-out-deadline/detach tests
-    without hand-rolling a one-off client.
+    identities whose ``complete`` raises. ``fail_models`` fails by *model* instead, mapping one to
+    the ``ErrorKind`` it raises — the only way to script one route of a seat failing while its
+    ``fallback:`` route answers, since both carry the same identity.
+
+    ``synth_chunks`` are streamed by ``stream`` (the synthesizer), preceded by any
+    ``synth_reasoning`` deltas and followed by a terminal usage/finish chunk.
+
+    ``delays`` maps an identity to seconds to ``asyncio.sleep`` before ``complete``
+    returns/raises — for scripting a straggler in fan-out-deadline/detach tests without
+    hand-rolling a one-off client.
     """
 
     def __init__(
@@ -74,6 +79,7 @@ class FakeLLM:
         tool_calls: tuple[dict[str, str], ...] = (),
         member_tool_calls: Mapping[str, tuple[Mapping[str, str], ...]] | None = None,
         delays: Mapping[str, float] | None = None,
+        fail_models: Mapping[str, str] | None = None,
     ) -> None:
         self._replies = dict(replies or {})
         self._synth_chunks = synth_chunks
@@ -84,6 +90,7 @@ class FakeLLM:
         # identity -> tool calls a fan-out member *proposes* (advisory; drives vote/first/envelope).
         self._member_tool_calls = dict(member_tool_calls or {})
         self._delays = dict(delays or {})
+        self._fail_models = dict(fail_models or {})
         self.completions: list[CallSpec] = []
         self.streams: list[CallSpec] = []
 
@@ -94,6 +101,9 @@ class FakeLLM:
             await asyncio.sleep(delay)
         if spec.llm_name in self._fail:
             raise UpstreamError(f"{spec.llm_name} failed")
+        kind = self._fail_models.get(spec.model)
+        if kind is not None:
+            raise UpstreamError(f"{spec.model} failed", kind=kind)  # type: ignore[arg-type]
         proposed = self._member_tool_calls.get(spec.llm_name, ())
         wire = tuple(
             {

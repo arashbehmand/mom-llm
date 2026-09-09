@@ -6,6 +6,15 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **`fallback:` on an llm — a second route for the same model.** Names another llm to call when
+  this one's route fails: an exhausted subscription, a refused credential, a proxy that is down.
+  The seat keeps its identity, effort cell and tools; only the route changes. It fires on
+  `quota`/`auth`/`connection`/`server_error`/`rate_limit`, not on a `bad_request` the backstop
+  would reject identically, and never chains past one hop. The failed primary is recorded as its
+  own metrics row, so a spent subscription stays visible instead of being hidden by the rescue.
+
 ### Fixed
 
 - **A stream that died mid-generation was thrown away instead of retried.** An OpenAI-compatible

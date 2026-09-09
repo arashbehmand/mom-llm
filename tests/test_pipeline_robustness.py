@@ -59,6 +59,64 @@ async def test_member_error_does_not_leak_raw_exception():
     assert "SECRET" not in (outcome.error or "")
 
 
+FALLBACK_CONFIG = """
+version: 2
+llms:
+  k3-metered: { model: openrouter/moonshotai/kimi-k3 }
+  k3: { model: anthropic/kimi/k3, fallback: k3-metered }
+  synth: { model: openai/synth }
+ensembles:
+  e:
+    members: [k3]
+    synthesizer: { llm: synth, prompt: p }
+prompts:
+  p: "synthesize"
+"""
+
+
+async def test_a_spent_subscription_falls_back_to_the_metered_route():
+    """The seat keeps its identity and its answer; only the route changes. This is what a box
+    fronting models with a subscription needs when that subscription runs out mid-day."""
+    catalog = _catalog(FALLBACK_CONFIG)
+    ir = ChatRequestIR(model="e", messages=(MessageIR(role="user", content="hi"),))
+    plan = resolve_plan(catalog, ir)
+    client = FakeLLM(fail_models={"anthropic/kimi/k3": "quota"})
+    recorded: list[CallMetric] = []
+
+    class _Recorder:
+        def record(self, metric: CallMetric) -> None:
+            recorded.append(metric)
+
+    deps = PipelineDeps(client=client, clock=ManualClock(), recorder=_Recorder())
+    outcomes = [e.outcome async for e in _fan_out(deps, plan, "ensemble") if hasattr(e, "outcome")]
+
+    assert len(outcomes) == 1
+    assert outcomes[0].identity == "k3"
+    assert outcomes[0].status == "ok"
+    assert outcomes[0].model == "openrouter/moonshotai/kimi-k3"  # the backstop answered
+    # The dead route is still in the ledger — otherwise nobody can see the subscription is spent.
+    assert [(m.model, m.status) for m in recorded] == [("anthropic/kimi/k3", "error")]
+    assert [c.model for c in client.completions] == [
+        "anthropic/kimi/k3",
+        "openrouter/moonshotai/kimi-k3",
+    ]
+
+
+async def test_a_bad_request_does_not_fall_back():
+    """The backstop would reject it identically: falling back would just double the failure."""
+    catalog = _catalog(FALLBACK_CONFIG)
+    plan = resolve_plan(
+        catalog, ChatRequestIR(model="e", messages=(MessageIR(role="user", content="hi"),))
+    )
+    client = FakeLLM(fail_models={"anthropic/kimi/k3": "bad_request"})
+    deps = PipelineDeps(client=client, clock=ManualClock())
+
+    outcomes = [e.outcome async for e in _fan_out(deps, plan, "ensemble") if hasattr(e, "outcome")]
+
+    assert outcomes[0].status == "error"
+    assert [c.model for c in client.completions] == ["anthropic/kimi/k3"]
+
+
 class _MomErrorClient:
     async def complete(self, spec: CallSpec) -> Completion:
         cause = ValueError("SECRET provider detail: key=sk-abc123")
