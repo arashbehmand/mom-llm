@@ -806,3 +806,22 @@ async def test_arguments_and_a_system_block_in_the_prompt_add_up():
         "consult", {"prompt": "<<SYSTEM>>\nexclude: a\n<</SYSTEM>>\nhi", "ensemble": "e"}
     )
     assert [m["identity"] for m in result.structured_content["members"]] == ["b"]
+
+
+async def test_every_tool_argument_documents_itself():
+    """An argument's own description is what an agent reads to pick between `synth` and
+    `synthesizer`, or to learn that `effort` needs an ensemble with tiers.
+
+    This is a regression test with a history: the SDK derives the schema through pydantic, so a
+    bare `Annotated[str, "text"]` annotation is metadata it ignores — the text was written, and
+    silently never reached a client. Only `Field(description=...)` lands in the schema.
+    """
+    async with Client(_server(_container()), raise_exceptions=True) as client:
+        listed = await client.list_tools()
+    undocumented = {
+        f"{tool.name}.{argument}"
+        for tool in listed.tools
+        for argument, schema in (tool.input_schema.get("properties") or {}).items()
+        if not schema.get("description")
+    }
+    assert undocumented == set()

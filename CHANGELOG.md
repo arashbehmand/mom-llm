@@ -6,6 +6,14 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP tool arguments carry their own descriptions again — they never had.** Each argument was
+  documented as `Annotated[str, "text"]`, which pydantic treats as metadata to ignore, so the
+  schema every client reads carried names and types only: an agent had nothing to tell `synth`
+  from `synthesizer`, or to learn that `effort` needs an ensemble with tiers. They are
+  `Field(description=...)` now, and a test fails on any argument without one.
+
 ## [2.3.0] - 2026-09-15
 
 ### Added

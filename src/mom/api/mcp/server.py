@@ -14,6 +14,7 @@ from typing import Annotated, Any
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from pydantic import Field
 
 from mom.adapters.litellm_client import capabilities_for, pricing_for
 from mom.api.mcp import projections
@@ -74,21 +75,38 @@ _SPENDS = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_wor
 # The `<<SYSTEM>>` directives, as typed arguments. A block in the prompt still works and merges
 # with these (`domain/directives.merged`); an agent reading a tool schema should not have to know
 # the header format exists.
-Only = Annotated[list[str] | None, "Run ONLY these members of the ensemble (identities)."]
-Exclude = Annotated[list[str] | None, "Drop these members from the panel for this run."]
+Only = Annotated[
+    list[str] | None, Field(description="Run ONLY these members of the ensemble (identities).")
+]
+Exclude = Annotated[
+    list[str] | None, Field(description="Drop these members from the panel for this run.")
+]
 Include = Annotated[
     list[str] | None,
-    "Add these to the panel: a member an effort tier dropped, or any catalog llm not on it.",
+    Field(
+        description="Add these to the panel: a member an effort tier dropped, or any "
+        "catalog llm not on the panel at all."
+    ),
 ]
-Synth = Annotated[str | None, "Synthesize with this llm instead of the ensemble's own."]
+Synth = Annotated[
+    str | None, Field(description="Synthesize with this llm instead of the ensemble's own.")
+]
 Instruction = Annotated[
     str | None,
-    "An instruction for the synthesizer alone, kept out of what the members are asked.",
+    Field(
+        description="An instruction for the synthesizer alone, kept out of what the "
+        "members are asked."
+    ),
 ]
-ShowWork = Annotated[str | None, "off | inline | native — whether the answer carries the panel's."]
-Dedupe = Annotated[bool | None, "Attach to an identical run already in flight, or refuse to."]
+ShowWork = Annotated[
+    str | None, Field(description="off | inline | native — whether the answer carries the panel's.")
+]
+Dedupe = Annotated[
+    bool | None, Field(description="Attach to an identical run already in flight, or refuse to.")
+]
 CacheSynth = Annotated[
-    bool | None, "Keep this synthesis for the next identical run, or force a fresh one."
+    bool | None,
+    Field(description="Keep this synthesis for the next identical run, or force a fresh one."),
 ]
 
 
@@ -161,17 +179,28 @@ def build_mcp_server(
         annotations=_SPENDS,
     )
     async def consult(
-        prompt: Annotated[str, "The question to put to the panel."],
+        prompt: Annotated[str, Field(description="The question to put to the panel.")],
         ctx: Context[Any, Any],
-        ensemble: Annotated[str | None, "A configured ensemble name."] = None,
-        panel: Annotated[list[str] | None, "Catalog llm names for a one-off panel."] = None,
-        synthesizer: Annotated[str | None, "Catalog llm that combines an inline panel."] = None,
-        effort: Annotated[str | None, "Effort tier, for ensembles that declare tiers."] = None,
-        system: Annotated[str | None, "Optional system message for the panel."] = None,
+        ensemble: Annotated[str | None, Field(description="A configured ensemble name.")] = None,
+        panel: Annotated[
+            list[str] | None, Field(description="Catalog llm names for a one-off panel.")
+        ] = None,
+        synthesizer: Annotated[
+            str | None, Field(description="Catalog llm that combines an inline panel.")
+        ] = None,
+        effort: Annotated[
+            str | None, Field(description="Effort tier, for ensembles that declare tiers.")
+        ] = None,
+        system: Annotated[
+            str | None, Field(description="Optional system message for the panel.")
+        ] = None,
         tools: Annotated[
             list[dict[str, Any]] | None,
-            "OpenAI-shaped tool definitions. The panel may answer with a tool call instead of "
-            "text; executing it is the caller's job (no continuation over MCP).",
+            Field(
+                description="OpenAI-shaped tool definitions. The panel may answer with a "
+                "tool call instead of text; executing it is the caller's job (no "
+                "continuation over MCP)."
+            ),
         ] = None,
         only: Only = None,
         exclude: Exclude = None,
@@ -183,8 +212,10 @@ def build_mcp_server(
         cache_synth: CacheSynth = None,
         include_member_answers: Annotated[
             bool,
-            "Put each member's own answer in this result. Off by default: they are recorded "
-            "whatever you pass, and `answers` fetches them when you want them.",
+            Field(
+                description="Put each member's own answer in this result. Off by default: "
+                "they are recorded whatever you pass, and `answers` fetches them later."
+            ),
         ] = False,
     ) -> Annotated[CallToolResult, ConsultResult]:
         container = current_container()
@@ -226,16 +257,24 @@ def build_mcp_server(
         annotations=_SPENDS,
     )
     async def submit(
-        prompt: Annotated[str, "The question to put to the panel."],
+        prompt: Annotated[str, Field(description="The question to put to the panel.")],
         ctx: Context[Any, Any],
-        ensemble: Annotated[str | None, "A configured ensemble name."] = None,
-        panel: Annotated[list[str] | None, "Catalog llm names for a one-off panel."] = None,
-        synthesizer: Annotated[str | None, "Catalog llm that combines an inline panel."] = None,
-        effort: Annotated[str | None, "Effort tier, for ensembles that declare tiers."] = None,
-        system: Annotated[str | None, "Optional system message for the panel."] = None,
+        ensemble: Annotated[str | None, Field(description="A configured ensemble name.")] = None,
+        panel: Annotated[
+            list[str] | None, Field(description="Catalog llm names for a one-off panel.")
+        ] = None,
+        synthesizer: Annotated[
+            str | None, Field(description="Catalog llm that combines an inline panel.")
+        ] = None,
+        effort: Annotated[
+            str | None, Field(description="Effort tier, for ensembles that declare tiers.")
+        ] = None,
+        system: Annotated[
+            str | None, Field(description="Optional system message for the panel.")
+        ] = None,
         tools: Annotated[
             list[dict[str, Any]] | None,
-            "OpenAI-shaped tool definitions, as for `consult`.",
+            Field(description="OpenAI-shaped tool definitions, as for `consult`."),
         ] = None,
         only: Only = None,
         exclude: Exclude = None,
@@ -272,8 +311,10 @@ def build_mcp_server(
         annotations=_READ_ONLY,
     )
     async def status(
-        job_id: Annotated[str | None, "The id `submit` returned."] = None,
-        limit: Annotated[int, "How many jobs to list when no job_id is given (1-200)."] = 20,
+        job_id: Annotated[str | None, Field(description="The id `submit` returned.")] = None,
+        limit: Annotated[
+            int, Field(description="How many jobs to list when no job_id is given (1-200).")
+        ] = 20,
     ) -> JobsReport:
         if job_id is not None:
             return JobsReport(jobs=[await jobs.status(job_id)])
@@ -291,8 +332,10 @@ def build_mcp_server(
         annotations=_READ_ONLY,
     )
     async def result(
-        job_id: Annotated[str, "The id `submit` returned."],
-        wait_seconds: Annotated[float, "How long to wait for the job to finish, if running."] = 0,
+        job_id: Annotated[str, Field(description="The id `submit` returned.")],
+        wait_seconds: Annotated[
+            float, Field(description="How long to wait for the job to finish, if running.")
+        ] = 0,
     ) -> Annotated[CallToolResult, JobResult]:
         return _job_tool_result(await jobs.result(job_id, wait_seconds=wait_seconds))
 
@@ -307,10 +350,15 @@ def build_mcp_server(
         annotations=_READ_ONLY,
     )
     async def answers(
-        job_id: Annotated[str, "A job id, or the `request_id` a consult returned."],
-        member: Annotated[str | None, "One member's identity, instead of all of them."] = None,
+        job_id: Annotated[
+            str, Field(description="A job id, or the `request_id` a consult returned.")
+        ],
+        member: Annotated[
+            str | None, Field(description="One member's identity, instead of all of them.")
+        ] = None,
         reasoning: Annotated[
-            bool, "Include each member's reasoning as well as its answer. Often long."
+            bool,
+            Field(description="Include each member's reasoning as well as its answer. Often long."),
         ] = False,
     ) -> AnswersReport:
         report = await jobs.answers(job_id, member=member)
@@ -328,7 +376,9 @@ def build_mcp_server(
             read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
         ),
     )
-    async def cancel(job_id: Annotated[str, "The id `submit` returned."]) -> JobStatus:
+    async def cancel(
+        job_id: Annotated[str, Field(description="The id `submit` returned.")],
+    ) -> JobStatus:
         return await jobs.cancel(job_id)
 
     @mcp.tool(
@@ -340,8 +390,8 @@ def build_mcp_server(
         annotations=_READ_ONLY,
     )
     async def runs(
-        request_id: Annotated[str | None, "Limit to one run."] = None,
-        limit: Annotated[int, "How many recent runs to list (1-200)."] = 20,
+        request_id: Annotated[str | None, Field(description="Limit to one run.")] = None,
+        limit: Annotated[int, Field(description="How many recent runs to list (1-200).")] = 20,
     ) -> RunsReport:
         # Clamped, not trusted: SQLite reads a negative LIMIT as "no limit", so an unbounded
         # value would group and serialize every run the ledger has ever recorded.
@@ -388,8 +438,10 @@ def build_mcp_server(
         annotations=_READ_ONLY,
     )
     async def usage(
-        days: Annotated[float, "Window in days; 0 or less means all time."] = 7.0,
-        ensemble: Annotated[str | None, "Limit to one ensemble."] = None,
+        days: Annotated[
+            float, Field(description="Window in days; 0 or less means all time.")
+        ] = 7.0,
+        ensemble: Annotated[str | None, Field(description="Limit to one ensemble.")] = None,
     ) -> UsageReport:
         current = current_container()
         reader = current.metrics_reader
