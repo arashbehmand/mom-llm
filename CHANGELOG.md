@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-09-16
+
 ### Fixed
 
 - **MCP tool arguments carry their own descriptions again — they never had.** Each argument was
