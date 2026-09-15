@@ -28,6 +28,7 @@ from mom.api.reqid import progress_url_from_base
 from mom.api.runs import resolve_events
 from mom.config.resolve import ResolvedCatalog, resolve_ensemble
 from mom.config.schema import EnsembleConfig
+from mom.domain.directives import SystemDirectives
 from mom.domain.errors import ConfigError, MomError
 from mom.domain.events import (
     FanoutStarted,
@@ -225,6 +226,50 @@ async def _report(ctx: ProgressSink, progress: int, total: int, message: str) ->
         await ctx.report_progress(progress, total, message)
 
 
+def _names(given: Sequence[str] | None) -> tuple[str, ...]:
+    """Member identities as the directive parser would have produced them."""
+    return tuple(name.strip().lower() for name in given or () if name.strip())
+
+
+def _switch(given: bool | None) -> str | None:
+    return None if given is None else ("on" if given else "off")
+
+
+@dataclass(frozen=True)
+class PanelRequest:
+    """The knobs a caller turns on one run, beyond which panel to ask.
+
+    The same things a `<<SYSTEM>>` block says in a chat box, as arguments — an agent calling a
+    tool should read them off a schema instead of remembering a header format. They are carried
+    here rather than as eight parameters threaded through `prepare_consult`.
+    """
+
+    only: Sequence[str] | None = None
+    exclude: Sequence[str] | None = None
+    include: Sequence[str] | None = None
+    synth: str | None = None
+    instruction: str | None = None
+    show_work: str | None = None
+    dedupe: bool | None = None
+    cache_synth: bool | None = None
+
+    def directives(self) -> SystemDirectives | None:
+        """As directives, or None when the caller turned nothing."""
+        built = SystemDirectives(
+            instruction=self.instruction,
+            exclude=_names(self.exclude),
+            only=_names(self.only),
+            include=_names(self.include),
+            show_work=self.show_work.lower() if self.show_work else None,
+            synth=self.synth.lower() if self.synth else None,
+            # The vocabulary check stays in `engine/plan.py`, where the text block's values are
+            # checked too, so a bad one is reported the same way whichever door it came in by.
+            dedupe=_switch(self.dedupe),
+            cache_synth=_switch(self.cache_synth),
+        )
+        return built if built != SystemDirectives() else None
+
+
 @dataclass(frozen=True)
 class PreparedConsult:
     """A consult whose arguments have been checked and whose plan is resolved — everything short
@@ -234,7 +279,6 @@ class PreparedConsult:
     name: str
     ir: ChatRequestIR
     plan: ExecutionPlan
-    include_member_answers: bool
 
 
 def prepare_consult(
@@ -247,7 +291,7 @@ def prepare_consult(
     system: str | None,
     effort: str | None,
     tools: Sequence[dict[str, Any]] | None,
-    include_member_answers: bool,
+    panel_request: PanelRequest | None = None,
 ) -> PreparedConsult:
     """Validate a consult's arguments and resolve its plan. Raises ``ToolError`` on a caller
     mistake; spends nothing."""
@@ -263,7 +307,7 @@ def prepare_consult(
 
     ir = build_ir(ensemble=name, prompt=prompt, system=system, effort=effort, tools=tools)
     try:
-        plan = resolve_plan(catalog, ir)
+        plan = resolve_plan(catalog, ir, (panel_request or PanelRequest()).directives())
     except MomError as exc:
         # A caller mistake — unknown ensemble, unknown llm, a panel the config rejects. It is
         # reported as a failed *call* (no result payload) rather than a run outcome, because the
@@ -287,9 +331,7 @@ def prepare_consult(
         # would silently receive the first one's answer. Named ensembles have a real identity
         # and keep the optimization.
         plan = replace(plan, dedupe=False)
-    return PreparedConsult(
-        name=name, ir=ir, plan=plan, include_member_answers=include_member_answers
-    )
+    return PreparedConsult(name=name, ir=ir, plan=plan)
 
 
 async def execute_consult(
@@ -302,9 +344,13 @@ async def execute_consult(
     observer: RunObserver | None = None,
 ) -> ConsultResult:
     """Run a prepared consult and return its outcome envelope (never raises for an upstream
-    failure). Pass an ``observer`` to watch the run from outside while it goes."""
+    failure). Pass an ``observer`` to watch the run from outside while it goes.
+
+    The envelope always carries each member's own answer. What a *caller* sees is decided one
+    layer up (``server.py``): the answers are recorded either way, so they can be fetched later
+    by whoever wants them, and no session is handed eight of them it never asked for.
+    """
     name, plan, ir = prepared.name, prepared.plan, prepared.ir
-    include_member_answers = prepared.include_member_answers
     events, leader_request_id = resolve_events(container, plan, ir, request_id)
     coalesced = leader_request_id != request_id
     # No token in the link: this one is returned as tool-result data, not as a response header to
@@ -331,7 +377,7 @@ async def execute_consult(
             request_id=leader_request_id,
             coalesced=coalesced,
             progress_url=progress_url,
-            members=observer.reports(include_answers=include_member_answers),
+            members=observer.reports(include_answers=True),
             usage=observer.usage,
             notices=list(plan.notices),
         )
@@ -345,6 +391,6 @@ async def execute_consult(
         request_id=leader_request_id,
         coalesced=coalesced,
         progress_url=progress_url,
-        members=observer.reports(include_answers=include_member_answers),
+        members=observer.reports(include_answers=True),
         notices=list(plan.notices),
     )

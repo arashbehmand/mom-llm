@@ -37,7 +37,14 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, ValidationError
 
 from mom.api.mcp.consult import PreparedConsult, RunObserver, execute_consult
-from mom.api.mcp.schemas import ConsultResult, JobState, JobStatus, RunMemberReport
+from mom.api.mcp.schemas import (
+    AnswersReport,
+    ConsultResult,
+    JobState,
+    JobStatus,
+    MemberReport,
+    RunMemberReport,
+)
 from mom.domain.ports import Clock
 from mom.runtime.container import Container
 from mom.runtime.logging import get_logger
@@ -155,6 +162,73 @@ class JobRegistry:
             self._run(container, job, prepared, base_url), name=f"mom job {job.job_id}"
         )
         return status.model_copy(deep=True)
+
+    async def record(
+        self, container: Container, result: ConsultResult, *, members_total: int, prompt: str
+    ) -> None:
+        """Keep a finished ``consult`` where ``answers`` can find it later.
+
+        A consult is gone the moment its tool call returns, so without this the only way to see
+        what a member said was to have asked for it in advance — and an agent only knows it wanted
+        the detail once it has read the synthesis. Best-effort: a consult that answered must not
+        fail because a temp file could not be written.
+        """
+        now = container.clock.now()
+        status = JobStatus(
+            job_id=result.request_id,
+            state="failed" if result.status == "failed" else "completed",
+            ensemble=result.ensemble,
+            prompt_preview=prompt[:_PREVIEW_CHARS],
+            started_at=now,
+            updated_at=now,
+            finished_at=now,
+            members_total=members_total,
+            members_done=len(result.members),
+            members=[
+                RunMemberReport(
+                    identity=member.identity,
+                    model=member.model,
+                    status=member.status,
+                    duration_ms=member.duration_ms,
+                    cost_usd=member.cost_usd,
+                )
+                for member in result.members
+            ],
+            cost_usd=result.total_cost_usd,
+            detail=result.error.message if result.error else None,
+        )
+        job = _Job(JobRecord(status=status, owner_pid=os.getpid(), result=result), container.clock)
+        try:
+            await asyncio.to_thread(self._prepare_directory)
+            await self.save(job)
+        except (OSError, ToolError):
+            logger.warning("consult not recorded", request_id=result.request_id, exc_info=True)
+
+    async def answers(self, job_id: str, *, member: str | None = None) -> AnswersReport:
+        """Each member's own answer, for a job or a recorded consult."""
+        note: str | None = None
+        live = self._jobs.get(job_id)
+        if live is not None and live.record.result is None:
+            # Still running: the members that have already answered, from the run's observer.
+            record, members = live.record, live.observer.reports(include_answers=True)
+            note = f"{len(members)} of {record.status.members_total} members have answered so far"
+        else:
+            record = await self.lookup(job_id)
+            members = list(record.result.members) if record.result is not None else []
+            if record.result is None:
+                note = f"this run {record.status.state}, so no member answered"
+        if member is not None:
+            wanted = member.strip().lower()
+            members = [report for report in members if report.identity.lower() == wanted]
+            if not members:
+                note = f"no member {member!r} in this run"
+        return AnswersReport(
+            job_id=job_id,
+            ensemble=record.status.ensemble,
+            state=record.status.state,
+            members=members,
+            note=note,
+        )
 
     async def status(self, job_id: str) -> JobStatus:
         return (await self.lookup(job_id)).status
@@ -416,6 +490,28 @@ def _alive(pid: int) -> bool:
     except PermissionError:
         return True  # exists, run by someone else
     return True
+
+
+def without_member_answers(result: ConsultResult) -> ConsultResult:
+    """The same result with each member's own text left out — what a caller gets unless it asks.
+
+    A panel of eight hands back eight answers plus the synthesis of them; a session that only
+    wanted the synthesis should not have to carry the rest. They stay in the record, one
+    ``answers`` call away.
+    """
+    return result.model_copy(
+        update={
+            "members": [
+                member.model_copy(update={"answer": None, "reasoning": None})
+                for member in result.members
+            ]
+        }
+    )
+
+
+def strip_reasoning(members: list[MemberReport]) -> list[MemberReport]:
+    """Answers without the thinking that produced them — the default, since reasoning is long."""
+    return [member.model_copy(update={"reasoning": None}) for member in members]
 
 
 def _write_atomic(path: Path, data: str) -> None:

@@ -402,8 +402,9 @@ config mutation: a leaked token can already chat, and must not be able to destro
 | --- | --- | --- |
 | `list_llms` | — | every catalog llm (bases and variants) with model string, capabilities, pricing and its `pricing_source` |
 | `list_ensembles` | — | the resolved ensembles: members, effort tiers, synthesizer, advertised capabilities |
-| `consult` | `prompt`, then either `ensemble` or `panel` + `synthesizer`; optional `effort`, `system`, `tools`, `include_member_answers` | one synthesized answer with a per-member cost breakdown (below) |
+| `consult` | `prompt`, then either `ensemble` or `panel` + `synthesizer`; optional `effort`, `system`, `tools`, the [panel arguments](#panel-arguments), `include_member_answers` | one synthesized answer with a per-member cost breakdown (below) |
 | `submit` | the same as `consult` | a job status with its `job_id`, at once; the consult runs in the background ([jobs](#background-jobs-submit-status-result-cancel)) |
+| `answers` | `job_id` (a job id, or a consult's `request_id`), optional `member`, `reasoning` | what each panel member said on that run ([below](#what-each-member-said)) |
 | `status` | optional `job_id`, `limit` (clamped to 1–200) | one job's status, or every job on the machine, newest first |
 | `result` | `job_id`, optional `wait_seconds` (0–300) | the job's status, plus the `consult` result once it has completed |
 | `cancel` | `job_id` | the job's status after stopping it |
@@ -438,6 +439,43 @@ shadow one of yours. They also never coalesce: request identity keys on the ense
 the messages, so two different rosters asking the same question would otherwise collide and the
 second would silently get the first one's answer.
 
+### Panel arguments
+
+Everything a `<<SYSTEM>>` block can say about *this* run (see the README), `consult` and
+`submit` also take as arguments — an agent calling a tool reads them off the schema instead of
+being expected to format a header inside its prompt:
+
+| Argument | Type | Does |
+| --- | --- | --- |
+| `only` | list | run only these members of the ensemble |
+| `exclude` | list | drop these members for this run — "emom without k3", without naming the other ten |
+| `include` | list | add these: a member an effort tier dropped, or any catalog llm not on the panel |
+| `synth` | string | synthesize with this llm instead of the ensemble's own |
+| `instruction` | string | an instruction for the synthesizer alone, kept out of what members are asked |
+| `show_work` | string | `off` \| `inline` \| `native` |
+| `dedupe` | bool | attach to an identical run already in flight, or refuse to |
+| `cache_synth` | bool | keep this synthesis for the next identical run, or force a fresh one |
+
+A block in the prompt still works and merges with these: rosters add up, and for a single-valued
+directive the argument wins. Anything MoM cannot honour — an unknown llm in `synth`, a `show_work`
+outside the vocabulary — comes back in `notices[]` and the run goes ahead, exactly as for the text
+block.
+
+`instruction` is not `system`: `system` is a system message the *whole panel* sees, while
+`instruction` reaches the synthesizer only.
+
+### What each member said
+
+`answers` returns the members' own text for one run — a job, or a `consult` this gateway ran, for
+as long as the run's record is kept (a day). Ask it when the synthesis is not enough: to see who
+disagreed, or to read the members that did answer while another one hangs. `member` narrows it to
+one; `reasoning: true` adds each member's thinking, which is usually much longer than its answer.
+
+Neither `consult` nor `result` carries those answers by default — a session that wanted one
+synthesized answer should not be handed the whole panel's output. They are recorded either way, so
+nothing is lost by not having asked in advance. `consult`'s `include_member_answers: true` still
+inlines them for a caller that wants one round trip.
+
 ### Background jobs (`submit`, `status`, `result`, `cancel`)
 
 `consult` holds the tool call open for the whole run, and a panel with a slow synthesizer runs for
@@ -449,8 +487,8 @@ the consult in the background and returns a status with its `job_id` at once. Th
   (`null` while it is still running), `members_done` of `members_total`, the `synthesizer` once
   synthesis has begun, and `cost_usd` spent so far. No `job_id` lists jobs newest first, each with
   a `prompt_preview`, for an agent that has lost track of its id.
-- **`result`** returns `{job, result}`: `result` is exactly the `consult` envelope once the job has
-  completed, and `null` before that. `wait_seconds` (capped at 300) waits for the job to finish
+- **`result`** returns `{job, result}`: `result` is the `consult` envelope once the job has
+  completed (without the members' own answers — `answers` has those), and `null` before that. `wait_seconds` (capped at 300) waits for the job to finish
   first; keep it below your own client's tool-call timeout.
 - **`cancel`** stops the job and the member calls still in flight, so it spends nothing more. A
   finished job is left as it is.
@@ -497,9 +535,10 @@ Every result also carries `ensemble`, `request_id`, `coalesced`, `progress_url`,
 `usage`, `reasoning` (the synthesizer's, when it produced any), and `members[]` with each member's
 `identity`, `status`, `cost_usd`, `duration_ms`, `cached` and client-safe `error`. A member the
 fan-out deadline passed by appears with status `abandoned` rather than vanishing from the list.
-`include_member_answers` adds each member's own text and reasoning; the synthesized answer and its
-reasoning come back either way. `notices[]` carries anything a `<<SYSTEM>>` block in the prompt
-asked for and didn't get — an unknown member name, a value outside a directive's vocabulary — that
+Each member's own text and reasoning are **not** in `members[]` unless you pass
+`include_member_answers: true`; [`answers`](#what-each-member-said) fetches them afterwards
+instead. The synthesized answer and its reasoning come back either way. `notices[]` carries
+anything a `<<SYSTEM>>` block or a [panel argument](#panel-arguments) asked for and didn't get — an unknown member name, a value outside a directive's vocabulary — that
 the run went ahead without.
 
 On a `failed` result the cost and token figures are a floor: they cover the members observed

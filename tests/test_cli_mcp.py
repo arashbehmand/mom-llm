@@ -80,6 +80,7 @@ def test_serves_the_tools_and_cleans_up(tmp_path: Path, monkeypatch: pytest.Monk
         "submit",
         "status",
         "result",
+        "answers",
         "cancel",
         "runs",
         "usage",

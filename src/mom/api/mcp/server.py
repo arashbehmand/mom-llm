@@ -17,9 +17,16 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from mom.adapters.litellm_client import capabilities_for, pricing_for
 from mom.api.mcp import projections
-from mom.api.mcp.consult import execute_consult, prepare_consult
-from mom.api.mcp.jobs import MAX_WAIT_SECONDS, JobRecord, JobRegistry
+from mom.api.mcp.consult import PanelRequest, execute_consult, prepare_consult
+from mom.api.mcp.jobs import (
+    MAX_WAIT_SECONDS,
+    JobRecord,
+    JobRegistry,
+    strip_reasoning,
+    without_member_answers,
+)
 from mom.api.mcp.schemas import (
+    AnswersReport,
     CacheStats,
     ConsultResult,
     EnsembleInfo,
@@ -63,6 +70,26 @@ _READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 _MAX_RUNS = 200
 
 _SPENDS = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True)
+
+# The `<<SYSTEM>>` directives, as typed arguments. A block in the prompt still works and merges
+# with these (`domain/directives.merged`); an agent reading a tool schema should not have to know
+# the header format exists.
+Only = Annotated[list[str] | None, "Run ONLY these members of the ensemble (identities)."]
+Exclude = Annotated[list[str] | None, "Drop these members from the panel for this run."]
+Include = Annotated[
+    list[str] | None,
+    "Add these to the panel: a member an effort tier dropped, or any catalog llm not on it.",
+]
+Synth = Annotated[str | None, "Synthesize with this llm instead of the ensemble's own."]
+Instruction = Annotated[
+    str | None,
+    "An instruction for the synthesizer alone, kept out of what the members are asked.",
+]
+ShowWork = Annotated[str | None, "off | inline | native — whether the answer carries the panel's."]
+Dedupe = Annotated[bool | None, "Attach to an identical run already in flight, or refuse to."]
+CacheSynth = Annotated[
+    bool | None, "Keep this synthesis for the next identical run, or force a fresh one."
+]
 
 
 def build_mcp_server(
@@ -146,10 +173,18 @@ def build_mcp_server(
             "OpenAI-shaped tool definitions. The panel may answer with a tool call instead of "
             "text; executing it is the caller's job (no continuation over MCP).",
         ] = None,
+        only: Only = None,
+        exclude: Exclude = None,
+        include: Include = None,
+        synth: Synth = None,
+        instruction: Instruction = None,
+        show_work: ShowWork = None,
+        dedupe: Dedupe = None,
+        cache_synth: CacheSynth = None,
         include_member_answers: Annotated[
             bool,
-            "Include each member's own answer and reasoning, not just its status and cost. The "
-            "synthesized answer and its reasoning come back either way.",
+            "Put each member's own answer in this result. Off by default: they are recorded "
+            "whatever you pass, and `answers` fetches them when you want them.",
         ] = False,
     ) -> Annotated[CallToolResult, ConsultResult]:
         container = current_container()
@@ -162,7 +197,9 @@ def build_mcp_server(
             system=system,
             effort=effort,
             tools=tools,
-            include_member_answers=include_member_answers,
+            panel_request=PanelRequest(
+                only, exclude, include, synth, instruction, show_work, dedupe, cache_synth
+            ),
         )
         result = await execute_consult(
             container,
@@ -171,7 +208,12 @@ def build_mcp_server(
             request_id=container.ids.new_id("req"),
             base_url=_base_url(ctx),
         )
-        return _consult_tool_result(result)
+        await jobs.record(
+            container, result, members_total=len(prepared.plan.members), prompt=prompt
+        )
+        return _consult_tool_result(
+            result if include_member_answers else without_member_answers(result)
+        )
 
     @mcp.tool(
         title="Submit a consult",
@@ -195,9 +237,14 @@ def build_mcp_server(
             list[dict[str, Any]] | None,
             "OpenAI-shaped tool definitions, as for `consult`.",
         ] = None,
-        include_member_answers: Annotated[
-            bool, "Include each member's own answer in the eventual result."
-        ] = False,
+        only: Only = None,
+        exclude: Exclude = None,
+        include: Include = None,
+        synth: Synth = None,
+        instruction: Instruction = None,
+        show_work: ShowWork = None,
+        dedupe: Dedupe = None,
+        cache_synth: CacheSynth = None,
     ) -> JobStatus:
         container = current_container()
         prepared = prepare_consult(
@@ -209,7 +256,9 @@ def build_mcp_server(
             system=system,
             effort=effort,
             tools=tools,
-            include_member_answers=include_member_answers,
+            panel_request=PanelRequest(
+                only, exclude, include, synth, instruction, show_work, dedupe, cache_synth
+            ),
         )
         return await jobs.submit(container, prepared, prompt=prompt, base_url=_base_url(ctx))
 
@@ -234,7 +283,8 @@ def build_mcp_server(
         title="Job result",
         description=(
             "A submitted consult's answer: the same envelope `consult` returns, once the job has "
-            "completed. While it is still running you get its status instead. `wait_seconds` "
+            "completed, without the members' own answers (`answers` has those). While it is "
+            "still running you get its status instead. `wait_seconds` "
             f"(up to {MAX_WAIT_SECONDS:g}) waits for it to finish first — keep that below your "
             "own tool-call timeout."
         ),
@@ -245,6 +295,28 @@ def build_mcp_server(
         wait_seconds: Annotated[float, "How long to wait for the job to finish, if running."] = 0,
     ) -> Annotated[CallToolResult, JobResult]:
         return _job_tool_result(await jobs.result(job_id, wait_seconds=wait_seconds))
+
+    @mcp.tool(
+        title="What each member said",
+        description=(
+            "Each panel member's own answer for one run — a job, or a `consult` this gateway ran "
+            "(every run is kept for a day). Use it when the synthesis is not enough: to see who "
+            "disagreed, or what the members that did answer said while one of them hangs. Name a "
+            "`member` for just that one."
+        ),
+        annotations=_READ_ONLY,
+    )
+    async def answers(
+        job_id: Annotated[str, "A job id, or the `request_id` a consult returned."],
+        member: Annotated[str | None, "One member's identity, instead of all of them."] = None,
+        reasoning: Annotated[
+            bool, "Include each member's reasoning as well as its answer. Often long."
+        ] = False,
+    ) -> AnswersReport:
+        report = await jobs.answers(job_id, member=member)
+        if reasoning:
+            return report
+        return report.model_copy(update={"members": strip_reasoning(report.members)})
 
     @mcp.tool(
         title="Cancel a job",
@@ -399,8 +471,13 @@ def _consult_tool_result(result: ConsultResult) -> CallToolResult:
 
 
 def _job_tool_result(record: JobRecord) -> CallToolResult:
-    """A job's status plus, once there is one, its result — worded for a text-only client too."""
-    job, result = record.status, record.result
+    """A job's status plus, once there is one, its result — worded for a text-only client too.
+
+    Without the members' own answers: a session polling for the synthesis should not be handed
+    the whole panel's output because it happened to ask a second time. `answers` has them.
+    """
+    job = record.status
+    result = without_member_answers(record.result) if record.result is not None else None
     if job.state == "completed" and result is not None:
         text, is_error = _text_summary(result), result.status == "failed"
     elif job.state in ("running", "synthesizing"):

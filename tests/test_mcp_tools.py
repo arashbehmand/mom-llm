@@ -75,6 +75,7 @@ async def test_lists_the_tools_with_output_schemas():
         "submit",
         "status",
         "result",
+        "answers",
         "cancel",
         "runs",
         "usage",
@@ -91,6 +92,7 @@ async def test_lists_the_tools_with_output_schemas():
         "submit": False,
         "status": True,
         "result": True,
+        "answers": True,
         "cancel": False,
         "runs": True,
         "usage": True,
@@ -752,3 +754,55 @@ async def test_cache_stats_reads_the_live_store(tmp_path: Path):
 async def test_cache_stats_when_caching_is_disabled():
     report = (await _server(_container()).call_tool("cache_stats", {})).structured_content
     assert report == {"enabled": False, "entries": 0, "bytes": 0, "hits": 0}
+
+
+async def test_panel_arguments_do_what_a_system_block_does(monkeypatch: pytest.MonkeyPatch):
+    """The directives as typed arguments: an agent reads them off the tool schema instead of
+    remembering a header format."""
+    container = _container()
+    result = await _server(container).call_tool(
+        "consult",
+        {
+            "prompt": "hi",
+            "ensemble": "e",
+            "exclude": ["B"],  # identities are matched lowercased, as in the text block
+            "synth": "b",
+            "instruction": "be terse",
+        },
+    )
+    assert [m["identity"] for m in result.structured_content["members"]] == ["a"]
+    assert result.structured_content["notices"] == []
+    synth_call = container.client.streams[-1]  # type: ignore[attr-defined]
+    assert synth_call.llm_name == "b"  # the ensemble's own synthesizer is `a`
+    assert "be terse" in json.dumps(synth_call.messages)
+
+
+async def test_a_panel_argument_mom_cannot_honour_comes_back_as_a_notice():
+    container = _container()
+    result = await _server(container).call_tool(
+        "consult", {"prompt": "hi", "ensemble": "e", "synth": "nosuchllm"}
+    )
+    assert result.structured_content["status"] == "ok"
+    assert any("nosuchllm" in notice for notice in result.structured_content["notices"])
+
+
+async def test_arguments_and_a_system_block_in_the_prompt_add_up():
+    """Both doors lead to the same directives, so a caller may use either — or both."""
+    container = _container()
+    # One member excluded by the block, the other by an argument: the panel is empty, which the
+    # planner refuses — proof that both were applied to the same run.
+    with pytest.raises(ToolError, match="leave 0 member"):
+        await _server(container).call_tool(
+            "consult",
+            {
+                "prompt": "<<SYSTEM>>\nexclude: a\n<</SYSTEM>>\nhi",
+                "ensemble": "e",
+                "exclude": ["b"],
+            },
+        )
+
+    # ...and one alone leaves the other running.
+    result = await _server(container).call_tool(
+        "consult", {"prompt": "<<SYSTEM>>\nexclude: a\n<</SYSTEM>>\nhi", "ensemble": "e"}
+    )
+    assert [m["identity"] for m in result.structured_content["members"]] == ["b"]

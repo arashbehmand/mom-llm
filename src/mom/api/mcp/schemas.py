@@ -277,6 +277,18 @@ class JobResult(BaseModel):
     )
 
 
+class AnswersReport(BaseModel):
+    """What each member of one run actually said, fetched separately from the run's own answer."""
+
+    job_id: str
+    ensemble: str
+    state: JobState
+    members: list[MemberReport] = Field(default_factory=list)
+    note: str | None = Field(
+        default=None, description="Set when there is nothing, or not everything, to show yet."
+    )
+
+
 class UsageGroup(BaseModel):
     key: str
     calls: int = 0

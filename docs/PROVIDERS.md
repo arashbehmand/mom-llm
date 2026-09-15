@@ -185,7 +185,8 @@ Clients that read a JSON config (Cursor, Cline, Continue, Codex) take the same t
 
 The agent then has `consult` (a configured ensemble, or a panel it assembles from `list_llms` for
 that one question), `submit` / `status` / `result` / `cancel` to run the same consult as a
-background job, plus read-only `list_llms`, `list_ensembles`, `runs`, `usage`, and `cache_stats`. The stdio form shares the gateway's databases, so a consult run there shows up in
+background job, `answers` for what each member of a run said, plus read-only `list_llms`,
+`list_ensembles`, `runs`, `usage`, and `cache_stats`. The stdio form shares the gateway's databases, so a consult run there shows up in
 `mom metrics usage` and warms the same cache. Full tool and result reference:
 [API.md](API.md#mcp-mcp-and-mom-mcp).
 

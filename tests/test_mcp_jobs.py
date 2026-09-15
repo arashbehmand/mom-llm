@@ -294,3 +294,60 @@ async def test_a_job_directory_that_is_a_link_is_neither_read_nor_written(tmp_pa
     assert (await server.call_tool("status", {})).structured_content["jobs"] == []
     with pytest.raises(ToolError, match="not a directory owned by this user"):
         await server.call_tool("submit", {"prompt": "hi", "ensemble": "e"})
+
+
+async def test_a_consult_keeps_its_members_answers_out_of_the_result(jobs_dir: Path):
+    """A session that wanted the synthesis should not be handed the whole panel's output; the
+    answers are recorded all the same, for whoever asks."""
+    container = _container()
+    server = build_mcp_server(lambda: container, jobs=JobRegistry(jobs_dir))
+    consulted = await server.call_tool("consult", {"prompt": "hi", "ensemble": "e"})
+    members = consulted.structured_content["members"]
+    assert {m["answer"] for m in members} == {None}
+    assert consulted.structured_content["answer"] == "synthesized answer"
+
+    fetched = await server.call_tool(
+        "answers", {"job_id": consulted.structured_content["request_id"]}
+    )
+    said = {m["identity"]: m["answer"] for m in fetched.structured_content["members"]}
+    assert said == {"a": "reply from a", "b": "reply from b"}
+
+
+async def test_answers_can_be_narrowed_to_one_member_and_omits_reasoning(jobs_dir: Path):
+    container = _container(client=FakeLLM(replies={"a": "mine"}))
+    server = build_mcp_server(lambda: container, jobs=JobRegistry(jobs_dir))
+    job_id = await _submit(server)
+    await server.call_tool("result", {"job_id": job_id, "wait_seconds": 5})
+
+    one = await server.call_tool("answers", {"job_id": job_id, "member": "A"})
+    body = one.structured_content
+    assert [m["identity"] for m in body["members"]] == ["a"]
+    assert body["members"][0]["answer"] == "mine"
+    assert body["members"][0]["reasoning"] is None
+
+    missing = await server.call_tool("answers", {"job_id": job_id, "member": "nobody"})
+    assert missing.structured_content["members"] == []
+    assert "no member" in missing.structured_content["note"]
+
+
+async def test_answers_of_the_members_that_did_answer_while_one_still_hangs(jobs_dir: Path):
+    """The case this exists for: one member hangs and you want to read the rest now."""
+    container = _container(client=FakeLLM(delays={"b": 30.0}))
+    server = build_mcp_server(lambda: container, jobs=JobRegistry(jobs_dir))
+    job_id = await _submit(server)
+    await _until(server, job_id, lambda s: s["members_done"] == 1)
+
+    partial = await server.call_tool("answers", {"job_id": job_id})
+    body = partial.structured_content
+    assert [m["identity"] for m in body["members"]] == ["a"]
+    assert body["members"][0]["answer"] == "reply from a"
+    assert body["note"] == "1 of 2 members have answered so far"
+    await server.call_tool("cancel", {"job_id": job_id})
+
+
+async def test_a_running_job_does_not_return_the_result_of_a_finished_one(jobs_dir: Path):
+    container = _container()
+    server = build_mcp_server(lambda: container, jobs=JobRegistry(jobs_dir))
+    job_id = await _submit(server)
+    got = await server.call_tool("result", {"job_id": job_id, "wait_seconds": 5})
+    assert {m["answer"] for m in got.structured_content["result"]["members"]} == {None}

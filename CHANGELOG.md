@@ -6,6 +6,25 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **The `<<SYSTEM>>` directives as MCP arguments.** `consult` and `submit` now take `only`,
+  `exclude`, `include`, `synth`, `instruction`, `show_work`, `dedupe` and `cache_synth` as typed
+  arguments, so an agent reads them off the tool schema instead of formatting a header block
+  inside its prompt. A block in the prompt still works and merges with them (rosters add up; a
+  single-valued directive takes the argument), through one implementation in the engine.
+- **`answers` — what each panel member said.** Every consult and job now records its members'
+  answers for a day, and `answers` returns them for one run, optionally for a single `member` or
+  with `reasoning`. Nothing had to be asked for in advance, which is the point: an agent only
+  learns it wants the detail once it has read the synthesis.
+
+### Changed
+
+- **`consult` and `result` no longer carry the members' own answers by default.** A session that
+  wanted one synthesized answer should not be handed a whole panel's output; the answers are
+  recorded and one `answers` call away. `consult`'s `include_member_answers: true` still inlines
+  them; `submit` no longer takes that argument, since `result` never inlines them.
+
 ## [2.2.0] - 2026-09-15
 
 ### Added

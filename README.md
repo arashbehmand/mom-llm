@@ -147,8 +147,10 @@ mom mcp     # ...or serve the same tools over stdio, no gateway required
 The tools: `consult` (run a configured ensemble — or a panel you assemble from the catalog for that
 one call — and get the synthesized answer with a per-member cost breakdown); `submit`, `status`,
 `result` and `cancel`, which run the same consult as a background job so a long panel never
-outlasts a client's tool-call timeout; and read-only `list_llms`, `list_ensembles`, `runs`,
-`usage`, and `cache_stats`. Nothing here can purge or edit config. See [docs/API.md](docs/API.md#mcp-mcp-and-mom-mcp).
+outlasts a client's tool-call timeout; `answers`, which returns what each member of a run said;
+and read-only `list_llms`, `list_ensembles`, `runs`, `usage`, and `cache_stats`. `consult` and
+`submit` take the `<<SYSTEM>>` directives as arguments too — `exclude`, `only`, `include`, `synth`,
+`instruction`, `show_work`, `dedupe`, `cache_synth`. Nothing here can purge or edit config. See [docs/API.md](docs/API.md#mcp-mcp-and-mom-mcp).
 
 Also served: `GET /v1/models`, `/v1/models/{id}`, `/v1/model/info` (capability cards),
 `POST /v1/messages/count_tokens`, `GET /v1/metrics/usage`, `GET /v1/progress/{id}` (SSE), and
@@ -206,6 +208,10 @@ Content: [that member's answer]
 hides it.
 
 ### `<<SYSTEM>>` — steer synthesis, or reshape the panel, for one turn
+
+(Over MCP these are ordinary tool arguments — `exclude`, `only`, `include`, `synth`,
+`instruction`, `show_work`, `dedupe`, `cache_synth` — so an agent needs no header block.
+See [docs/API.md](docs/API.md#panel-arguments).)
 
 Wrap directives in `<<SYSTEM>>…<</SYSTEM>>` in the **last** message of your turn. MoM **strips the
 block from what the fan-out members see**; a plain-text body becomes an instruction handed **only

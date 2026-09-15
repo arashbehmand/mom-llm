@@ -171,6 +171,7 @@ async def test_initialize_and_list_tools_over_http():
         "submit",
         "status",
         "result",
+        "answers",
         "cancel",
         "runs",
         "usage",

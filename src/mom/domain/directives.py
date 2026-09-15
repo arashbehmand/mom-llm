@@ -92,6 +92,35 @@ class SystemDirectives:
     warnings: tuple[str, ...] = ()
 
 
+def merged(
+    block: SystemDirectives | None, given: SystemDirectives | None
+) -> SystemDirectives | None:
+    """One set of directives from the two ways a caller can send them.
+
+    A chat box has only the text block; a tool call has typed arguments (``mom.api.mcp``) and no
+    reason to make an agent format a header by hand. Both end up here, so the engine below knows
+    one shape: rosters are unioned (block first, then arguments), and for a single-valued
+    directive the argument wins, being the more deliberate of the two.
+    """
+    if block is None or given is None:
+        return block or given
+
+    def union(first: tuple[str, ...], second: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((*first, *second)))
+
+    return SystemDirectives(
+        instruction=given.instruction or block.instruction,
+        exclude=union(block.exclude, given.exclude),
+        only=union(block.only, given.only),
+        include=union(block.include, given.include),
+        show_work=given.show_work or block.show_work,
+        synth=given.synth or block.synth,
+        dedupe=given.dedupe or block.dedupe,
+        cache_synth=given.cache_synth or block.cache_synth,
+        warnings=union(block.warnings, given.warnings),
+    )
+
+
 def _split_values(raw: str) -> tuple[str, ...]:
     """Comma- and/or whitespace-separated values, lowercased, order-preserving deduplicated."""
     tokens = (token.strip().lower() for token in re.split(r"[,\s]+", raw.strip()))

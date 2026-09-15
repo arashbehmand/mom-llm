@@ -36,7 +36,7 @@ from mom.config.types import (
     parse_effort_level,
 )
 from mom.domain.cost import Pricing
-from mom.domain.directives import SystemDirectives, extract_system_block
+from mom.domain.directives import SystemDirectives, extract_system_block, merged
 from mom.domain.errors import InvalidRequestError, UnknownModelError
 from mom.domain.ports import CallSpec
 from mom.domain.prompt_caching import is_anthropic_family, openai_prompt_cache_key
@@ -488,13 +488,22 @@ def _resolve_synth(
     )
 
 
-def resolve_plan(catalog: ResolvedCatalog, ir: ChatRequestIR) -> ExecutionPlan:
-    """Resolve a chat request against the catalog into a ready-to-run plan."""
+def resolve_plan(
+    catalog: ResolvedCatalog, ir: ChatRequestIR, given: SystemDirectives | None = None
+) -> ExecutionPlan:
+    """Resolve a chat request against the catalog into a ready-to-run plan.
+
+    ``given`` carries directives the caller passed as arguments rather than as a ``<<SYSTEM>>``
+    block in the prompt — what the MCP tools do. They merge with a block, if there is one, and
+    are then indistinguishable to everything below: same roster patching, same vocabulary checks,
+    same notices when mom cannot honour one.
+    """
     ensemble = catalog.ensembles.get(ir.model)
     if ensemble is None:
         raise UnknownModelError(f"unknown model {ir.model!r}")
 
-    messages, directives = extract_system_block(ir.messages)
+    messages, block = extract_system_block(ir.messages)
+    directives = merged(block, given)
     # Seeded with what the parser itself couldn't make sense of; everything below adds to it.
     notices: list[str] = list(directives.warnings) if directives is not None else []
     instruction = directives.instruction if directives is not None else None
