@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-15
+
 ### Added
 
 - **Background consults over MCP: `submit`, `status`, `result`, `cancel`.** `consult` holds the
