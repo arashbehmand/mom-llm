@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-15
+
 ### Added
 
 - **The `<<SYSTEM>>` directives as MCP arguments.** `consult` and `submit` now take `only`,
