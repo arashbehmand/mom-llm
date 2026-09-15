@@ -64,19 +64,34 @@ def _server(container: Container):
     return build_mcp_server(lambda: container)
 
 
-async def test_lists_the_six_tools_with_output_schemas():
+async def test_lists_the_tools_with_output_schemas():
     async with Client(_server(_container()), raise_exceptions=True) as client:
         listed = await client.list_tools()
     names = [tool.name for tool in listed.tools]
-    assert names == ["list_llms", "list_ensembles", "consult", "runs", "usage", "cache_stats"]
+    assert names == [
+        "list_llms",
+        "list_ensembles",
+        "consult",
+        "submit",
+        "status",
+        "result",
+        "cancel",
+        "runs",
+        "usage",
+        "cache_stats",
+    ]
     assert all(tool.output_schema is not None for tool in listed.tools)
-    # Everything but consult is a read-only view; a leaked token must not be able to spend or
-    # destroy through this surface.
+    # Only running a panel and stopping one change anything; a leaked token must not be able to
+    # purge or reconfigure through this surface.
     read_only = {t.name: t.annotations.read_only_hint for t in listed.tools if t.annotations}
     assert read_only == {
         "list_llms": True,
         "list_ensembles": True,
         "consult": False,
+        "submit": False,
+        "status": True,
+        "result": True,
+        "cancel": False,
         "runs": True,
         "usage": True,
         "cache_stats": True,

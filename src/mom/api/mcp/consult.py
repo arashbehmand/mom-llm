@@ -13,9 +13,8 @@ import contextlib
 from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Protocol
 
-from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
 
 from mom.api.mcp.projections import (
@@ -40,7 +39,7 @@ from mom.domain.events import (
 from mom.domain.request import ChatRequestIR, MessageIR, ToolSpec
 from mom.domain.results import ModelOutcome, Usage
 from mom.engine.pipeline import collect
-from mom.engine.plan import resolve_plan
+from mom.engine.plan import ExecutionPlan, resolve_plan
 from mom.runtime.container import Container
 
 
@@ -52,6 +51,15 @@ from mom.runtime.container import Container
 # characters), so this name cannot collide with anything an operator configures — an inline panel
 # can never shadow a real ensemble, and a real ensemble can never be mistaken for one.
 INLINE_ENSEMBLE = "mcp:adhoc"
+
+
+class ProgressSink(Protocol):
+    """Where a run's milestones go: the MCP request context for ``consult``, a job record for
+    ``submit``. Shaped like ``Context.report_progress`` so the context needs no adapter."""
+
+    async def report_progress(
+        self, progress: float, total: float | None = None, message: str | None = None
+    ) -> None: ...
 
 
 def build_ir(
@@ -140,6 +148,10 @@ class RunObserver:
 
     outcomes: list[ModelOutcome] = field(default_factory=list)
     abandoned: list[tuple[str, str]] = field(default_factory=list)
+    # Every member asked, in order, identity -> model: what a job's status lists as still running
+    # until an outcome or an abandonment lands for it.
+    asked: dict[str, str] = field(default_factory=dict)
+    synthesizer: str | None = None
 
     @property
     def cost_usd(self) -> float:
@@ -164,7 +176,7 @@ class RunObserver:
 
 async def with_progress(
     events: AsyncIterator[StreamEvent],
-    ctx: Context[Any, Any],
+    ctx: ProgressSink,
     observer: RunObserver,
     *,
     total: int,
@@ -182,6 +194,7 @@ async def with_progress(
             # Reported, not just counted: until the first member lands there is nothing else to
             # say, and a panel whose slowest seat runs for minutes is otherwise indistinguishable
             # from a hung tool call — which is what these notifications exist to rule out.
+            observer.asked[event.identity] = event.model
             step += 1
             message = f"asking {event.identity} ({event.model})"
         elif isinstance(event, MemberCompleted):
@@ -196,6 +209,7 @@ async def with_progress(
             step += 1
             message = f"{event.identity}: abandoned at the fan-out deadline"
         elif isinstance(event, SynthesisStarted):
+            observer.synthesizer = event.llm
             step += 1
             message = f"synthesizing with {event.llm}"
         if message is not None:
@@ -203,7 +217,7 @@ async def with_progress(
         yield event
 
 
-async def _report(ctx: Context[Any, Any], progress: int, total: int, message: str) -> None:
+async def _report(ctx: ProgressSink, progress: int, total: int, message: str) -> None:
     """Best-effort progress. Suppressed narrowly and only around the notification itself: there
     is no request context when a tool is called directly (tests), and a client that sent no
     progress token gets a documented no-op — neither is a reason to fail the run."""
@@ -211,9 +225,20 @@ async def _report(ctx: Context[Any, Any], progress: int, total: int, message: st
         await ctx.report_progress(progress, total, message)
 
 
-async def run_consult(
+@dataclass(frozen=True)
+class PreparedConsult:
+    """A consult whose arguments have been checked and whose plan is resolved — everything short
+    of running it. ``submit`` rejects a bad call with this before it hands back a job id, so a
+    mistake surfaces on the call that made it rather than on a later poll."""
+
+    name: str
+    ir: ChatRequestIR
+    plan: ExecutionPlan
+    include_member_answers: bool
+
+
+def prepare_consult(
     container: Container,
-    ctx: Context[Any, Any],
     *,
     ensemble: str | None,
     panel: Sequence[str] | None,
@@ -223,9 +248,9 @@ async def run_consult(
     effort: str | None,
     tools: Sequence[dict[str, Any]] | None,
     include_member_answers: bool,
-    base_url: str | None,
-) -> ConsultResult:
-    """Run one panel and return its outcome envelope (never raises for an upstream failure)."""
+) -> PreparedConsult:
+    """Validate a consult's arguments and resolve its plan. Raises ``ToolError`` on a caller
+    mistake; spends nothing."""
     if (ensemble is None) == (panel is None):
         raise ToolError("pass exactly one of `ensemble` (a configured panel) or `panel` (llms)")
     if ensemble is not None:
@@ -262,15 +287,31 @@ async def run_consult(
         # would silently receive the first one's answer. Named ensembles have a real identity
         # and keep the optimization.
         plan = replace(plan, dedupe=False)
+    return PreparedConsult(
+        name=name, ir=ir, plan=plan, include_member_answers=include_member_answers
+    )
 
-    request_id = container.ids.new_id("req")
+
+async def execute_consult(
+    container: Container,
+    prepared: PreparedConsult,
+    progress: ProgressSink,
+    *,
+    request_id: str,
+    base_url: str | None,
+    observer: RunObserver | None = None,
+) -> ConsultResult:
+    """Run a prepared consult and return its outcome envelope (never raises for an upstream
+    failure). Pass an ``observer`` to watch the run from outside while it goes."""
+    name, plan, ir = prepared.name, prepared.plan, prepared.ir
+    include_member_answers = prepared.include_member_answers
     events, leader_request_id = resolve_events(container, plan, ir, request_id)
     coalesced = leader_request_id != request_id
     # No token in the link: this one is returned as tool-result data, not as a response header to
     # a caller who already authenticated. A client that reached the HTTP surface has the token
     # already; over stdio it never had one, and must not learn it from here.
     progress_url = progress_url_from_base(base_url, leader_request_id, container, with_token=False)
-    observer = RunObserver()
+    observer = observer if observer is not None else RunObserver()
     # Two steps per member (asked, then answered), one for synthesis starting, and one left
     # unclaimed: synthesis is usually the longest wait, so a bar reading 100% the moment it
     # begins is a lie.
@@ -281,7 +322,7 @@ async def run_consult(
         # generator chain is left suspended at `yield PipelineFailed(...)`, deferring
         # `run_ensemble`'s cleanup — which cancels still-pending member calls — to garbage
         # collection. Abandoned upstream calls would keep running after the tool returned.
-        async with aclosing(with_progress(events, ctx, observer, total=total)) as stream:
+        async with aclosing(with_progress(events, progress, observer, total=total)) as stream:
             result = await collect(stream)
     except MomError as exc:
         return consult_failure(

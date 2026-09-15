@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+from mom.api.mcp.jobs import JobRegistry
 from mom.api.mcp.server import build_mcp_server
 
 
@@ -53,8 +54,12 @@ async def run_stdio(
     container, cleanup = await build_container(
         booted.settings, booted.catalog(), sources=booted.sources
     )
+    jobs = JobRegistry()
     try:
-        server = build_mcp_server(lambda: container)
+        server = build_mcp_server(lambda: container, jobs=jobs)
         await server.run_stdio_async()
     finally:
+        # Jobs first: a job still running needs the container (its client, its metrics) to wind
+        # down and record that it was cut short.
+        await jobs.aclose()
         await cleanup()

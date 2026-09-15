@@ -1,4 +1,4 @@
-"""The six tools, and the factory both transports build from.
+"""The tools, and the factory both transports build from.
 
 ``build_mcp_server`` takes an accessor rather than a container because over HTTP the app is
 constructed before the lifespan builds the container — the mount has to reach ``app.state`` at
@@ -17,11 +17,15 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from mom.adapters.litellm_client import capabilities_for, pricing_for
 from mom.api.mcp import projections
-from mom.api.mcp.consult import run_consult
+from mom.api.mcp.consult import execute_consult, prepare_consult
+from mom.api.mcp.jobs import MAX_WAIT_SECONDS, JobRecord, JobRegistry
 from mom.api.mcp.schemas import (
     CacheStats,
     ConsultResult,
     EnsembleInfo,
+    JobResult,
+    JobsReport,
+    JobStatus,
     LlmInfo,
     RecentRun,
     RunCall,
@@ -44,6 +48,11 @@ judgement where being wrong is expensive. Name a configured `ensemble` (see `lis
 assemble a panel for this question alone by passing `panel` (catalog llm names from `list_llms`)
 plus a `synthesizer`. An inline panel exists only for that call.
 
+A panel can take minutes. When it may outlast your tool-call timeout, or you want to keep working
+while it runs, call `submit` instead (same arguments): it returns a `job_id` at once. Then `status`
+shows which members have answered, `result` returns the answer once it is ready (optionally
+waiting for it), and `cancel` stops a job you no longer need. `status` with no `job_id` lists jobs.
+
 The remaining tools are read-only views of the gateway: `runs` (what is running and what ran),
 `usage` (spend), `cache_stats`. Purging and config changes are deliberately not available here.\
 """
@@ -53,13 +62,21 @@ _READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 # Ceiling on how many recent runs one `runs` call may materialize.
 _MAX_RUNS = 200
 
+_SPENDS = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True)
 
-def build_mcp_server(get_container: Callable[[], Container | None]) -> MCPServer[Any]:
+
+def build_mcp_server(
+    get_container: Callable[[], Container | None], *, jobs: JobRegistry | None = None
+) -> MCPServer[Any]:
     """Define the MoM tool surface against a container accessor.
 
     The accessor may return None: over HTTP the app exists before its lifespan builds the
     container, so "not ready yet" is a real state rather than a bug to assert away.
+
+    ``jobs`` holds the background consults; a transport that owns a lifetime passes its own so it
+    can close it (``JobRegistry.aclose``) when it stops.
     """
+    jobs = jobs if jobs is not None else JobRegistry()
     mcp: MCPServer[Any] = MCPServer(
         name="mom",
         title="MoM — Mixture of Models",
@@ -114,9 +131,7 @@ def build_mcp_server(get_container: Callable[[], Container | None]) -> MCPServer
             "(llm names) plus a `synthesizer` to assemble one for this call only. Progress is "
             "reported per member while it runs."
         ),
-        annotations=ToolAnnotations(
-            read_only_hint=False, destructive_hint=False, open_world_hint=True
-        ),
+        annotations=_SPENDS,
     )
     async def consult(
         prompt: Annotated[str, "The question to put to the panel."],
@@ -137,9 +152,9 @@ def build_mcp_server(get_container: Callable[[], Container | None]) -> MCPServer
             "synthesized answer and its reasoning come back either way.",
         ] = False,
     ) -> Annotated[CallToolResult, ConsultResult]:
-        result = await run_consult(
-            current_container(),
-            ctx,
+        container = current_container()
+        prepared = prepare_consult(
+            container,
             ensemble=ensemble,
             panel=panel,
             synthesizer=synthesizer,
@@ -148,9 +163,101 @@ def build_mcp_server(get_container: Callable[[], Container | None]) -> MCPServer
             effort=effort,
             tools=tools,
             include_member_answers=include_member_answers,
+        )
+        result = await execute_consult(
+            container,
+            prepared,
+            ctx,
+            request_id=container.ids.new_id("req"),
             base_url=_base_url(ctx),
         )
         return _consult_tool_result(result)
+
+    @mcp.tool(
+        title="Submit a consult",
+        description=(
+            "Start a consult in the background and get its `job_id` back at once; same arguments "
+            "as `consult`. Use it when the panel may run longer than your tool-call timeout, or "
+            "to keep working meanwhile. Follow it with `status`, `result` and `cancel`. A bad "
+            "argument is rejected here, before anything runs."
+        ),
+        annotations=_SPENDS,
+    )
+    async def submit(
+        prompt: Annotated[str, "The question to put to the panel."],
+        ctx: Context[Any, Any],
+        ensemble: Annotated[str | None, "A configured ensemble name."] = None,
+        panel: Annotated[list[str] | None, "Catalog llm names for a one-off panel."] = None,
+        synthesizer: Annotated[str | None, "Catalog llm that combines an inline panel."] = None,
+        effort: Annotated[str | None, "Effort tier, for ensembles that declare tiers."] = None,
+        system: Annotated[str | None, "Optional system message for the panel."] = None,
+        tools: Annotated[
+            list[dict[str, Any]] | None,
+            "OpenAI-shaped tool definitions, as for `consult`.",
+        ] = None,
+        include_member_answers: Annotated[
+            bool, "Include each member's own answer in the eventual result."
+        ] = False,
+    ) -> JobStatus:
+        container = current_container()
+        prepared = prepare_consult(
+            container,
+            ensemble=ensemble,
+            panel=panel,
+            synthesizer=synthesizer,
+            prompt=prompt,
+            system=system,
+            effort=effort,
+            tools=tools,
+            include_member_answers=include_member_answers,
+        )
+        return await jobs.submit(container, prepared, prompt=prompt, base_url=_base_url(ctx))
+
+    @mcp.tool(
+        title="Job status",
+        description=(
+            "Where a submitted consult stands: which members have answered, what they cost so "
+            "far, and whether synthesis has started. No answer — `result` returns that. Without "
+            "a `job_id`, lists the jobs on this machine, newest first."
+        ),
+        annotations=_READ_ONLY,
+    )
+    async def status(
+        job_id: Annotated[str | None, "The id `submit` returned."] = None,
+        limit: Annotated[int, "How many jobs to list when no job_id is given (1-200)."] = 20,
+    ) -> JobsReport:
+        if job_id is not None:
+            return JobsReport(jobs=[await jobs.status(job_id)])
+        return JobsReport(jobs=await jobs.recent(max(1, min(limit, _MAX_RUNS))))
+
+    @mcp.tool(
+        title="Job result",
+        description=(
+            "A submitted consult's answer: the same envelope `consult` returns, once the job has "
+            "completed. While it is still running you get its status instead. `wait_seconds` "
+            f"(up to {MAX_WAIT_SECONDS:g}) waits for it to finish first — keep that below your "
+            "own tool-call timeout."
+        ),
+        annotations=_READ_ONLY,
+    )
+    async def result(
+        job_id: Annotated[str, "The id `submit` returned."],
+        wait_seconds: Annotated[float, "How long to wait for the job to finish, if running."] = 0,
+    ) -> Annotated[CallToolResult, JobResult]:
+        return _job_tool_result(await jobs.result(job_id, wait_seconds=wait_seconds))
+
+    @mcp.tool(
+        title="Cancel a job",
+        description=(
+            "Stop a submitted consult, including its members' calls still in flight, so it "
+            "spends nothing more. A job that has already finished is left as it is."
+        ),
+        annotations=ToolAnnotations(
+            read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+        ),
+    )
+    async def cancel(job_id: Annotated[str, "The id `submit` returned."]) -> JobStatus:
+        return await jobs.cancel(job_id)
 
     @mcp.tool(
         title="Inspect runs",
@@ -288,6 +395,28 @@ def _consult_tool_result(result: ConsultResult) -> CallToolResult:
         content=[TextContent(type="text", text=_text_summary(result))],
         structured_content=result.model_dump(mode="json"),
         is_error=result.status == "failed",
+    )
+
+
+def _job_tool_result(record: JobRecord) -> CallToolResult:
+    """A job's status plus, once there is one, its result — worded for a text-only client too."""
+    job, result = record.status, record.result
+    if job.state == "completed" and result is not None:
+        text, is_error = _text_summary(result), result.status == "failed"
+    elif job.state in ("running", "synthesizing"):
+        stage = f"synthesizing with {job.synthesizer}" if job.synthesizer else "running"
+        text = (
+            f"job {job.job_id} is still {stage}: {job.members_done} of {job.members_total} "
+            f"members done, ${job.cost_usd:.4f} so far. Call `result` again later."
+        )
+        is_error = False
+    else:
+        text = f"job {job.job_id} {job.state}: {job.detail or 'no result'}"
+        is_error = job.state != "cancelled"
+    return CallToolResult(
+        content=[TextContent(type="text", text=text)],
+        structured_content=JobResult(job=job, result=result).model_dump(mode="json"),
+        is_error=is_error,
     )
 
 

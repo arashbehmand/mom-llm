@@ -144,10 +144,11 @@ claude mcp add --transport http mom http://localhost:8000/mcp \
 mom mcp     # ...or serve the same tools over stdio, no gateway required
 ```
 
-Six tools: `consult` (run a configured ensemble — or a panel you assemble from the catalog for that
-one call — and get the synthesized answer with a per-member cost breakdown), plus read-only
-`list_llms`, `list_ensembles`, `runs`, `usage`, and `cache_stats`. Nothing here can purge or edit
-config. See [docs/API.md](docs/API.md#mcp-mcp-and-mom-mcp).
+The tools: `consult` (run a configured ensemble — or a panel you assemble from the catalog for that
+one call — and get the synthesized answer with a per-member cost breakdown); `submit`, `status`,
+`result` and `cancel`, which run the same consult as a background job so a long panel never
+outlasts a client's tool-call timeout; and read-only `list_llms`, `list_ensembles`, `runs`,
+`usage`, and `cache_stats`. Nothing here can purge or edit config. See [docs/API.md](docs/API.md#mcp-mcp-and-mom-mcp).
 
 Also served: `GET /v1/models`, `/v1/models/{id}`, `/v1/model/info` (capability cards),
 `POST /v1/messages/count_tokens`, `GET /v1/metrics/usage`, `GET /v1/progress/{id}` (SSE), and
@@ -158,8 +159,9 @@ Also served: `GET /v1/models`, `/v1/models/{id}`, `/v1/model/info` (capability c
 - **Three compatible surfaces** — Chat Completions, Responses, and Anthropic Messages over one
   pipeline and a shared typed event stream, so streaming and non-streaming stay in lockstep.
 - **🧰 MCP tool surface** — the same pipeline exposed as tools (`/mcp` or `mom mcp`): consult a
-  panel, assemble one from the catalog on the spot, and read spend, runs, and cache state without
-  a shell on the host. Off by default; read-only apart from `consult`.
+  panel — waiting for it, or as a background job to poll — assemble one from the catalog on the
+  spot, and read spend, runs, and cache state without a shell on the host. Off by default; nothing
+  but running or cancelling a panel changes anything.
 - **🖼️ Multimodal / vision** — send images (OpenAI or Anthropic format); a vision request runs on
   the members that can see, and incapable members drop out cleanly.
 - **Effort tiers** — a request's `reasoning_effort` selects a tier; each member declares its own

@@ -27,7 +27,7 @@ flowchart LR
     RE --> R["responses.encode_sse → Responses events"]
     RE --> A["anthropic.encode_sse → Anthropic events"]
     RE --> CO["collect() → EnsembleResult"]
-    RE --> M["mcp.with_progress → MCP progress notifications"]
+    RE --> M["mcp.with_progress → MCP progress notifications / job status"]
     CO --> CJ
     CO --> RB["responses.build_response → Responses JSON"]
     CO --> AB["anthropic.build_message → Anthropic JSON"]

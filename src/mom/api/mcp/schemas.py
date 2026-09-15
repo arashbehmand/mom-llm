@@ -234,6 +234,49 @@ class RunsReport(BaseModel):
     in_flight_visibility: Literal["process", "none"] = "process"
 
 
+JobState = Literal["running", "synthesizing", "completed", "failed", "cancelled", "lost"]
+
+
+class JobStatus(BaseModel):
+    """Where a submitted consult stands. Never carries the answer — ``result`` does."""
+
+    job_id: str = Field(description="Also the run's request id, so `runs` can look it up too.")
+    state: JobState = Field(
+        description=(
+            "running | synthesizing while it works; completed (the result's own `status` says "
+            "ok, tool_calls or failed), failed (mom itself broke), cancelled, or lost (the mom "
+            "process that ran it stopped before it finished)."
+        )
+    )
+    ensemble: str
+    prompt_preview: str = Field(default="", description="The prompt's opening, to tell jobs apart.")
+    started_at: float
+    updated_at: float
+    finished_at: float | None = None
+    members_total: int = 0
+    members_done: int = 0
+    members: list[RunMemberReport] = Field(
+        default_factory=list, description="Each member asked so far; `status` null while running."
+    )
+    synthesizer: str | None = Field(default=None, description="Set once synthesis has started.")
+    cost_usd: float = Field(default=0.0, description="Spent by the members that have finished.")
+    detail: str | None = Field(default=None, description="Why a job failed, was cancelled or lost.")
+
+
+class JobsReport(BaseModel):
+    jobs: list[JobStatus] = Field(default_factory=list, description="Newest first.")
+
+
+class JobResult(BaseModel):
+    """A job's status, and its consult result once it has one."""
+
+    job: JobStatus
+    result: ConsultResult | None = Field(
+        default=None,
+        description="The same envelope `consult` returns. Null until the job has completed.",
+    )
+
+
 class UsageGroup(BaseModel):
     key: str
     calls: int = 0

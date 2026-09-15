@@ -395,14 +395,18 @@ rather than announce itself to anyone probing the path.
 
 ### Tools
 
-Everything except `consult` is read-only. There is deliberately no purge and no config mutation: a
-leaked token can already chat, and must not be able to destroy state.
+Only `consult`, `submit` and `cancel` do anything but read. There is deliberately no purge and no
+config mutation: a leaked token can already chat, and must not be able to destroy state.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `list_llms` | — | every catalog llm (bases and variants) with model string, capabilities, pricing and its `pricing_source` |
 | `list_ensembles` | — | the resolved ensembles: members, effort tiers, synthesizer, advertised capabilities |
 | `consult` | `prompt`, then either `ensemble` or `panel` + `synthesizer`; optional `effort`, `system`, `tools`, `include_member_answers` | one synthesized answer with a per-member cost breakdown (below) |
+| `submit` | the same as `consult` | a job status with its `job_id`, at once; the consult runs in the background ([jobs](#background-jobs-submit-status-result-cancel)) |
+| `status` | optional `job_id`, `limit` (clamped to 1–200) | one job's status, or every job on the machine, newest first |
+| `result` | `job_id`, optional `wait_seconds` (0–300) | the job's status, plus the `consult` result once it has completed |
+| `cancel` | `job_id` | the job's status after stopping it |
 | `runs` | optional `request_id`, `limit` (clamped to 1–200) | in-flight, just-finished and recent runs, per-member status and cost |
 | `usage` | `days` (0 or less = all time), optional `ensemble` | the same aggregation `mom metrics usage` prints, grouped by ensemble and by member |
 | `cache_stats` | — | response-cache entry count, size, hits |
@@ -433,6 +437,47 @@ reuse across calls: config rejects `:` and `+` in ensemble names, so an inline p
 shadow one of yours. They also never coalesce: request identity keys on the ensemble *name* plus
 the messages, so two different rosters asking the same question would otherwise collide and the
 second would silently get the first one's answer.
+
+### Background jobs (`submit`, `status`, `result`, `cancel`)
+
+`consult` holds the tool call open for the whole run, and a panel with a slow synthesizer runs for
+minutes — longer than many clients let one tool call take (Codex's default is 60 s). `submit` takes
+the same arguments, checks them (a bad call is refused right there, before anything runs), starts
+the consult in the background and returns a status with its `job_id` at once. Then:
+
+- **`status`** reports where the job stands: `state`, each member asked so far with its `status`
+  (`null` while it is still running), `members_done` of `members_total`, the `synthesizer` once
+  synthesis has begun, and `cost_usd` spent so far. No `job_id` lists jobs newest first, each with
+  a `prompt_preview`, for an agent that has lost track of its id.
+- **`result`** returns `{job, result}`: `result` is exactly the `consult` envelope once the job has
+  completed, and `null` before that. `wait_seconds` (capped at 300) waits for the job to finish
+  first; keep it below your own client's tool-call timeout.
+- **`cancel`** stops the job and the member calls still in flight, so it spends nothing more. A
+  finished job is left as it is.
+
+| `state` | Meaning |
+| --- | --- |
+| `running`, `synthesizing` | still working |
+| `completed` | finished; `result.status` says `ok`, `tool_calls` or `failed`, as for `consult` |
+| `failed` | mom itself broke (an internal error), so there is no result |
+| `cancelled` | stopped by `cancel`, or because the mom process shut down; `detail` says which |
+| `lost` | the process running it died without recording anything, so it will never finish |
+
+The `job_id` is also the run's request id, so `runs` and the progress feed find the same run.
+
+A job always stops when cancelled, even where `defaults.fanout.detach_on_disconnect` is on. That
+setting keeps members running after a *client* walks out, so a retry can hit the cache; a job has
+no client to walk out, and a cancel means stop paying. For the same reason, members the fan-out
+deadline passes by are cancelled rather than left to finish in the background.
+
+**Storage.** Each job is one JSON file (mode 0600) in `/tmp/mom-jobs-<uid>` (mode 0700; mom
+refuses a directory another user owns), rewritten as the run moves and deleted a day after it was
+last written. A fixed path rather than `$TMPDIR`, which differs between processes of one user.
+Files, so every `mom mcp` process on the machine — each stdio client starts its own — can read any
+job, and a finished answer outlives the process that produced it. Only the process running a job
+can cancel it. When that process shuts down it records its unfinished jobs as `cancelled`; if it
+dies without the chance, the next reader reports them `lost` instead of leaving an agent polling a
+job that will never finish.
 
 ### `consult` results
 

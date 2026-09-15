@@ -74,6 +74,7 @@ def create_app(
             try:
                 yield
             finally:
+                await app.state.mcp_jobs.aclose()
                 await cleanup()
 
     app = FastAPI(title="MoM — Mixture of Models", version=__version__, lifespan=lifespan)

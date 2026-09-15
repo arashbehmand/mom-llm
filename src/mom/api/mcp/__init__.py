@@ -1,8 +1,10 @@
 """The MCP tool surface: mom as an MCP *server*, a sibling of the routers in ``mom.api``.
 
-Six tools — five read-only views plus ``consult``, which runs a panel. ``consult`` folds the same
-typed ``StreamEvent`` stream the wire encoders fold (``api/encoders/``); there is no second
-orchestration path here, only a fourth reader of the one that exists.
+Read-only views, plus ``consult``, which runs a panel and waits for it, and ``submit`` with
+``status`` / ``result`` / ``cancel``, which run the same consult as a background job (``jobs.py``).
+``consult`` folds the same typed ``StreamEvent`` stream the wire encoders fold
+(``api/encoders/``); there is no second orchestration path here, only a fourth reader of the one
+that exists.
 
 Not to be confused with ``ChatRequestIR.mcp_tools``, which points the other way: those are MCP
 tools a *client* manages, relayed to an upstream synthesizer that speaks the Responses API. This

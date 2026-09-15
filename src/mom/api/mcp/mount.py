@@ -22,6 +22,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mom.api.auth import check_token, present_token
 from mom.api.errors import error_body
+from mom.api.mcp.jobs import JobRegistry
 from mom.api.mcp.server import build_mcp_server
 from mom.domain.errors import MomError
 from mom.runtime.container import Container
@@ -123,7 +124,10 @@ async def serve_mcp(app: FastAPI) -> AsyncIterator[MCPServer[Any]]:
     deployment needs no sticky routing. Progress notifications still work — they ride the response
     stream of the request that triggered them.
     """
-    mcp = build_mcp_server(lambda: getattr(app.state, "container", None))
+    # On app.state so the lifespan can stop running jobs before it closes the container they use;
+    # closed here too, for a lifespan that never builds one (tests pass a prebuilt container).
+    jobs = app.state.mcp_jobs = JobRegistry()
+    mcp = build_mcp_server(lambda: getattr(app.state, "container", None), jobs=jobs)
     app.state.mcp_app = mcp.streamable_http_app(
         streamable_http_path=MCP_PATH,
         stateless_http=True,
@@ -134,3 +138,4 @@ async def serve_mcp(app: FastAPI) -> AsyncIterator[MCPServer[Any]]:
             yield mcp
     finally:
         app.state.mcp_app = None
+        await jobs.aclose()

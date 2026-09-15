@@ -6,6 +6,19 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **Background consults over MCP: `submit`, `status`, `result`, `cancel`.** `consult` holds the
+  tool call open for the whole run, so a panel with a slow synthesizer outlasts clients that cap a
+  tool call (Codex's default is 60 s) and the answer is lost. `submit` takes the same arguments,
+  refuses a bad call at once, and returns a `job_id` while the consult runs in the background.
+  `status` shows each member as it answers, the running cost and whether synthesis has started
+  (or lists jobs, newest first); `result` returns the `consult` envelope once the job completes,
+  optionally waiting up to 300 s; `cancel` stops the job and its in-flight member calls, even where
+  `detach_on_disconnect` would otherwise keep them running. Jobs are JSON files in a private
+  per-user temp directory, pruned after a day, so any `mom mcp` process on the machine can read
+  them. A job whose process died reads as `lost`, not `running`. The `/v1` API is unchanged.
+
 ## [2.1.4] - 2026-09-09
 
 ### Added
