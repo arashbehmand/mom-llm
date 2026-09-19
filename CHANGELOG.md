@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-09-19
+
 ### Changed
 
 - **The synthesis prompt now comes before the candidate block, and each candidate is closed.**
