@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-19
+
 ### Added
 
 - **`defaults.call.merge_same_role` — join consecutive same-role turns.** A synthesis goes out as
