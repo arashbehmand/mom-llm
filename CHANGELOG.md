@@ -6,6 +6,25 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **`defaults.call.merge_same_role` — join consecutive same-role turns.** A synthesis goes out as
+  the client's history, then the candidate block, then the synthesis prompt: three user turns in a
+  row. A subscription proxy in front of a CLI-shaped API was observed keeping only the last of
+  them, so the question and all eleven candidate answers were dropped and the synthesizer answered
+  the system prompt alone — a greeting instead of an answer, `finish_reason: stop`, nothing in the
+  logs. With this on, such a run is sent as one turn per role and survives. Off by default (a
+  conversation should be sent as it was written); it applies to member calls and the synthesis
+  alike, and never merges tool plumbing.
+
+### Fixed
+
+- **A backslash-escaped `<<SYSTEM>>` key is now read as the directive it is.** A chat client that
+  treats its box as markdown escapes `_` on the way out, so `cache_synth: off` arrived as
+  `cache\_synth: off`. That no longer looked like a `key: value` line at all, so the directive was
+  silently ignored *and* the whole block became instruction text — with no warning, since warnings
+  only fire for a key-shaped line. Escaped keys now parse like the bare spelling.
+
 ## [2.3.1] - 2026-09-16
 
 ### Fixed

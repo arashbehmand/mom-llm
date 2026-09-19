@@ -380,3 +380,39 @@ def test_only_directives_no_instruction_when_every_line_is_a_directive():
     assert directives.instruction is None
     assert directives.exclude == ("k3",)
     assert directives.only == ("a", "b")
+
+
+# -------------------------------------------------------------------------------------------
+# Markdown-escaped keys. A chat client that treats its box as markdown escapes `_` on the way
+# out, invisibly to the person typing.
+# -------------------------------------------------------------------------------------------
+
+
+def test_a_backslash_escaped_key_is_read_like_the_bare_one():
+    r"""Observed live: `cache_synth: off` typed into LobeChat arrived as `cache\_synth: off`, so
+    the directive was never honoured — and because the line no longer looked like `key: value`,
+    the whole block silently became instruction text with no warning to say so."""
+    body = "<<SYSTEM>>\ncache\\_synth: off\nshow\\_work: inline\n<</SYSTEM>>\nWhat is 2+2?"
+    _, directives = extract_system_block(_msgs(MessageIR(role="user", content=body)))
+    assert directives is not None
+    assert directives.cache_synth == "off"
+    assert directives.show_work == "inline"
+    assert directives.instruction is None
+    assert directives.warnings == ()
+
+
+def test_an_escaped_roster_directive_works_too():
+    body = "<<SYSTEM>>\nexclude: k3\nshow\\_work: off\n<</SYSTEM>>\nHi"
+    _, directives = extract_system_block(_msgs(MessageIR(role="user", content=body)))
+    assert directives is not None
+    assert directives.exclude == ("k3",)
+    assert directives.show_work == "off"
+
+
+def test_prose_with_a_backslash_is_still_instruction_text():
+    """The escape tolerance must not swallow a line that was never a directive."""
+    prose = r"Use C:\path\to: as the example."
+    body = f"<<SYSTEM>>\n{prose}\n<</SYSTEM>>\nHi"
+    _, directives = extract_system_block(_msgs(MessageIR(role="user", content=body)))
+    assert directives is not None
+    assert directives.instruction == prose

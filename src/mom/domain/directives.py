@@ -1,4 +1,4 @@
-"""The ``<<SYSTEM>>`` in-message directive block (and its ``<<CONCLUDING-INSTRUCTION>>`` alias).
+r"""The ``<<SYSTEM>>`` in-message directive block (and its ``<<CONCLUDING-INSTRUCTION>>`` alias).
 
 A human types this into the chat box; it never reaches a fan-out member or the synthesizer's
 history. Grammar (header-block, HTTP-headers/git-trailers style — not YAML, which a chat box's
@@ -13,6 +13,9 @@ auto-indentation would mangle)::
     cache_synth: on
     Answer as a terse bullet list, no preamble.
     <</SYSTEM>>
+
+A key may be backslash-escaped (``cache\_synth``) — chat clients that render the box as markdown
+escape ``_`` on the way out — and is read the same as the bare spelling.
 
 Header lines are consumed from the top *while the key is a known directive*; the first line that
 doesn't look like ``key: value`` at all ends the header zone, and everything from there on
@@ -56,7 +59,13 @@ _CONCLUDING_RE = re.compile(
     r"<<CONCLUDING-INSTRUCTION>>(.*?)<</CONCLUDING-INSTRUCTION>>", re.DOTALL
 )
 
-_KEY_LINE_RE = re.compile(r"^([A-Za-z_]+):\s*(.*)$")
+# The key may arrive backslash-escaped (`cache\_synth`): a chat client that treats the box as
+# markdown escapes `_` on the way out, and the user never sees it happen. Matching it here — and
+# stripping the escapes below — is the difference between a directive that works and one that
+# silently becomes instruction text. Observed live: `cache_synth: off` typed into LobeChat arrived
+# as `cache\_synth: off`, so it was never honoured and no warning was given, because a line with a
+# backslash in the key did not look like a `key: value` line at all.
+_KEY_LINE_RE = re.compile(r"^([A-Za-z_](?:\\?[A-Za-z_])*):\s*(.*)$")
 _FILTER_KEYS = frozenset(
     {"exclude", "only", "include", "show_work", "synth", "dedupe", "cache_synth"}
 )
@@ -145,7 +154,7 @@ def _parse_body(body: str, *, legacy: bool) -> SystemDirectives:
         match = _KEY_LINE_RE.match(stripped)
         if match is None:
             break  # doesn't look like a directive at all -> header zone ends here
-        key, value = match.group(1).lower(), match.group(2).strip()
+        key, value = match.group(1).replace("\\", "").lower(), match.group(2).strip()
         if key == "instruction":  # escape hatch #2: an explicit terminator
             if value:
                 lines[idx] = value  # fold this line's value in as the instruction's first line

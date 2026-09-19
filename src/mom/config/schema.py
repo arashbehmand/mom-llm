@@ -87,6 +87,10 @@ class CallDefaults(_Model):
     timeout: Duration = timedelta(minutes=20)
     retries: int = Field(default=3, ge=0)
     retry_backoff: Duration = timedelta(seconds=2)
+    # Join consecutive same-role messages into one before a call goes out. Off by default: a
+    # conversation is sent as it was written. Turn it on for a deployment whose upstream cannot
+    # take several turns in a row from one role — see `domain/synthesis.merge_same_role`.
+    merge_same_role: bool = False
 
 
 class FanoutDefaults(_Model):

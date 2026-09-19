@@ -44,7 +44,12 @@ from mom.domain.ports import (
 from mom.domain.progress import PREVIEW_CHARS, ProgressEvent
 from mom.domain.prompt_caching import inject_anthropic_cache
 from mom.domain.results import EnsembleResult, ModelOutcome, OutcomeStatus, Usage
-from mom.domain.synthesis import all_failed_message, append_instruction, build_synthesis_messages
+from mom.domain.synthesis import (
+    all_failed_message,
+    append_instruction,
+    build_synthesis_messages,
+    merge_same_role,
+)
 from mom.domain.tooling import restore_provider_tool_ids, select_member_tool_call
 from mom.engine.plan import ExecutionPlan, PlannedMember
 from mom.runtime.logging import get_logger
@@ -896,6 +901,12 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
             else:
                 synth_messages = all_failed_message(outcomes)
 
+        if plan.merge_same_role:
+            # After assembly, not before: the candidate block, the tool note and the synthesis
+            # prompt are each appended as their own user turn, and it is that run of turns an
+            # upstream may reduce to its last one. Before the cache breakpoints, so they land on
+            # the blocks that actually go out.
+            synth_messages = merge_same_role(synth_messages)
         if plan.synth.anthropic_cache_ttl is not None:
             synth_messages = inject_anthropic_cache(
                 synth_messages, ttl=plan.synth.anthropic_cache_ttl

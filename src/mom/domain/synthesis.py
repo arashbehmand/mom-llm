@@ -51,6 +51,57 @@ def messages_to_dicts(messages: tuple[MessageIR, ...]) -> list[dict[str, Any]]:
     return [message_to_dict(m) for m in messages]
 
 
+def merge_same_role(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join runs of consecutive messages that share a role into one message.
+
+    Off by default (``defaults.call.merge_same_role``), because a conversation is normally sent
+    as it was written. It exists for upstreams that cannot handle several turns in a row from the
+    same role: a subscription proxy in front of a CLI-shaped API was observed keeping only the
+    LAST of them, which silently deleted the question and every candidate answer and left the
+    synthesizer replying to the system prompt alone — a greeting where the answer should be, with
+    nothing in the logs to say why. Merged, the same content survives as one turn.
+
+    Tool plumbing is never merged: a tool result and an assistant turn carrying ``tool_calls``
+    each answer for one call id, and joining them would break that pairing. Messages with
+    different ``name`` values stay apart for the same reason — the name identifies the speaker.
+    """
+    merged: list[dict[str, Any]] = []
+    for message in messages:
+        previous = merged[-1] if merged else None
+        if previous is not None and _joinable(previous, message):
+            merged[-1] = {
+                **previous,
+                "content": _join_content(previous["content"], message["content"]),
+            }
+            continue
+        merged.append(dict(message))
+    return merged
+
+
+def _joinable(previous: dict[str, Any], message: dict[str, Any]) -> bool:
+    if previous.get("role") != message.get("role"):
+        return False
+    if previous.get("name") != message.get("name"):
+        return False
+    return not any(
+        m.get("tool_calls") or m.get("tool_call_id") is not None for m in (previous, message)
+    )
+
+
+def _join_content(first: Any, second: Any) -> Any:
+    """Two message bodies as one. Plain text joins with a blank line; anything multipart keeps its
+    parts, so an image — or a ``cache_control`` breakpoint already placed on a block — survives."""
+    if isinstance(first, str) and isinstance(second, str):
+        return f"{first}\n\n{second}" if first and second else first or second
+    return [*_as_parts(first), *_as_parts(second)]
+
+
+def _as_parts(content: Any) -> list[Any]:
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    return list(content or [])
+
+
 def append_instruction(
     messages: list[dict[str, Any]], instruction: str | None
 ) -> list[dict[str, Any]]:

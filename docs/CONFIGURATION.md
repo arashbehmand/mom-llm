@@ -283,6 +283,7 @@ defaults:
     timeout: 20m        # per upstream call (duration string)
     retries: 3          # retry attempts on a failed call (>= 0)
     retry_backoff: 2s   # base backoff between retries
+    merge_same_role: false  # join consecutive same-role turns into one before each call
   fanout:
     max_concurrency: null   # cap on simultaneous member calls
     min_results: 1          # successful members required before synthesis (quorum)
@@ -303,6 +304,20 @@ overflow, which fail identically on every attempt) with exponential backoff star
 the *last* attempt's error with an honest attempt count. A synthesizer's streamed answer is
 retried only while establishing the connection — once the first token has streamed to the client,
 a failure is never retried (it can't be un-sent).
+
+`merge_same_role` joins runs of consecutive messages that share a role into a single message
+(bodies separated by a blank line; multipart content keeps its parts, so an image or a
+`cache_control` breakpoint survives). Tool plumbing is never merged — an assistant turn carrying
+`tool_calls` and a `tool` result each answer for one call id.
+
+Off by default, because a conversation should go out as it was written. Turn it on for a
+deployment whose upstream cannot take several turns in a row from one role. That is not
+hypothetical: a synthesis is assembled as the client's history, then the candidate block, then
+the synthesis prompt — three user turns in a row — and a subscription proxy in front of a
+CLI-shaped API was observed keeping only the **last** of them. The question and every candidate
+answer vanished, and the synthesizer replied to the system prompt alone, with a cheerful greeting
+where the answer should have been and nothing in any log to say why. It applies to member calls
+and the synthesis alike.
 
 **`defaults.fanout`** —
 - `max_concurrency` bounds how many members hit upstream at once. `null` does **not** mean

@@ -41,7 +41,7 @@ from mom.domain.errors import InvalidRequestError, UnknownModelError
 from mom.domain.ports import CallSpec
 from mom.domain.prompt_caching import is_anthropic_family, openai_prompt_cache_key
 from mom.domain.request import ChatRequestIR, Sampling
-from mom.domain.synthesis import messages_to_dicts
+from mom.domain.synthesis import merge_same_role, messages_to_dicts
 from mom.domain.tooling import (
     classify_turn,
     member_tool_summary,
@@ -109,6 +109,8 @@ class ExecutionPlan:
     # Quorum: at least this many members must succeed (`ok`) before the pipeline synthesizes;
     # fewer fails with QuorumNotMet (502). 0 disables the check (the all-failed fallback runs).
     min_results: int = 1
+    # Join consecutive same-role messages before each call (`defaults.call.merge_same_role`).
+    merge_same_role: bool = False
     # When true, in-flight members are NOT cancelled if the request is torn down (client
     # disconnect); they finish and cache in the background so a retry of the turn hits cache.
     detach_on_disconnect: bool = False
@@ -508,6 +510,9 @@ def resolve_plan(
     notices: list[str] = list(directives.warnings) if directives is not None else []
     instruction = directives.instruction if directives is not None else None
     client_messages = messages_to_dicts(messages)
+    if catalog.config.defaults.call.merge_same_role:
+        # Once, here: every member call and the synthesis history prefix are built from this list.
+        client_messages = merge_same_role(client_messages)
     tier = _resolve_tier(ensemble, ir.effort)
     retries = catalog.config.defaults.call.retries
     retry_backoff_seconds = catalog.config.defaults.call.retry_backoff.total_seconds()
@@ -682,6 +687,7 @@ def resolve_plan(
         fanout_deadline=fanout.deadline.total_seconds() if fanout.deadline else None,
         min_results=fanout.min_results,
         detach_on_disconnect=fanout.detach_on_disconnect,
+        merge_same_role=catalog.config.defaults.call.merge_same_role,
         dedupe=dedupe,
         notices=tuple(notices),
         cache_synthesis=cache_synthesis,

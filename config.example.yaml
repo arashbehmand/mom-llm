@@ -31,6 +31,8 @@ defaults:
     timeout: 20m
     retries: 3
     retry_backoff: 2s
+    merge_same_role: false  # true: join consecutive same-role turns into one message, for an
+                            # upstream that keeps only the last of them
   fanout:
     max_concurrency: null # null = unbounded
     min_results: 1        # quorum: successful members required before synthesis
