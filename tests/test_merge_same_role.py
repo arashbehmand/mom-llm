@@ -139,3 +139,41 @@ async def test_the_synthesizer_receives_one_turn_when_merging_is_on():
 async def test_the_synthesizer_sees_the_turns_as_written_by_default():
     spec = await _synthesis_call(on=False)
     assert [m["role"] for m in spec.messages] == ["user", "user", "user", "user"]
+
+
+def test_the_synthesis_prompt_comes_before_the_candidates():
+    """Pinned, because the order is load-bearing: with the prompt last, the turn ends in a long
+    block of meta-instructions, and an upstream proxy answered such a turn with a greeting as
+    though nothing had been asked. Instructions first, evidence last."""
+    from mom.domain.results import ModelOutcome
+    from mom.domain.synthesis import build_synthesis_messages
+
+    outcome = ModelOutcome(
+        identity="a", llm="a", model="openai/a", status="ok", content="an answer"
+    )
+    messages = build_synthesis_messages(
+        [{"role": "user", "content": "the question"}],
+        [outcome],
+        prompt="you are the concluding model",
+        instruction="be terse",
+    )
+    bodies = [m["content"] for m in messages]
+    assert bodies[0] == "the question"
+    assert bodies[1] == "you are the concluding model"
+    assert "RESPONSE 1 of 1" in bodies[2]
+    assert bodies[3] == "be terse"  # the caller's own instruction keeps the last word
+
+
+def test_each_candidate_block_is_closed():
+    """Every shipped synthesis prompt says candidates are enclosed between a RESPONSE marker and
+    an END RESPONSE marker; the closing one was never written until now."""
+    from mom.domain.results import ModelOutcome
+    from mom.domain.synthesis import build_synthesis_messages
+
+    outcomes = [
+        ModelOutcome(identity=n, llm=n, model=f"openai/{n}", status="ok", content=f"from {n}")
+        for n in ("a", "b")
+    ]
+    block = build_synthesis_messages([], outcomes, prompt=None)[0]["content"]
+    assert "===== RESPONSE 1 of 2 =====\nfrom a\n===== END RESPONSE 1 =====" in block
+    assert "===== RESPONSE 2 of 2 =====\nfrom b\n===== END RESPONSE 2 =====" in block

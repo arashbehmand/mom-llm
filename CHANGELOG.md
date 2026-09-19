@@ -6,6 +6,19 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed
+
+- **The synthesis prompt now comes before the candidate block, and each candidate is closed.**
+  Assembly was history → candidates → synthesis prompt, which ended the turn with a long block of
+  meta-instructions. Sent that way through a subscription proxy, the synthesizer answered with a
+  greeting, as though no question had been asked; the same bytes sent straight to the provider
+  answered normally. Reproduced on both failing runs and fixed by this order alone — instructions
+  first, evidence last. It also lengthens the cacheable prefix, since the prompt is fixed and only
+  the candidates are volatile. Each candidate is now closed with `===== END RESPONSE i =====`,
+  which every shipped synthesis prompt has always described but nothing ever wrote. A custom
+  synthesis prompt that tells the model the candidates are "above" should now say "below" — the
+  four in the tracked `config.yaml` were updated.
+
 ## [2.4.0] - 2026-09-19
 
 ### Added

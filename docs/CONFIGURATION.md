@@ -312,8 +312,8 @@ a failure is never retried (it can't be un-sent).
 
 Off by default, because a conversation should go out as it was written. Turn it on for a
 deployment whose upstream cannot take several turns in a row from one role. That is not
-hypothetical: a synthesis is assembled as the client's history, then the candidate block, then
-the synthesis prompt — three user turns in a row — and a subscription proxy in front of a
+hypothetical: a synthesis is assembled as the client's history, the synthesis prompt and the
+candidate block — three user turns in a row — and a subscription proxy in front of a
 CLI-shaped API was observed keeping only the **last** of them. The question and every candidate
 answer vanished, and the synthesizer replied to the system prompt alone, with a cheerful greeting
 where the answer should have been and nothing in any log to say why. It applies to member calls

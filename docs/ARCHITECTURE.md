@@ -160,8 +160,9 @@ Every endpoint follows the same five moves. Taking `POST /v1/chat/completions` a
    Each completed member is emitted as a `MemberCompleted` event, recorded to metrics, and traced.
 
 4. **Synthesize (streaming).** Successful member outputs are assembled into the synthesizer's
-   messages (`build_synthesis_messages`: client history, then a candidate block, then the synthesis
-   prompt — an order that keeps the stable history a cacheable prefix). If every member failed, an
+   messages (`build_synthesis_messages`: client history, then the synthesis prompt, then the
+   candidate block — instructions before the evidence, which also keeps the fixed part of the
+   prompt in the cacheable prefix and leaves only the volatile candidates after it). If every member failed, an
    `all_failed_message` asks the synthesizer for a brief apology instead. The synthesizer is always
    called via `client.stream(...)`, wrapped in `_stream_with_timeout` (which guards only the wait
    for the *next* chunk, so a healthy stream is never interrupted mid-flight). Its deltas become

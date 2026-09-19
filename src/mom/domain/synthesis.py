@@ -1,8 +1,12 @@
 """Message assembly: IR -> provider dicts, and the concluding-synthesis prompt.
 
-The synthesis assembly keeps v1's tail-append order (client history, then the volatile candidate
-block, then the synthesis prompt) so the stable history stays a cacheable prefix. Candidate
-ordering is deterministic (config/member order), unlike v1's completion-order — see DEVIATIONS.md.
+Assembly order is client history, the synthesis prompt, then the candidate block — instructions
+before the evidence they are about. v1 put the prompt last; that ended the turn with a long block
+of meta-instructions, and a subscription proxy in front of a CLI-shaped API answered such a turn
+with a greeting instead of an answer, as though no question had been asked (2026-09-19, reproduced
+on both of two failing runs and fixed by this order alone). It also lengthens the cacheable
+prefix, since the prompt is fixed and only the candidates are volatile. Candidate ordering is
+deterministic (config/member order), unlike v1's completion-order — see DEVIATIONS.md.
 """
 
 from __future__ import annotations
@@ -129,21 +133,27 @@ def build_synthesis_messages(
     successful = [o for o in outcomes if o.ok]
     total = len(successful)
     blocks = [
-        f"===== RESPONSE {i} of {total} =====\n{outcome.content}"
+        # Closed with an END marker: every shipped synthesis prompt tells the model the candidates
+        # are "enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE i =====`",
+        # and until now that second marker was never written — leaving each candidate to run into
+        # the next with nothing but a blank line between them.
+        f"===== RESPONSE {i} of {total} =====\n{outcome.content}\n===== END RESPONSE {i} ====="
         for i, outcome in enumerate(successful, start=1)
     ]
     candidate_message = (
         f"Below are {total} independent responses from different models to the conversation "
         "above. Synthesize them into a single, superior answer.\n\n" + "\n\n".join(blocks)
     )
-    messages = [*client_messages, {"role": "user", "content": candidate_message}]
-    # Surface any member-proposed tool calls as advisory context (the candidate envelope). Volatile,
-    # so it stays after the cacheable history prefix and before the fixed synthesis prompt.
+    messages = [*client_messages]
+    if prompt:
+        # Before the candidates, not after: see the module docstring. The prompt is also fixed
+        # while the candidate block is not, so this is the longer cacheable prefix too.
+        messages.append({"role": "user", "content": prompt})
+    messages.append({"role": "user", "content": candidate_message})
+    # Member-proposed tool calls, as advisory context about the candidates just read.
     tool_note = summarize_member_tool_calls(outcomes)
     if tool_note:
         messages.append({"role": "user", "content": tool_note})
-    if prompt:
-        messages.append({"role": "user", "content": prompt})
     return append_instruction(messages, instruction)
 
 
