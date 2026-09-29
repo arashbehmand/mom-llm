@@ -40,7 +40,9 @@ llms:
   # effort, so what it can do (and costs) travels with it. See k3 below, where the `search:` block
   # is deliberately declared once on the base and relied on by all its variants.
   # OpenAI search is Responses-API-only (chat completions rejects web_search_options for these
-  # models) — like grok46 below, `api: responses` makes the request-triggered search block usable.
+  # models) — like grok47 below, `api: responses` makes the request-triggered search block usable.
+  # Still 5.6: the GPT-6 series (Astra/Sol/Luna) shipped no Terra as of 2026-09-29 — this pin
+  # moves when one exists.
   oai56t:
     model: openai/gpt-5.6-terra
     api: responses
@@ -50,8 +52,8 @@ llms:
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
 
-  oai56s:
-    model: openai/gpt-5.6-sol
+  oai6s:
+    model: openai/gpt-6-sol
     api: responses
     search: { tools: [{ type: web_search }] }
     variants:
@@ -62,7 +64,7 @@ llms:
       xh: { params: { reasoning_effort: xhigh } }
       p:  { params: { reasoning: { effort: max, mode: pro } } }
 
-  oai56l: { model: openai/gpt-5.6-luna, api: responses, search: { tools: [{ type: web_search }] } }
+  oai6l: { model: openai/gpt-6-luna, api: responses, search: { tools: [{ type: web_search }] } }
 
   oai53cdx:
     model: openai/gpt-5.3-codex
@@ -115,8 +117,8 @@ llms:
       m:  { params: { reasoning_effort: medium } }
       h:  { params: { reasoning_effort: high } }
 
-  cl5st:
-    model: anthropic/claude-sonnet-5
+  cl55st:
+    model: anthropic/claude-sonnet-5-5
     search: { web_search_options: { search_context_size: high } }
     variants:
       l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
@@ -131,12 +133,13 @@ llms:
     variants:
       m: { params: { thinking: { type: enabled, budget_tokens: 4096 } } }
 
-  # Opus 5 thinks by DEFAULT (unlike 4.8, where an unset `thinking` meant no thinking), and it
-  # carries the full five-rung ladder — hence the `xh` variant that 4.8 never had here. Never send
-  # `thinking: {type: disabled}` on this model: it is a 400 above `high` effort, and adaptive is
+  # The Opus 5 line thinks by DEFAULT (unlike 4.8, where an unset `thinking` meant no thinking)
+  # and carries the full five-rung ladder; 5.5 keeps both traits (ladder ends re-verified live
+  # 2026-09-29) at a LOWER price than Opus 5 ($4/$20 vs $5/$25). Never send
+  # `thinking: {type: disabled}` on this line: it is a 400 above `high` effort, and adaptive is
   # what every rung below wants anyway.
-  cl5op:
-    model: anthropic/claude-opus-5
+  cl55op:
+    model: anthropic/claude-opus-5-5
     search: { web_search_options: { search_context_size: high } }
     variants:
       l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
@@ -156,8 +159,8 @@ llms:
       am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
 
   grok420ma: { model: xai/grok-4.20-multi-agent, api: responses, search: { tools: [{ type: web_search }] } }
-  grok46:
-    model: xai/grok-4.6
+  grok47:
+    model: xai/grok-4.7
     # api: responses (like grok420ma) — needed for web search: xai's chat-completions tool type
     # is restricted to function|live_search, but the Responses API accepts tools:[{type:web_search}].
     api: responses
@@ -173,10 +176,12 @@ llms:
   # cleared it: verified plain AND with the plugin, 2026-09-04.)
   grokbuild: { model: openrouter/x-ai/grok-build-0.1, search: { extra_body: { plugins: [{ id: web }] } } }
   dsv4:      { model: openrouter/deepseek/deepseek-v4-pro, search: { extra_body: { plugins: [{ id: web }] } } }
-  dsv4-f:    { model: openrouter/deepseek/deepseek-v4-flash, search: { extra_body: { plugins: [{ id: web }] } } }
-  # Mistral's agentic-coding line; codestral-2508 was a 2025-vintage FIM/completion pin and
-  # the only stale model left in the catalog.
-  devstral:  { model: mistral/devstral-2512 }
+  dsv41f:    { model: openrouter/deepseek/deepseek-v4.1-flash, search: { extra_body: { plugins: [{ id: web }] } } }
+  # Mistral retired the entire Devstral line from their API (devstral-2512 vanished from
+  # /v1/models between 2026-09-06 and 09-29, killing the previous pin here); mistral-code-latest
+  # is their surviving agentic-coding line. A "-latest" alias is against the house pinning style,
+  # but it is the only SKU Mistral offers for this line — no dated variant exists.
+  mcode:     { model: mistral/mistral-code-latest }
   mstlm:     { model: mistral/mistral-medium-2604 }
   qwn38max:  { model: openrouter/qwen/qwen3.8-max, search: { extra_body: { plugins: [{ id: web }] } } }
 
@@ -232,7 +237,7 @@ llms:
   glm53:    { model: openrouter/z-ai/glm-5.3, search: { extra_body: { plugins: [{ id: web }] } } }
   glm53f:   { model: openrouter/z-ai/glm-5.3-flash, search: { extra_body: { plugins: [{ id: web }] } } }
   m3:       { model: openrouter/minimax/minimax-m3, search: { extra_body: { plugins: [{ id: web }] } } }
-  mimo25:   { model: openrouter/xiaomi/mimo-v2.5-pro:nitro, search: { extra_body: { plugins: [{ id: web }] } } }
+  mimo26:   { model: openrouter/xiaomi/mimo-v2.6-pro:nitro, search: { extra_body: { plugins: [{ id: web }] } } }
 
   # Newcomers since the last catalog pass. Left variant-free on purpose: each one's reasoning
   # ladder is unproven here, and a bare name means "no reasoning param, ever" — the honest default
@@ -260,10 +265,11 @@ llms:
   ling3f:   { model: openrouter/inclusionai/ling-3.0-flash, search: { extra_body: { plugins: [{ id: web }] } } }  # Ant Group, 5.1B active
 
   # Latency-tested additions (TTFT/total on a one-line prompt, 2026-08-18):
-  mercury25: { model: openrouter/inception/mercury-2.5-preview, search: { extra_body: { plugins: [{ id: web }] } } } # diffusion LLM, 1.2s/1.2s at $0.04/$0.15
+  mercury25: { model: openrouter/inception/mercury-2.5, search: { extra_body: { plugins: [{ id: web }] } } } # diffusion LLM, 1.2s/1.2s at $0.04/$0.15
   step37f:  { model: openrouter/stepfun/step-3.7-flash, search: { extra_body: { plugins: [{ id: web }] } } } # StepFun MoE, 0.6s TTFT
   granite42: { model: openrouter/ibm-granite/granite-4.2-8b, search: { extra_body: { plugins: [{ id: web }] } } } # IBM, 0.6s TTFT at $0.10/$0.15
   nova2l:   { model: openrouter/amazon/nova-2-lite-v1, search: { extra_body: { plugins: [{ id: web }] } } }  # Amazon, 1M ctx, 0.7s/0.8s
+  nex25p:   { model: openrouter/nex-agi/nex-n2.5-pro, search: { extra_body: { plugins: [{ id: web }] } } }   # Nex AGI, agentic coding, 1.9s TTFT at $0.07/$0.25
 
   # Tencent's dedicated machine-translation line (hy-mt2) — a true specialist for the translation
   # panels (flawless one-liner French in 1.6s, 2026-09-04). Its window is only 8K, so
@@ -278,14 +284,15 @@ llms:
   # :nitro it answers in 1.3s TTFT (2026-09-06) — the same cure the k3 seat needed.
   qwn38f:   { model: openrouter/qwen/qwen3.8-flash:nitro, search: { extra_body: { plugins: [{ id: web }] } } } # 1M ctx at $0.15/$0.47
 
-  # hy4-preview and mercury-2.5-preview are PREVIEW slugs promoted onto panels by the owner's
-  # explicit call (2026-09-06) — if either 404s later, the GA slug is the first suspect.
+  # hy4-preview is a PREVIEW slug promoted onto a panel by the owner's explicit call
+  # (2026-09-06) — if it 404s later, the GA slug is the first suspect. (mercury-2.5 already
+  # graduated: its preview pin was moved to the GA slug on 2026-09-29.)
 
   # One-off reuses of a base model for a different purpose (not an effort family) — `extends`
   # still fits these: no repeated model string, and each needs its OWN api/params shape.
-  rsynth: { extends: oai56s, api: responses, params: { reasoning: { effort: low } } }
+  rsynth: { extends: oai6s, api: responses, params: { reasoning: { effort: low } } }
   oai-dr: # deep-research: forced browsing tool + medium reasoning (see the drmom ensemble)
-    extends: oai56s
+    extends: oai6s
     api: responses
     params:
       tools: [{ type: web_search_preview }]
@@ -304,7 +311,7 @@ llms:
   # A dedicated grok-dr (always-on, like oai-dr/gem-dr) isn't wired: xAI retired live_search (->
   # Agent Tools API), and litellm's xai CHAT COMPLETIONS path still only accepts tool type
   # function|live_search, not web_search. The Responses API path works though (verified live) —
-  # see grok46 above (api: responses + search: tools:web_search), request-triggered like everyone
+  # see grok47 above (api: responses + search: tools:web_search), request-triggered like everyone
   # else, so no separate always-on variant is needed here.
 
 prompts:
@@ -494,11 +501,11 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: low
     members:
-      - { llm: oai56s, effort: [low, medium, high] }
+      - { llm: oai6s, effort: [low, medium, high] }
       - { llm: oai56t, effort: [low, medium, high] }
       - { llm: g31p,   effort: ["off", low, high] }
-      - { llm: cl5op,  effort: [low, medium, high] }
-      - { llm: grok46, effort: [low, medium, high] }
+      - { llm: cl55op,  effort: [low, medium, high] }
+      - { llm: grok47, effort: [low, medium, high] }
       - qwn38max
       - glm53
       - { llm: k3,     effort: [low, high, max] }
@@ -519,14 +526,14 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: medium
     members:
-      - { llm: oai56s, effort: [low, medium, high] }
+      - { llm: oai6s, effort: [low, medium, high] }
       - { llm: oai56t, effort: [medium, high, high] }
       - { llm: g31p,   effort: [low, high, high] }
       - { llm: g38f,   effort: [medium, high, high] }
-      - { llm: cl5op,  effort: [low, medium, high] }
+      - { llm: cl55op,  effort: [low, medium, high] }
       # was two members (grok at low and at high) firing at once — one architecture giving two
       # "opinions" isn't opinion diversity, just a spent seat; merged into one tiered member.
-      - { llm: grok46, effort: [low, medium, high] }
+      - { llm: grok47, effort: [low, medium, high] }
       - { llm: k3,     effort: [low, high, max] }
       - glm53
       - qwn38max
@@ -543,13 +550,13 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: high
     members:
-      - { llm: oai56s, effort: [low, medium, high] }
+      - { llm: oai6s, effort: [low, medium, high] }
       - { llm: oai56t, effort: [low, medium, high] }
       - { llm: g31p,   effort: ["off", low, high] }
       - { llm: g38f,   effort: [low, medium, high] }
-      - { llm: cl5op,  effort: [low, medium, high] }
-      - { llm: cl5st,  effort: [low, medium, high] }
-      - { llm: grok46, effort: [low, medium, high] }
+      - { llm: cl55op,  effort: [low, medium, high] }
+      - { llm: cl55st,  effort: [low, medium, high] }
+      - { llm: grok47, effort: [low, medium, high] }
       - { llm: muse13, effort: [low, medium, high] }
       - { llm: ink,    effort: [low, medium, high] }
       - nem3u
@@ -576,26 +583,26 @@ ensembles:
     effort_tiers: [high, xhigh, max]
     default_tier: max
     members:
-      - { llm: oai56s, effort: [medium, high, xhigh] }
+      - { llm: oai6s, effort: [medium, high, xhigh] }
       # The two priciest flagships sit on the panel HERE, where emom describes the ideal roster.
       # A deployment that doesn't want them on every fan-out drops them in its own overlay with
       # `ensembles.emom.members_exclude` — an edit here changes the panel for every deployment.
-      - { llm: oai6a,  effort: [medium, high, xhigh] }   # same cells as its oai56s sibling
+      - { llm: oai6a,  effort: [medium, high, xhigh] }   # same cells as its oai6s sibling
       # Opus 5's ladder gained `xhigh`, so the calibration rule above now lands one rung higher at
       # emom's lower tiers; the default (`max`) tier cell is unchanged.
-      - { llm: cl5op,  effort: [high, xhigh, max] }
-      - { llm: cl5st,  effort: [high, xhigh, max] }
+      - { llm: cl55op,  effort: [high, xhigh, max] }
+      - { llm: cl55st,  effort: [high, xhigh, max] }
       - { llm: cl51f,  effort: [high, xhigh, max] }   # 5.1's ladder gained `xh`, same as Opus 5
       - { llm: g31p,   effort: high }   # 'high' is g31p's own ceiling — nowhere higher to go
       - { llm: g38f,   effort: high }   # ditto
-      - { llm: grok46, effort: high }   # ditto
+      - { llm: grok47, effort: high }   # ditto
       - grok420ma
       - { llm: muse13, effort: [medium, high, xhigh] }
       - { llm: ink,    effort: [medium, high, max] }
       - nem3u
       - { llm: k3,     effort: [low, high, max] }
     synthesizer:
-      llm: cl5st
+      llm: cl55st
       effort: high
       prompt: synth_default
       search_prompt: synth_search
@@ -607,19 +614,20 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: medium
     members:
-      - { llm: oai56s,   effort: [low, medium, high] }
+      - { llm: oai6s,   effort: [low, medium, high] }
       - { llm: oai53cdx, effort: ["off", medium, high] }
       - { llm: oai56t,   effort: [low, medium, high] }
       - { llm: g31p,     effort: [low, high, high] }
-      - { llm: cl5op,    effort: [low, medium, high] }
-      - { llm: grok46,   effort: [medium, high, high] }
+      - { llm: cl55op,    effort: [low, medium, high] }
+      - { llm: grok47,   effort: [medium, high, high] }
       - grokbuild
       - glm53
       - k27code
       - m3
-      - mimo25
+      - mimo26
       - seed2c
       - katair
+      - nex25p
     synthesizer:
       llm: g31p
       effort: [low, medium, high]
@@ -631,9 +639,9 @@ ensembles:
       Creative Mom — a panel for creative writing and brainstorming, synthesized with a
       voice-preserving prompt that commits to one strong spine instead of averaging into
       committee prose.
-    members: [oai56s-m, g38f-h, cl5op-m, cl5st-l, grok46-h, qwn38max]
+    members: [oai6s-m, g38f-h, cl55op-m, cl55st-l, grok47-h, qwn38max]
     synthesizer:
-      llm: oai56s-m
+      llm: oai6s-m
       prompt: synth_creative
     show_work: inline
   ehmom-code:
@@ -643,14 +651,14 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: high
     members:
-      - { llm: oai56s,   effort: [low, medium, high] }
+      - { llm: oai6s,   effort: [low, medium, high] }
       - { llm: oai53cdx, effort: ["off", medium, high] }
       - { llm: oai56t,   effort: [low, medium, high] }
       - { llm: g31p,     effort: ["off", low, high] }
-      - { llm: cl5op,    effort: [low, medium, high] }
-      - { llm: grok46,   effort: [low, medium, high] }
+      - { llm: cl55op,    effort: [low, medium, high] }
+      - { llm: grok47,   effort: [low, medium, high] }
       - grokbuild
-      - devstral
+      - mcode
       - qwn38max
       - k27code
       - glm53
@@ -658,7 +666,7 @@ ensembles:
       - seed2c
       - laguna
     synthesizer:
-      llm: cl5op
+      llm: cl55op
       effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
@@ -667,7 +675,7 @@ ensembles:
     description: >-
       Mom Cheap — the smallest, fastest, near-zero-cost models, for trivial requests where
       quality is not the bottleneck.
-    members: [oai56l, g35fl-mi, solar4, granite42]
+    members: [oai6l, g35fl-mi, solar4, granite42]
     synthesizer:
       llm: g35fl-mi
       prompt: synth_default
@@ -677,7 +685,7 @@ ensembles:
     description: >-
       Mom Mini — a small step up from mom-cheap: light-effort models for routine tasks that
       don't warrant the full panel.
-    members: [oai56l, g38f-m, cl45hk-m, dsv4-f, nem35l, mercury25, nova2l, glm53f, qwn38f]
+    members: [oai6l, g38f-m, cl45hk-m, dsv41f, nem35l, mercury25, nova2l, glm53f, qwn38f]
     synthesizer:
       llm: g38f-m
       prompt: synth_default
@@ -691,7 +699,7 @@ ensembles:
       - { llm: g38f,   effort: [low, medium, high] }
       - { llm: g35fl,  effort: [low, medium, high] }
       - { llm: oai56t, effort: [low, medium, high] }
-      - mimo25
+      - mimo26
       - hymt2
     synthesizer:
       llm: g38f
@@ -721,10 +729,10 @@ ensembles:
     members:
       - { llm: g38f,   effort: [low, medium, high] }
       - { llm: g31p,   effort: ["off", low, high] }
-      - { llm: oai56s, effort: [none, low, medium] }
-      - { llm: cl5st,  effort: ["off", low, medium] }
+      - { llm: oai6s, effort: [none, low, medium] }
+      - { llm: cl55st,  effort: ["off", low, medium] }
     synthesizer:
-      llm: cl5st
+      llm: cl55st
       effort: high
       prompt: synth_translate
     show_work: inline
