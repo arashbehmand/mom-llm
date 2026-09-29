@@ -158,6 +158,15 @@ async def test_cancel_stops_member_calls_even_when_config_detaches_them(jobs_dir
     server = build_mcp_server(lambda: container, jobs=JobRegistry(jobs_dir))
     job_id = await _submit(server)
     await _until(server, job_id, lambda s: len(s["members"]) == 2)
+    # Status shows a member at dispatch, a beat before its `complete()` is awaited (the cache
+    # lookup sits in between). Cancelling in that beat aborts the task before the call exists,
+    # and there is nothing in-flight to observe being cancelled — seen once on a loaded CI
+    # runner. The invariant under test is "in-flight member CALLS stop", so wait until both
+    # calls are actually in flight before cancelling.
+    deadline = asyncio.get_running_loop().time() + 5.0
+    while len(client.completions) < 2:
+        assert asyncio.get_running_loop().time() < deadline, "member calls never started"
+        await asyncio.sleep(0.01)
 
     cancelled = await server.call_tool("cancel", {"job_id": job_id})
     assert cancelled.structured_content["state"] == "cancelled"
