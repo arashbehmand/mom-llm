@@ -52,12 +52,13 @@ llms:
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
 
-  oai6s:
-    model: openai/gpt-6-sol
+  # No `n` rung: 6.1-sol rejects reasoning_effort none (verified live 2026-10-01), which
+  # 6-sol and 5.6-sol accepted. `low` is the floor now.
+  oai61s:
+    model: openai/gpt-6.1-sol
     api: responses
     search: { tools: [{ type: web_search }] }
     variants:
-      n:  { params: { reasoning_effort: none } }
       l:  { params: { reasoning_effort: low } }
       m:  { params: { reasoning_effort: medium } }
       h:  { params: { reasoning_effort: high } }
@@ -291,9 +292,9 @@ llms:
 
   # One-off reuses of a base model for a different purpose (not an effort family) — `extends`
   # still fits these: no repeated model string, and each needs its OWN api/params shape.
-  rsynth: { extends: oai6s, api: responses, params: { reasoning: { effort: low } } }
+  rsynth: { extends: oai61s, api: responses, params: { reasoning: { effort: low } } }
   oai-dr: # deep-research: forced browsing tool + medium reasoning (see the drmom ensemble)
-    extends: oai6s
+    extends: oai61s
     api: responses
     params:
       tools: [{ type: web_search_preview }]
@@ -502,7 +503,7 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: low
     members:
-      - { llm: oai6s, effort: [low, medium, high] }
+      - { llm: oai61s, effort: [low, medium, high] }
       - { llm: oai56t, effort: [low, medium, high] }
       - { llm: g31p,   effort: ["off", low, high] }
       - { llm: cl55op,  effort: [low, medium, high] }
@@ -527,7 +528,7 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: medium
     members:
-      - { llm: oai6s, effort: [low, medium, high] }
+      - { llm: oai61s, effort: [low, medium, high] }
       - { llm: oai56t, effort: [medium, high, high] }
       - { llm: g31p,   effort: [low, high, high] }
       - { llm: g38f,   effort: [medium, high, high] }
@@ -551,7 +552,7 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: high
     members:
-      - { llm: oai6s, effort: [low, medium, high] }
+      - { llm: oai61s, effort: [low, medium, high] }
       - { llm: oai56t, effort: [low, medium, high] }
       - { llm: g31p,   effort: ["off", low, high] }
       - { llm: g38f,   effort: [low, medium, high] }
@@ -584,11 +585,11 @@ ensembles:
     effort_tiers: [high, xhigh, max]
     default_tier: max
     members:
-      - { llm: oai6s, effort: [medium, high, xhigh] }
+      - { llm: oai61s, effort: [medium, high, xhigh] }
       # The two priciest flagships sit on the panel HERE, where emom describes the ideal roster.
       # A deployment that doesn't want them on every fan-out drops them in its own overlay with
       # `ensembles.emom.members_exclude` — an edit here changes the panel for every deployment.
-      - { llm: oai6a,  effort: [medium, high, xhigh] }   # same cells as its oai6s sibling
+      - { llm: oai6a,  effort: [medium, high, xhigh] }   # same cells as its oai61s sibling
       # Opus 5's ladder gained `xhigh`, so the calibration rule above now lands one rung higher at
       # emom's lower tiers; the default (`max`) tier cell is unchanged.
       - { llm: cl55op,  effort: [high, xhigh, max] }
@@ -614,7 +615,7 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: medium
     members:
-      - { llm: oai6s,   effort: [low, medium, high] }
+      - { llm: oai61s,   effort: [low, medium, high] }
       - { llm: oai53cdx, effort: ["off", medium, high] }
       - { llm: oai56t,   effort: [low, medium, high] }
       - { llm: g31p,     effort: [low, high, high] }
@@ -639,9 +640,9 @@ ensembles:
       Creative Mom — a panel for creative writing and brainstorming, synthesized with a
       voice-preserving prompt that commits to one strong spine instead of averaging into
       committee prose.
-    members: [oai6s-m, g38f-h, cl55op-m, cl55st-l, grok47-h, qwn38max]
+    members: [oai61s-m, g38f-h, cl55op-m, cl55st-l, grok47-h, qwn38max]
     synthesizer:
-      llm: oai6s-m
+      llm: oai61s-m
       prompt: synth_creative
     show_work: inline
   ehmom-code:
@@ -651,7 +652,7 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: high
     members:
-      - { llm: oai6s,   effort: [low, medium, high] }
+      - { llm: oai61s,   effort: [low, medium, high] }
       - { llm: oai53cdx, effort: ["off", medium, high] }
       - { llm: oai56t,   effort: [low, medium, high] }
       - { llm: g31p,     effort: ["off", low, high] }
@@ -729,7 +730,7 @@ ensembles:
     members:
       - { llm: g38f,   effort: [low, medium, high] }
       - { llm: g31p,   effort: ["off", low, high] }
-      - { llm: oai6s, effort: [none, low, medium] }
+      - { llm: oai61s, effort: ["off", low, medium] }  # 6.1-sol has no `none` rung; off beats repeating the floor
       - { llm: cl55st,  effort: ["off", low, medium] }
     synthesizer:
       llm: cl55st
