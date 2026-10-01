@@ -158,11 +158,10 @@ llms:
       xh: { params: { reasoning_effort: xhigh, thinking: { type: adaptive } } }
       am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
 
-  grok420ma: { model: xai/grok-4.20-multi-agent, api: responses, search: { tools: [{ type: web_search }] } }
   grok47:
     model: xai/grok-4.7
-    # api: responses (like grok420ma) — needed for web search: xai's chat-completions tool type
-    # is restricted to function|live_search, but the Responses API accepts tools:[{type:web_search}].
+    # api: responses — needed for web search: xai's chat-completions tool type is restricted to
+    # function|live_search, but the Responses API accepts tools:[{type:web_search}].
     api: responses
     search: { tools: [{ type: web_search }] }
     variants:
@@ -598,7 +597,6 @@ ensembles:
       - { llm: g31p,   effort: high }   # 'high' is g31p's own ceiling — nowhere higher to go
       - { llm: g38f,   effort: high }   # ditto
       - { llm: grok47, effort: high }   # ditto
-      - grok420ma
       - { llm: muse13, effort: [medium, high, xhigh] }
       - { llm: ink,    effort: [medium, high, max] }
       - nem3u
