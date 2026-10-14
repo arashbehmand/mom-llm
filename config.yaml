@@ -102,12 +102,16 @@ llms:
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
 
-  g31p:
-    model: gemini/gemini-3.1-pro-preview
+  # Gemini 4 Argon (2026-10-13) replaces the long-lived 3.1-pro-preview as the Gemini pro seat —
+  # and restores the `mi` rung the flash line dropped (all four rungs verified live 2026-10-14).
+  g4a:
+    model: gemini/gemini-4-argon
     search: { web_search_options: { search_context_size: high } }
     variants:
-      l: { params: { reasoning_effort: low } }
-      h: { params: { reasoning_effort: high } }
+      mi: { params: { reasoning_effort: minimal } }
+      l:  { params: { reasoning_effort: low } }
+      m:  { params: { reasoning_effort: medium } }
+      h:  { params: { reasoning_effort: high } }
 
   g35fl:
     model: gemini/gemini-3.5-flash-lite
@@ -128,11 +132,15 @@ llms:
       xh: { params: { reasoning_effort: xhigh, thinking: { type: adaptive } } }
       am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
 
-  cl45hk:
-    model: anthropic/claude-haiku-4-5-20251001
+  # Haiku joined the 5.5 family (2026-10-07, $0.10/$0.50, 1M ctx): adaptive thinking + the
+  # effort ladder replace the old budget_tokens style, verified live 2026-10-14.
+  cl55hk:
+    model: anthropic/claude-haiku-5-5
     search: { web_search_options: { search_context_size: high } }
     variants:
-      m: { params: { thinking: { type: enabled, budget_tokens: 4096 } } }
+      l: { params: { reasoning_effort: low, thinking: { type: adaptive } } }
+      m: { params: { reasoning_effort: medium, thinking: { type: adaptive } } }
+      h: { params: { reasoning_effort: high, thinking: { type: adaptive } } }
 
   # The Opus 5 line thinks by DEFAULT (unlike 4.8, where an unset `thinking` meant no thinking)
   # and carries the full five-rung ladder; 5.5 keeps both traits (ladder ends re-verified live
@@ -182,7 +190,7 @@ llms:
   # is their surviving agentic-coding line. A "-latest" alias is against the house pinning style,
   # but it is the only SKU Mistral offers for this line — no dated variant exists.
   mcode:     { model: mistral/mistral-code-latest }
-  mstlm:     { model: mistral/mistral-medium-2604 }
+  mstl4:     { model: mistral/mistral-large-4-0 }
   qwn38max:  { model: openrouter/qwen/qwen3.8-max, search: { extra_body: { plugins: [{ id: web }] } } }
 
   k3:
@@ -213,6 +221,17 @@ llms:
     search: { extra_body: { plugins: [{ id: web }] } }
     variants:
       mi: { params: { reasoning: { effort: minimal } } }
+      l:  { params: { reasoning: { effort: low } } }
+      m:  { params: { reasoning: { effort: medium } } }
+      h:  { params: { reasoning: { effort: high } } }
+      xh: { params: { reasoning: { effort: xhigh } } }
+
+  # Meta's frontier reasoning line above Spark ($4/$20, 1M ctx) — ladder through xhigh verified
+  # live 2026-10-14. Seated on emom; Spark stays the everyday Meta seat.
+  musew:
+    model: openrouter/meta/muse-wonder
+    search: { extra_body: { plugins: [{ id: web }] } }
+    variants:
       l:  { params: { reasoning: { effort: low } } }
       m:  { params: { reasoning: { effort: medium } } }
       h:  { params: { reasoning: { effort: high } } }
@@ -264,7 +283,7 @@ llms:
   # Catalog-only (mom-debug reaches it via `all`): the lone Ant Group endpoint collapses under
   # concurrent load — 0.8s solo but 16s (or hard errors) at just 4-way fan-in, measured
   # 2026-08-18. Not seated on any panel until it has more providers behind it.
-  ling3f:   { model: openrouter/inclusionai/ling-3.0-flash, search: { extra_body: { plugins: [{ id: web }] } } }  # Ant Group, 5.1B active
+  ling31f:  { model: openrouter/inclusionai/ling-3.1-flash, search: { extra_body: { plugins: [{ id: web }] } } }  # Ant Group, 5.1B active
 
   # Latency-tested additions (TTFT/total on a one-line prompt, 2026-08-18):
   mercury25: { model: openrouter/inception/mercury-2.5, search: { extra_body: { plugins: [{ id: web }] } } } # diffusion LLM, 1.2s/1.2s at $0.04/$0.15
@@ -272,6 +291,9 @@ llms:
   granite42: { model: openrouter/ibm-granite/granite-4.2-8b, search: { extra_body: { plugins: [{ id: web }] } } } # IBM, 0.6s TTFT at $0.10/$0.15
   nova2l:   { model: openrouter/amazon/nova-2-lite-v1, search: { extra_body: { plugins: [{ id: web }] } } }  # Amazon, 1M ctx, 0.7s/0.8s
   nex25p:   { model: openrouter/nex-agi/nex-n2.5-pro, search: { extra_body: { plugins: [{ id: web }] } } }   # Nex AGI, agentic coding, 1.9s TTFT at $0.07/$0.25
+  lfm25:    { model: openrouter/liquid/lfm-2.5-24b-a2b, search: { extra_body: { plugins: [{ id: web }] } } } # Liquid AI MoE, always-reasons, 0.6s TTFT at $0.05/$0.70
+  # stepfun/step-5-preview (flagship, $1/$2.70) passes probes but is a PREVIEW slug — owner
+  # promotes previews explicitly; revisit at GA. step37f stays the StepFun seat meanwhile.
 
   # Tencent's dedicated machine-translation line (hy-mt2) — a true specialist for the translation
   # panels (flawless one-liner French in 1.6s, 2026-09-04). Its window is only 8K, so
@@ -300,7 +322,7 @@ llms:
       tools: [{ type: web_search_preview }]
       reasoning: { effort: medium }
   gem-dr: # deep-research: Google Search grounding + high reasoning (see the drmom ensemble)
-    extends: g31p
+    extends: g4a
     params:
       web_search_options: { search_context_size: high }
       reasoning_effort: high
@@ -505,7 +527,7 @@ ensembles:
     members:
       - { llm: oai61s, effort: [low, medium, high] }
       - { llm: oai56t, effort: [low, medium, high] }
-      - { llm: g31p,   effort: ["off", low, high] }
+      - { llm: g4a,   effort: ["off", low, high] }
       - { llm: cl55op,  effort: [low, medium, high] }
       - { llm: grok47, effort: [low, medium, high] }
       - qwn38max
@@ -530,7 +552,7 @@ ensembles:
     members:
       - { llm: oai61s, effort: [low, medium, high] }
       - { llm: oai56t, effort: [medium, high, high] }
-      - { llm: g31p,   effort: [low, high, high] }
+      - { llm: g4a,   effort: [low, high, high] }
       - { llm: g38f,   effort: [medium, high, high] }
       - { llm: cl55op,  effort: [low, medium, high] }
       # was two members (grok at low and at high) firing at once — one architecture giving two
@@ -540,7 +562,7 @@ ensembles:
       - glm53
       - qwn38max
     synthesizer:
-      llm: g31p
+      llm: g4a
       effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
@@ -554,7 +576,7 @@ ensembles:
     members:
       - { llm: oai61s, effort: [low, medium, high] }
       - { llm: oai56t, effort: [low, medium, high] }
-      - { llm: g31p,   effort: ["off", low, high] }
+      - { llm: g4a,   effort: ["off", low, high] }
       - { llm: g38f,   effort: [low, medium, high] }
       - { llm: cl55op,  effort: [low, medium, high] }
       - { llm: cl55st,  effort: [low, medium, high] }
@@ -568,10 +590,10 @@ ensembles:
       - m3
       - longcat2
       - hy4p
-      - mstlm
+      - mstl4
       - step37f
     synthesizer:
-      llm: g31p
+      llm: g4a
       effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
@@ -595,10 +617,12 @@ ensembles:
       - { llm: cl55op,  effort: [high, xhigh, max] }
       - { llm: cl55st,  effort: [high, xhigh, max] }
       - { llm: cl51f,  effort: [high, xhigh, max] }   # 5.1's ladder gained `xh`, same as Opus 5
-      - { llm: g31p,   effort: high }   # 'high' is g31p's own ceiling — nowhere higher to go
+      - { llm: g4a,   effort: high }   # 'high' is g4a's own ceiling — nowhere higher to go
       - { llm: g38f,   effort: high }   # ditto
       - { llm: grok47, effort: high }   # ditto
-      - { llm: muse13, effort: [medium, high, xhigh] }
+      # Muse Wonder (2026-10-12) is Meta's frontier line above Spark — it takes the flagship seat
+      # here; Spark 1.3 keeps its hmom seat.
+      - { llm: musew,  effort: [medium, high, xhigh] }
       - { llm: ink,    effort: [medium, high, max] }
       - nem3u
       - { llm: k3,     effort: [low, high, max] }
@@ -618,7 +642,7 @@ ensembles:
       - { llm: oai61s,   effort: [low, medium, high] }
       - { llm: oai53cdx, effort: ["off", medium, high] }
       - { llm: oai56t,   effort: [low, medium, high] }
-      - { llm: g31p,     effort: [low, high, high] }
+      - { llm: g4a,     effort: [low, high, high] }
       - { llm: cl55op,    effort: [low, medium, high] }
       - { llm: grok47,   effort: [medium, high, high] }
       - grokbuild
@@ -630,7 +654,7 @@ ensembles:
       - katair
       - nex25p
     synthesizer:
-      llm: g31p
+      llm: g4a
       effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
@@ -655,7 +679,7 @@ ensembles:
       - { llm: oai61s,   effort: [low, medium, high] }
       - { llm: oai53cdx, effort: ["off", medium, high] }
       - { llm: oai56t,   effort: [low, medium, high] }
-      - { llm: g31p,     effort: ["off", low, high] }
+      - { llm: g4a,     effort: ["off", low, high] }
       - { llm: cl55op,    effort: [low, medium, high] }
       - { llm: grok47,   effort: [low, medium, high] }
       - grokbuild
@@ -686,7 +710,7 @@ ensembles:
     description: >-
       Mom Mini — a small step up from mom-cheap: light-effort models for routine tasks that
       don't warrant the full panel.
-    members: [oai6l, g38f-m, cl45hk-m, dsv41f, nem35l, mercury25, nova2l, glm53f, qwn38f]
+    members: [oai6l, g38f-m, cl55hk-m, dsv41f, nem35l, mercury25, nova2l, glm53f, qwn38f, lfm25]
     synthesizer:
       llm: g38f-m
       prompt: synth_default
@@ -729,7 +753,7 @@ ensembles:
     default_tier: high
     members:
       - { llm: g38f,   effort: [low, medium, high] }
-      - { llm: g31p,   effort: ["off", low, high] }
+      - { llm: g4a,   effort: ["off", low, high] }
       - { llm: oai61s, effort: ["off", low, medium] }  # 6.1-sol has no `none` rung; off beats repeating the floor
       - { llm: cl55st,  effort: ["off", low, medium] }
     synthesizer:
@@ -755,6 +779,6 @@ ensembles:
       the synthesizer writes one cited report reconciling their findings.
     members: [plx-dr, oai-dr, gem-dr]
     synthesizer:
-      llm: g31p-h
+      llm: g4a-h
       prompt: synth_research
     show_work: inline

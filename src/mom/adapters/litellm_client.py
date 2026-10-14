@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import replace
 import os
 import re
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from mom.domain.errors import ErrorKind, UpstreamError
@@ -896,8 +896,11 @@ class LiteLLMClient:
             stamped = True
             return replace(chunk, attempts=attempts)
 
+        # litellm ≥1.105 annotates aresponses() as a response/iterator union on which neither arm
+        # declares __aiter__; with stream=True the call always returns the async iterator.
+        events = cast("AsyncIterator[Any]", stream)
         try:
-            async for event in stream:
+            async for event in events:
                 chunk = _responses_event_to_chunk(event, spec.model)
                 if chunk is not None:
                     yield stamp(chunk)

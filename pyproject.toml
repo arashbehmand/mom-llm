@@ -17,8 +17,9 @@ keywords = ["llm", "openai", "anthropic", "gateway", "litellm", "mixture-of-mode
 # catalog bundled with 1.93 predated claude-opus-5, so every Opus 5 call was capped at
 # litellm's 4096-token default (all of it spent on thinking -> empty answers) and had the
 # client's `top_p` forwarded to a model that rejects it (400, killing synthesis). 1.97 is the
-# first release whose bundled catalog carries claude-opus-5. Raise this floor whenever
-# config.yaml adopts a model newer than the pinned catalog knows.
+# a release whose bundled catalog carries the models config.yaml pins (1.105 knows the
+# Claude 5.5 line, GPT-6.x and Grok 4.7). Raise this floor whenever config.yaml adopts a
+# model newer than the pinned catalog knows.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -29,7 +30,7 @@ dependencies = [
     "structlog>=24.1",
     "aiosqlite>=0.20",
     "platformdirs>=4.2",
-    "litellm>=1.97",
+    "litellm>=1.105",
     "langfuse>=3.0",
     "mcp>=2.1",
     # Direct, not transitive: mom.runtime.secrets parses the discovered .env files itself rather
