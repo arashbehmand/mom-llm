@@ -106,6 +106,9 @@ llms:
   # and restores the `mi` rung the flash line dropped (all four rungs verified live 2026-10-14).
   g4a:
     model: gemini/gemini-4-argon
+    # Explicit pricing: too new for litellm 1.105's bundled catalog (next floor bump retires
+    # this, like the Sep batch) — without it a metered seat meters at $0.
+    pricing: { input_per_1m: 2.00, output_per_1m: 10.00 }
     search: { web_search_options: { search_context_size: high } }
     variants:
       mi: { params: { reasoning_effort: minimal } }
@@ -136,6 +139,7 @@ llms:
   # effort ladder replace the old budget_tokens style, verified live 2026-10-14.
   cl55hk:
     model: anthropic/claude-haiku-5-5
+    pricing: { input_per_1m: 0.10, output_per_1m: 0.50 }  # same catalog gap as g4a
     search: { web_search_options: { search_context_size: high } }
     variants:
       l: { params: { reasoning_effort: low, thinking: { type: adaptive } } }
@@ -190,7 +194,7 @@ llms:
   # is their surviving agentic-coding line. A "-latest" alias is against the house pinning style,
   # but it is the only SKU Mistral offers for this line — no dated variant exists.
   mcode:     { model: mistral/mistral-code-latest }
-  mstl4:     { model: mistral/mistral-large-4-0 }
+  mstl4:     { model: mistral/mistral-large-4-0, pricing: { input_per_1m: 0.68, output_per_1m: 2.09 } }  # same catalog gap as g4a
   qwn38max:  { model: openrouter/qwen/qwen3.8-max, search: { extra_body: { plugins: [{ id: web }] } } }
 
   k3:
