@@ -191,9 +191,10 @@ llms:
     api: responses
     search: { tools: [{ type: web_search }] }
     variants:
-      l: { params: { reasoning_effort: low } }
-      m: { params: { reasoning_effort: medium } }
-      h: { params: { reasoning_effort: high } }
+      l:  { params: { reasoning_effort: low } }
+      m:  { params: { reasoning_effort: medium } }
+      h:  { params: { reasoning_effort: high } }
+      xh: { params: { reasoning_effort: xhigh } }  # added by 4.7 upstream; verified 2026-10-15
 
   # OpenRouter's web plugin is a PLATFORM capability, not model-specific — verified live on both
   # k3 and qwn38max (two unrelated architectures), so it's wired on every openrouter/* model
@@ -253,6 +254,7 @@ llms:
       m:  { params: { reasoning: { effort: medium } } }
       h:  { params: { reasoning: { effort: high } } }
       xh: { params: { reasoning: { effort: xhigh } } }
+      am: { params: { reasoning: { effort: max } } }  # verified 2026-10-15
 
   ink:
     model: openrouter/thinkingmachines/inkling
@@ -635,13 +637,21 @@ ensembles:
       - { llm: cl55st,  effort: [high, xhigh, max] }
       - { llm: cl51f,  effort: [high, xhigh, max] }   # 5.1's ladder gained `xh`, same as Opus 5
       - { llm: g4a,    effort: high }   # 'high' is g4a's own ceiling — nowhere higher to go
-      - { llm: g38f,   effort: high }   # ditto
-      - { llm: grok47, effort: high }   # ditto
+      - { llm: grok47, effort: [medium, high, xhigh] }  # ceiling rose to xhigh, so the top tier follows it
       # Muse Wonder (2026-10-12) is Meta's frontier line above Spark — it takes the flagship seat
-      # here; Spark 1.3 keeps its hmom seat.
-      - { llm: musew,  effort: [medium, high, xhigh] }
+      # here; Spark 1.3 keeps its hmom seat (48 on the AA index, but one lineage gets one seat).
+      - { llm: musew,  effort: [high, xhigh, max] }
+      # Reshaped against the AA Intelligence Index v4.3.2 (2026-10-15): g38f (41) and nem3u (23)
+      # went back to being hmom-only — flash-tier scores don't belong on the elite panel — and
+      # glm53 (45) and mimo26 (46) joined; both ride subscriptions on the main deployment, so the
+      # panel got smarter AND cheaper. qwn38max (45) was considered and passed over — the owner's
+      # call: its inference reliability isn't elite-panel grade. ink (25) stays deliberately,
+      # also the owner's call: a genuinely different reasoning philosophy is worth a seat that
+      # scores poorly on a general index. Both newcomers sit bare: their effort params are
+      # verified via OpenRouter but unproven through the sub channels they ride in production.
       - { llm: ink,    effort: [medium, high, max] }
-      - nem3u
+      - glm53
+      - mimo26
       - { llm: k3,     effort: [low, high, max] }
     synthesizer:
       llm: cl55st
