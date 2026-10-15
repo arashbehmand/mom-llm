@@ -6,6 +6,20 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Fixed
+
+- **A 402 "payment required" now classifies as `quota`, so `fallback:` fires on it.** OpenRouter
+  refuses a call up front when `max_tokens` exceeds the remaining account balance ("This request
+  requires more credits, or fewer max_tokens", HTTP 402), and the same exhaustion relayed through
+  an anthropic-protocol proxy arrives as a 400-shaped `billing_error`. Both used to classify as
+  `unknown`/`bad_request` — kinds that deliberately do not fall back — so a seat with a healthy
+  backstop simply failed; observed live as three synthesizer deaths in a row on one evening. The
+  exhaustion matcher now knows the wording, and the status-code ladder maps 402 to `quota`.
+- **`run failed` now logs the scrubbed provider detail.** The run-level failure line carried only
+  the client-safe message; the adapter's classified, scrubbed `error_detail` (already stored in
+  the metrics ledger) never reached the log, so diagnosing a dead synthesis meant querying SQLite.
+  The member-failure path already logged its cause; the run path now matches it.
+
 ## [2.4.1] - 2026-09-19
 
 ### Changed

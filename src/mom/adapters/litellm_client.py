@@ -543,13 +543,15 @@ _TRUNCATED_STREAM = re.compile(
 
 # Exhaustion, wearing whatever class the provider felt like: Anthropic sends a rate_limit_error
 # for "Usage credits are required for this model", cli-proxy-api a 503 for "no auth available
-# (last upstream error: ... monthly usage limit)", xAI a 402 for "usage balance exhausted". All
-# three are retryable classes, so mom spent three attempts on each before giving up — on failures
+# (last upstream error: ... monthly usage limit)", xAI a 402 for "usage balance exhausted", and
+# OpenRouter a 402 for "This request requires more credits, or fewer max_tokens" (it refuses up
+# front when the max_tokens reservation exceeds the remaining balance). All of these are
+# retryable classes, so mom spent three attempts on each before giving up — on failures
 # that cannot succeed until someone pays or the billing cycle resets.
 _EXHAUSTED = re.compile(
     r"usage limit|usage balance|credits are required|insufficient[_ ](?:quota|credit|balance)|"
     r"quota (?:exceeded|exhausted)|balance exhausted|billing (?:cycle|hard limit)|"
-    r"no auth available|cooling down|payment required",
+    r"no auth available|cooling down|payment required|requires more credits",
     re.IGNORECASE,
 )
 
@@ -605,6 +607,10 @@ def _classify(exc: Exception) -> ErrorKind:
     if isinstance(status, int):
         if status in (401, 403):
             return "auth"
+        if status == 402:
+            # Payment Required is always about the account's balance, never this request —
+            # same classification as the message-based _exhausted match above.
+            return "quota"
         if status == 408:
             return "timeout"
         if status == 429:

@@ -894,11 +894,13 @@ an exception's type and source location (`pipeline.py:809 in run_ensemble`) rath
 traceback, because a traceback's last line embeds the exception message — and an exception raised
 while parsing a provider's response carries that provider's text in it.
 
-The one exception is the operator-facing `member call failed` warning, which deliberately logs the
-provider's own exception chain so a failure can actually be diagnosed. That text is **not**
+There are two exceptions, both operator-facing. The `member call failed` warning deliberately logs
+the provider's own exception chain so a failure can actually be diagnosed; that text is **not**
 scrubbed — it can contain API keys, bearer tokens, or internal URLs. Treat the log stream as
 sensitive: it is fine on a host you control, but scrub or filter before shipping it to a
-third-party aggregator.
+third-party aggregator. The `run failed` warning carries `error_detail`, the adapter's classified
+and *scrubbed* copy of the provider error (the same text the metrics ledger stores) — without it, a
+failed synthesis was diagnosable only by querying the metrics DB.
 
 **Provider API keys** are read directly from the environment, by the names inferred (or set
 via `api_key_env`) in `llms`:

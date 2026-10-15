@@ -1047,13 +1047,16 @@ async def run_ensemble(plan: ExecutionPlan, deps: PipelineDeps) -> AsyncIterator
         _publish_terminal(
             ProgressEvent(kind="failed", ensemble=plan.ensemble, detail=exc.safe_message)
         )
-        # safe_message, never exc.detail: the client-safe half is the one that is safe to log
-        # unconditionally. Covers QuorumNotMet and synthesis failures, previously logged nowhere.
+        # `error` is the client-safe half; `error_detail` is the adapter's already-scrubbed
+        # operator copy (or None on a MomError that isn't an UpstreamError) — the same pair the
+        # member-failure path logs and _record_synth_failure stores. Without it, a synthesis
+        # failure's cause (e.g. an OpenRouter 402) was readable only by querying the metrics DB.
         log.warning(
             "run failed",
             code=exc.code,
             error_kind=exc.kind,
             error=exc.safe_message,
+            error_detail=exc.detail,
             synthesizing=synthesizing,
             elapsed_seconds=round(deps.clock.now() - run_started, 2),
         )

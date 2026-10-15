@@ -391,6 +391,7 @@ def test_classify_falls_back_to_status_code_when_not_a_litellm_exception():
             self.status_code = status_code
 
     assert _classify(_RawHttpError(401)) == "auth"
+    assert _classify(_RawHttpError(402)) == "quota"
     assert _classify(_RawHttpError(429)) == "rate_limit"
     assert _classify(_RawHttpError(408)) == "timeout"
     assert _classify(_RawHttpError(400)) == "bad_request"
@@ -427,6 +428,28 @@ def test_exhausted_quota_is_not_retried_whatever_class_it_arrives_as():
             message='XaiException - {"error":"Grok Build usage balance exhausted"}',
             model="m",
             llm_provider="xai",
+        ),
+        # OpenRouter refuses up front when max_tokens exceeds the remaining balance (402). Seen
+        # live 2026-10-15: three synthesizer calls in a row died "unknown", so no fallback fired.
+        le.APIError(
+            status_code=402,
+            message=(
+                'OpenrouterException - {"error":{"message":"This request requires more credits, '
+                "or fewer max_tokens. You requested up to 65536 tokens, but can only afford "
+                '55880.","code":402}}'
+            ),
+            model="m",
+            llm_provider="openrouter",
+        ),
+        # The same exhaustion relayed through cli-proxy-api's anthropic protocol arrives as a
+        # 400-shaped billing_error — the message, not the class, is what identifies it.
+        le.BadRequestError(
+            message=(
+                'AnthropicException - b\'{"type":"error","error":{"type":"billing_error",'
+                '"message":"This request requires more credits, or fewer max_tokens."}}\''
+            ),
+            model="m",
+            llm_provider="anthropic",
         ),
     ]
     for exc in exhausted:
