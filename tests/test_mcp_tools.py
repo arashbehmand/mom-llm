@@ -825,3 +825,32 @@ async def test_every_tool_argument_documents_itself():
         if not schema.get("description")
     }
     assert undocumented == set()
+
+
+async def test_consult_turns_on_native_search_for_the_members_that_have_it():
+    """`b` declares a `search:` block, `a` does not: the flag reaches only `b`'s call."""
+    container = _container()
+    await _server(container).call_tool(
+        "consult", {"prompt": "x", "ensemble": "e", "web_search": True}
+    )
+    calls = {spec.llm_name: spec.params for spec in container.client.completions}  # type: ignore[attr-defined]
+    assert calls["b"].get("enabled") is True
+    assert "enabled" not in calls["a"]
+
+
+async def test_consult_leaves_search_off_by_default():
+    container = _container()
+    await _server(container).call_tool("consult", {"prompt": "x", "ensemble": "e"})
+    calls = {spec.llm_name: spec.params for spec in container.client.completions}  # type: ignore[attr-defined]
+    assert "enabled" not in calls["b"]
+
+
+@pytest.mark.parametrize("tool", ["consult", "submit"])
+async def test_web_search_is_refused_where_no_seat_can_search(tool: str):
+    """An inline panel of `a` alone has no `search:` block anywhere."""
+    container = _container()
+    with pytest.raises(ToolError, match="web_search"):
+        await _server(container).call_tool(
+            tool, {"prompt": "x", "panel": ["a"], "synthesizer": "a", "web_search": True}
+        )
+    assert container.client.completions == []  # type: ignore[attr-defined]

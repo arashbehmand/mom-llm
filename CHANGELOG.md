@@ -6,6 +6,15 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added
+
+- **`consult` and `submit` take `web_search`.** The MCP tools had no way to turn on the native
+  web search the HTTP surfaces already offer (`web_search` / `web_search_options`), so an agent
+  over MCP could never let a panel look anything up. The flag now reaches the same request field,
+  so each seat with a `search:` block gets its provider's search params and the rest answer as
+  usual. It is refused on an ensemble where no seat declares search, like `effort` on a tierless
+  one.
+
 ### Fixed
 
 - **A 402 "payment required" now classifies as `quota`, so `fallback:` fires on it.** OpenRouter

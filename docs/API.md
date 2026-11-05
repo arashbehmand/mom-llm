@@ -402,7 +402,7 @@ config mutation: a leaked token can already chat, and must not be able to destro
 | --- | --- | --- |
 | `list_llms` | — | every catalog llm (bases and variants) with model string, capabilities, pricing and its `pricing_source` |
 | `list_ensembles` | — | the resolved ensembles: members, effort tiers, synthesizer, advertised capabilities |
-| `consult` | `prompt`, then either `ensemble` or `panel` + `synthesizer`; optional `effort`, `system`, `tools`, the [panel arguments](#panel-arguments), `include_member_answers` | one synthesized answer with a per-member cost breakdown (below) |
+| `consult` | `prompt`, then either `ensemble` or `panel` + `synthesizer`; optional `effort`, `system`, `tools`, `web_search`, the [panel arguments](#panel-arguments), `include_member_answers` | one synthesized answer with a per-member cost breakdown (below) |
 | `submit` | the same as `consult` | a job status with its `job_id`, at once; the consult runs in the background ([jobs](#background-jobs-submit-status-result-cancel)) |
 | `answers` | `job_id` (a job id, or a consult's `request_id`), optional `member`, `reasoning` | what each panel member said on that run ([below](#what-each-member-said)) |
 | `status` | optional `job_id`, `limit` (clamped to 1–200) | one job's status, or every job on the machine, newest first |
@@ -419,6 +419,11 @@ whether the call has hung.
 `effort` only applies to an ensemble that declares effort tiers. Passing it to one that doesn't —
 including any inline panel, which is always tierless — is rejected rather than ignored, so an
 agent never believes it bought deeper reasoning than it did.
+
+`web_search` is the MCP form of the HTTP surfaces' `web_search` flag: each member and the
+synthesizer that declares a `search:` block runs with its provider's native search params merged
+in, and the rest answer as usual. It is rejected on an ensemble where no seat declares one, for
+the same reason as `effort`.
 
 `list_llms` reads capabilities and pricing from config first and litellm's bundled catalog
 behind it, which is the same order the gateway uses at call time. Config declares those blocks

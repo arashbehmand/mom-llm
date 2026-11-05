@@ -70,6 +70,7 @@ def build_ir(
     system: str | None,
     effort: str | None,
     tools: Sequence[dict[str, Any]] | None,
+    web_search: bool = False,
 ) -> ChatRequestIR:
     """The one-turn request a consult runs. Single-turn deliberately: a conversation belongs on
     the model endpoint, which is what the wire surfaces are for."""
@@ -82,7 +83,16 @@ def build_ir(
         messages=tuple(messages),
         tools=tuple(_tool_specs(tools)),
         effort=effort,
+        web_search=web_search,
     )
+
+
+def _can_search(catalog: ResolvedCatalog, name: str) -> bool:
+    """Whether any seat of this ensemble declares a `search:` block — the same test the
+    advertised `supports_web_search` capability uses."""
+    ensemble = catalog.ensembles[name]
+    seats = [member.llm for member in ensemble.members] + [ensemble.synthesizer.llm]
+    return any(catalog.llms[llm].search is not None for llm in seats)
 
 
 def _tool_specs(tools: Sequence[dict[str, Any]] | None) -> list[ToolSpec]:
@@ -292,6 +302,7 @@ def prepare_consult(
     effort: str | None,
     tools: Sequence[dict[str, Any]] | None,
     panel_request: PanelRequest | None = None,
+    web_search: bool = False,
 ) -> PreparedConsult:
     """Validate a consult's arguments and resolve its plan. Raises ``ToolError`` on a caller
     mistake; spends nothing."""
@@ -305,7 +316,21 @@ def prepare_consult(
         catalog = inline_catalog(container.catalog, panel=panel or (), synthesizer=synthesizer)
         name = INLINE_ENSEMBLE
 
-    ir = build_ir(ensemble=name, prompt=prompt, system=system, effort=effort, tools=tools)
+    if web_search and not _can_search(catalog, name):
+        # Same reasoning as the effort check below: a flag that cannot change anything must not
+        # be accepted silently, or an agent believes its panel looked things up when none could.
+        raise ToolError(
+            f"no member or synthesizer of {name!r} has a `search:` block, so `web_search` "
+            "would have no effect"
+        )
+    ir = build_ir(
+        ensemble=name,
+        prompt=prompt,
+        system=system,
+        effort=effort,
+        tools=tools,
+        web_search=web_search,
+    )
     try:
         plan = resolve_plan(catalog, ir, (panel_request or PanelRequest()).directives())
     except MomError as exc:

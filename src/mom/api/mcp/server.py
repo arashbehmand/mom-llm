@@ -108,6 +108,14 @@ CacheSynth = Annotated[
     bool | None,
     Field(description="Keep this synthesis for the next identical run, or force a fresh one."),
 ]
+WebSearch = Annotated[
+    bool,
+    Field(
+        description="Let each member (and the synthesizer) that has a `search:` block use its "
+        "provider's native web search for this run; the others answer as usual. The same flag "
+        "as `web_search` on the HTTP surfaces. Refused on an ensemble with no search block."
+    ),
+]
 
 
 def build_mcp_server(
@@ -210,6 +218,7 @@ def build_mcp_server(
         show_work: ShowWork = None,
         dedupe: Dedupe = None,
         cache_synth: CacheSynth = None,
+        web_search: WebSearch = False,
         include_member_answers: Annotated[
             bool,
             Field(
@@ -228,6 +237,7 @@ def build_mcp_server(
             system=system,
             effort=effort,
             tools=tools,
+            web_search=web_search,
             panel_request=PanelRequest(
                 only, exclude, include, synth, instruction, show_work, dedupe, cache_synth
             ),
@@ -284,6 +294,7 @@ def build_mcp_server(
         show_work: ShowWork = None,
         dedupe: Dedupe = None,
         cache_synth: CacheSynth = None,
+        web_search: WebSearch = False,
     ) -> JobStatus:
         container = current_container()
         prepared = prepare_consult(
@@ -295,6 +306,7 @@ def build_mcp_server(
             system=system,
             effort=effort,
             tools=tools,
+            web_search=web_search,
             panel_request=PanelRequest(
                 only, exclude, include, synth, instruction, show_work, dedupe, cache_synth
             ),
