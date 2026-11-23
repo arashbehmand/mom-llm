@@ -16,10 +16,13 @@ keywords = ["llm", "openai", "anthropic", "gateway", "litellm", "mixture-of-mode
 # defaults rather than its real limits — silently, with no error. Live on 2026-08-19: the
 # catalog bundled with 1.93 predated claude-opus-5, so every Opus 5 call was capped at
 # litellm's 4096-token default (all of it spent on thinking -> empty answers) and had the
-# client's `top_p` forwarded to a model that rejects it (400, killing synthesis). 1.97 is the
-# a release whose bundled catalog carries the models config.yaml pins (1.105 knows the
-# Claude 5.5 line, GPT-6.x and Grok 4.7). Raise this floor whenever config.yaml adopts a
-# model newer than the pinned catalog knows.
+# client's `top_p` forwarded to a model that rejects it (400, killing synthesis). Raise this
+# floor whenever config.yaml adopts a model newer than the pinned catalog knows: 1.105 knew
+# the Claude 5.5 line, GPT-6.x and Grok 4.7; 1.110 absorbs the early-Nov-2026 wave (Gemini 4
+# Hydrogen and Argon, gpt-6.1-terra, claude-haiku-5-5, mistral-large-4) but still predates the
+# mid-Nov drops (Neon, Carbon, the GPT-6.2 pair, fable-5-2 — those keep explicit `pricing:`
+# blocks in config.yaml) and still rejects reasoning_effort xhigh on the gemini path
+# (verified 2026-11-23), so the Gemini-4 ladders stay clamped at high.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -30,7 +33,7 @@ dependencies = [
     "structlog>=24.1",
     "aiosqlite>=0.20",
     "platformdirs>=4.2",
-    "litellm>=1.105",
+    "litellm>=1.110",
     "langfuse>=3.0",
     "mcp>=2.1",
     # Direct, not transitive: mom.runtime.secrets parses the discovered .env files itself rather

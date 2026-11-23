@@ -47,7 +47,6 @@ llms:
     model: openai/gpt-6.1-terra
     api: responses
     search: { tools: [{ type: web_search }] }
-    pricing: { input_per_1m: 1.00, output_per_1m: 5.00 }  # litellm 1.105 predates the 6.1/6.2 wave
     variants:
       l: { params: { reasoning_effort: low } }
       m: { params: { reasoning_effort: medium } }
@@ -76,7 +75,7 @@ llms:
     model: openai/gpt-6.2-sol
     api: responses
     search: { tools: [{ type: web_search }] }
-    pricing: { input_per_1m: 2.00, output_per_1m: 10.00 }  # litellm 1.105 predates the 6.2 wave
+    pricing: { input_per_1m: 2.00, output_per_1m: 10.00 }  # litellm 1.110 still predates the 6.2 pair
     variants:
       l:  { params: { reasoning_effort: low } }
       m:  { params: { reasoning_effort: medium } }
@@ -87,7 +86,7 @@ llms:
     model: openai/gpt-6.2-astra
     api: responses
     search: { tools: [{ type: web_search }] }
-    pricing: { input_per_1m: 8.00, output_per_1m: 40.00 }  # litellm 1.105 predates the 6.2 wave
+    pricing: { input_per_1m: 8.00, output_per_1m: 40.00 }  # litellm 1.110 still predates the 6.2 pair
     variants:
       l:  { params: { reasoning_effort: low } }
       m:  { params: { reasoning_effort: medium } }
@@ -120,14 +119,13 @@ llms:
   # 1M ctx: Hydrogen $1.50/$7.50 (fast everyday; AA v5 51@high), Neon $3/$15 (frontier
   # depth-at-speed; AA 60@high, 61@xhigh — #3 overall), Argon $2/$10 then $4/$20 from Dec 1
   # (the Oct 13 opener; AA 50), Carbon on Argon's price curve (the deliberate long-horizon
-  # flagship; AA 59-60, ~37 min/task on AA's agentic suite — catalogued below, deliberately
-  # unseated). 3.1-pro-preview retired with the wave; Hydrogen inherits every seat it held,
-  # members and synths alike, at a fraction of the old pro price.
-  # All the Gemini-4 ladders here stop at `high`: litellm 1.105 rejects reasoning_effort xhigh
-  # on the gemini path (verified 2026-11-23) — revisit when the litellm floor rises past Gemini 4.
+  # flagship; AA 59-60, ~37 min/task on AA's agentic suite). 3.1-pro-preview retired with the
+  # wave; Hydrogen inherits every seat it held, members and synths alike, at a fraction of the
+  # old pro price. All the Gemini-4 ladders here stop at `high`: litellm rejects
+  # reasoning_effort xhigh on the gemini path (still true at 1.110, verified 2026-11-23) —
+  # revisit at the next floor bump.
   g4h:
     model: gemini/gemini-4-hydrogen
-    pricing: { input_per_1m: 1.50, output_per_1m: 7.50 }  # litellm 1.105 predates Gemini 4
     search: { web_search_options: { search_context_size: high } }
     variants:
       l: { params: { reasoning_effort: low } }
@@ -135,13 +133,12 @@ llms:
       h: { params: { reasoning_effort: high } }
   g4n:
     model: gemini/gemini-4-neon
-    pricing: { input_per_1m: 3.00, output_per_1m: 15.00 }  # litellm 1.105 predates Gemini 4
+    pricing: { input_per_1m: 3.00, output_per_1m: 15.00 }  # litellm 1.110 still predates Neon
     search: { web_search_options: { search_context_size: high } }
     variants:
       l: { params: { reasoning_effort: low } }
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
-
   # Gemini 4 Carbon — the family's deliberate long-horizon flagship (AA 59-60, ~37 min/task on
   # AA's agentic suite), and deliberately UNSEATED: it belongs to the same class as the
   # overlay-excluded heavies (oai62a, cl52f) — too slow for every fan-out — and the per-turn
@@ -150,7 +147,7 @@ llms:
   # GOOGLE_API_KEY wherever it is pulled in.
   g4c:
     model: gemini/gemini-4-carbon
-    pricing: { input_per_1m: 4.00, output_per_1m: 20.00 }  # Dec-1-2026 rates; $2/$10 until then
+    pricing: { input_per_1m: 4.00, output_per_1m: 20.00 }  # Dec-1-2026 rates; $2/$10 until then (litellm 1.110 still predates Carbon)
     search: { web_search_options: { search_context_size: high } }
     variants:
       l: { params: { reasoning_effort: low } }
@@ -162,6 +159,8 @@ llms:
   # in the catalog for mom-debug and deliberate `include:`.
   g4a:
     model: gemini/gemini-4-argon
+    # Kept although litellm 1.110 knows Argon: the bundled map carries the pre-Dec $2/$10 and
+    # will lag the Dec-1 doubling — this block keeps metered cost honest past it.
     pricing: { input_per_1m: 4.00, output_per_1m: 20.00 }  # Dec-1-2026 rates; $2/$10 until then
     search: { web_search_options: { search_context_size: high } }
     variants:
@@ -193,7 +192,6 @@ llms:
   # effort ladder replace the old budget_tokens style, verified live 2026-10-14.
   cl55hk:
     model: anthropic/claude-haiku-5-5
-    pricing: { input_per_1m: 0.10, output_per_1m: 0.50 }  # same catalog gap as g4a
     search: { web_search_options: { search_context_size: high } }
     variants:
       l: { params: { reasoning_effort: low, thinking: { type: adaptive } } }
@@ -221,7 +219,7 @@ llms:
   # (claude protocol, max_tokens 128000) every Anthropic model before it has needed.
   cl52f:
     model: anthropic/claude-fable-5-2
-    pricing: { input_per_1m: 8.00, output_per_1m: 40.00 }  # litellm 1.105 predates 5.2
+    pricing: { input_per_1m: 8.00, output_per_1m: 40.00 }  # litellm 1.110 still predates 5.2
     search: { web_search_options: { search_context_size: high } }
     variants:
       l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
