@@ -37,16 +37,17 @@ llms:
   # named `<base>-<key>`; `params` deep-merges with the base, other fields (model/api/api_key_env/
   # proxy_url_env) inherit unless overridden. Capability fields (search/pricing/capabilities/
   # max_input_tokens/timeout/cache_ttl) ALSO inherit — a variant is the same model at a different
-  # effort, so what it can do (and costs) travels with it. See k3 below, where the `search:` block
+  # effort, so what it can do (and costs) travels with it. See k31p below, where the `search:` block
   # is deliberately declared once on the base and relied on by all its variants.
   # OpenAI search is Responses-API-only (chat completions rejects web_search_options for these
   # models) — like grok47 below, `api: responses` makes the request-triggered search block usable.
-  # Still 5.6: the GPT-6 series (Astra/Sol/Luna) shipped no Terra as of 2026-09-29 — this pin
-  # moves when one exists.
-  oai56t:
-    model: openai/gpt-5.6-terra
+  # The move the 2026-09-29 note here promised: gpt-6.1-terra shipped 2026-10-26 ($1/$5), so the
+  # Terra seat finally leaves 5.6 (answers through the Codex channel, verified 2026-11-23).
+  oai61t:
+    model: openai/gpt-6.1-terra
     api: responses
     search: { tools: [{ type: web_search }] }
+    pricing: { input_per_1m: 1.00, output_per_1m: 5.00 }  # litellm 1.105 predates the 6.1/6.2 wave
     variants:
       l: { params: { reasoning_effort: low } }
       m: { params: { reasoning_effort: medium } }
@@ -65,6 +66,35 @@ llms:
       xh: { params: { reasoning_effort: xhigh } }
       p:  { params: { reasoning: { effort: max, mode: pro } } }
 
+  # The GPT-6.2 pair (2026-11-17). Sol: $2/$10 (unchanged from 6.1-sol), 57 on the AA v5 index —
+  # roughly GPT-6-Astra quality at ~15% of its per-task cost — and takes the everyday Sol seats.
+  # 6.1-sol KEEPS the code-panel seats: AA's Coding Agent Index has 6.2-sol three points under
+  # its predecessor (a 14-point SWE-Atlas-QnA drop), so the newer pin would be a downgrade
+  # exactly there. Astra: $8/$40 (20% below GPT-6 Astra), #2 on the index at 62 — the emom seat.
+  # Ladders mirror the proven 6.1/6 shapes; `p` is the served pro mode, like oai61s-p.
+  oai62s:
+    model: openai/gpt-6.2-sol
+    api: responses
+    search: { tools: [{ type: web_search }] }
+    pricing: { input_per_1m: 2.00, output_per_1m: 10.00 }  # litellm 1.105 predates the 6.2 wave
+    variants:
+      l:  { params: { reasoning_effort: low } }
+      m:  { params: { reasoning_effort: medium } }
+      h:  { params: { reasoning_effort: high } }
+      xh: { params: { reasoning_effort: xhigh } }
+      p:  { params: { reasoning: { effort: max, mode: pro } } }
+  oai62a:
+    model: openai/gpt-6.2-astra
+    api: responses
+    search: { tools: [{ type: web_search }] }
+    pricing: { input_per_1m: 8.00, output_per_1m: 40.00 }  # litellm 1.105 predates the 6.2 wave
+    variants:
+      l:  { params: { reasoning_effort: low } }
+      m:  { params: { reasoning_effort: medium } }
+      h:  { params: { reasoning_effort: high } }
+      xh: { params: { reasoning_effort: xhigh } }
+      p:  { params: { reasoning: { effort: max, mode: pro } } }
+
   oai6l: { model: openai/gpt-6-luna, api: responses, search: { tools: [{ type: web_search }] } }
 
   oai53cdx:
@@ -72,22 +102,6 @@ llms:
     variants:
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
-
-  # GPT-6 Astra — OpenAI's fable-class flagship ($10/$50, 1M ctx). Seated on emom (with cl51f)
-  # since 2026-09-06: at this price whether it runs on a fan-out is a *deployment's* call, taken in
-  # that deployment's overlay (`members_exclude`), not by editing the panel here — a metered box
-  # drops it, one with a subscription channel in front of it keeps it. Ladder verified live
-  # 2026-09-06; the `p` variant is the served pro mode (higher-quality responses, same pricing).
-  oai6a:
-    model: openai/gpt-6-astra
-    api: responses
-    search: { tools: [{ type: web_search }] }
-    variants:
-      l:  { params: { reasoning_effort: low } }
-      m:  { params: { reasoning_effort: medium } }
-      h:  { params: { reasoning_effort: high } }
-      xh: { params: { reasoning_effort: xhigh } }
-      p:  { params: { reasoning: { effort: max, mode: pro } } }
 
   # No `mi` rung: the MINIMAL thinking level that 3.6-flash accepted is gone from this line —
   # re-verified on 3.8-flash 2026-09-04, same 400 as 3.7 ("Thinking level MINIMAL is not
@@ -102,26 +116,39 @@ llms:
       m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
 
-  # Still here on purpose (owner's call, 2026-10-14): 3.1-pro keeps its everyday seats and
-  # synth duties. It can no longer ride the Antigravity sub — the channel dropped its entire
-  # pro tier from the catalog in Oct 2026 (only flash ids remain; gemini-3.1-pro-low and
-  # gemini-pro-agent both vanished) — so it meters direct on GOOGLE_API_KEY everywhere.
-  g31p:
-    model: gemini/gemini-3.1-pro-preview
+  # The Gemini 4 wave (2026-10-13 .. 11-18) replaced Pro/Flash naming with element codes, all
+  # 1M ctx: Hydrogen $1.50/$7.50 (fast everyday; AA v5 51@high), Neon $3/$15 (frontier
+  # depth-at-speed; AA 60@high, 61@xhigh — #3 overall), Argon $2/$10 then $4/$20 from Dec 1
+  # (the Oct 13 opener; AA 50), Carbon on Argon's price curve (the slow flagship; AA 59-60 at
+  # ~37 min/task — weighed and NOT seated: emom caps at two seats per lab, and that task
+  # profile fights the fan-out deadline). 3.1-pro-preview retired with the wave; Hydrogen
+  # inherits every seat it held, members and synths alike, at a fraction of the old pro price.
+  # Both ladders stop at `high`: litellm 1.105 rejects reasoning_effort xhigh on the gemini
+  # path (verified 2026-11-23) — revisit when the litellm floor rises past Gemini 4.
+  g4h:
+    model: gemini/gemini-4-hydrogen
+    pricing: { input_per_1m: 1.50, output_per_1m: 7.50 }  # litellm 1.105 predates Gemini 4
     search: { web_search_options: { search_context_size: high } }
     variants:
       l: { params: { reasoning_effort: low } }
+      m: { params: { reasoning_effort: medium } }
+      h: { params: { reasoning_effort: high } }
+  g4n:
+    model: gemini/gemini-4-neon
+    pricing: { input_per_1m: 3.00, output_per_1m: 15.00 }  # litellm 1.105 predates Gemini 4
+    search: { web_search_options: { search_context_size: high } }
+    variants:
+      l: { params: { reasoning_effort: low } }
+      m: { params: { reasoning_effort: medium } }
       h: { params: { reasoning_effort: high } }
 
-  # Gemini 4 Argon (2026-10-13) — the Gemini flagship, and the restorer of the `mi` rung the
-  # flash line dropped (all four rungs verified live 2026-10-14). Seated on emom ONLY (owner's
-  # call): it is metered direct — Gemini 4 is not offered to the Antigravity pro plans — so it
-  # is reserved for the panel where quality beats cost, like the other flagships there.
+  # Gemini 4 Argon — keeps its emom seat NEXT TO Neon (owner's call, 2026-11-23) despite the
+  # index gap (50 vs 60): the Antigravity sub now serves both as fixed-effort ids, so the pair
+  # costs the main deployment nothing. A metered box should weigh Argon against Hydrogen-high
+  # (similar score, cheaper) once the Dec 1 price doubling lands.
   g4a:
     model: gemini/gemini-4-argon
-    # Explicit pricing: too new for litellm 1.105's bundled catalog (next floor bump retires
-    # this, like the Sep batch) — without it a metered seat meters at $0.
-    pricing: { input_per_1m: 2.00, output_per_1m: 10.00 }
+    pricing: { input_per_1m: 4.00, output_per_1m: 20.00 }  # Dec-1-2026 rates; $2/$10 until then
     search: { web_search_options: { search_context_size: high } }
     variants:
       mi: { params: { reasoning_effort: minimal } }
@@ -174,8 +201,13 @@ llms:
       xh: { params: { reasoning_effort: xhigh, thinking: { type: adaptive } } }
       am: { params: { reasoning_effort: max, thinking: { type: adaptive } } }
 
-  cl51f:
-    model: anthropic/claude-fable-5-1
+  # Fable 5.2 (2026-11-09) — #1 on the AA v5 index (65 at max effort, four clear points over
+  # the field). Channel riders: it needs cli-proxy at or above the Claude Code 2.1.290 floor
+  # (the 2.1.280 impersonation was refused, 2026-11-23) AND the day-one payload.override
+  # (claude protocol, max_tokens 128000) every Anthropic model before it has needed.
+  cl52f:
+    model: anthropic/claude-fable-5-2
+    pricing: { input_per_1m: 8.00, output_per_1m: 40.00 }  # litellm 1.105 predates 5.2
     search: { web_search_options: { search_context_size: high } }
     variants:
       l:  { params: { reasoning_effort: low, thinking: { type: adaptive } } }
@@ -211,11 +243,16 @@ llms:
   mstl4:     { model: mistral/mistral-large-4-0, pricing: { input_per_1m: 0.68, output_per_1m: 2.09 } }  # same catalog gap as g4a
   qwn38max:  { model: openrouter/qwen/qwen3.8-max, search: { extra_body: { plugins: [{ id: web }] } } }
 
-  k3:
+  # K3.1 Pro (2026-10-23, open weights, 2.8T/104B-active MoE) — Moonshot's step past K3 and the
+  # strongest open-weights score in this catalog (Vals 62.5%). NOT on the Kimi For Coding sub:
+  # the plan answers k3.1-pro with "upgrade your plan" (2026-11-23), so this seat meters on
+  # OpenRouter everywhere — re-add an overlay route like the old k3 line if the plan catches up.
+  k31p:
     # :nitro = OpenRouter's throughput-sorted provider routing. The bare slug routes by price and
-    # was landing on sluggish providers (owner-observed; measured 2026-08-18: totals swung
+    # was landing on sluggish providers (owner-observed on k3; measured 2026-08-18: totals swung
     # 5s-14s per identical tiny prompt, and 12.5s at reasoning-low — :nitro held a steady 6-7.6s).
-    model: openrouter/moonshotai/kimi-k3:nitro
+    # The high and max rungs re-verified on k3.1-pro 2026-11-23.
+    model: openrouter/moonshotai/kimi-k3.1-pro:nitro
     search:                                # request-triggered online: OpenRouter web plugin,
       extra_body:                          # merged ONLY when the client asks for web_search.
         plugins:                           # Inherited by the variants below (same model).
@@ -297,7 +334,7 @@ llms:
   # panel — a cheap model from an unrepresented lab is worth more here than a fifth strong model
   # from a lab that already has a voice. All four are cheap and small-active-param (i.e. fast), so
   # they widen the panel without stretching the 6m fan-out deadline or the bill.
-  hy4p:      { model: openrouter/tencent/hy4-preview, search: { extra_body: { plugins: [{ id: web }] } } } # Tencent Hunyuan 4, 1M ctx
+  hy4:      { model: openrouter/tencent/hy4, search: { extra_body: { plugins: [{ id: web }] } } } # Tencent Hunyuan 4, 1M ctx — GA slug since 2026-11-04; the preview pin graduated, per the standing rule below
   katair:   { model: openrouter/kwaipilot/kat-coder-air-v2.5, search: { extra_body: { plugins: [{ id: web }] } } } # Kuaishou, coding
   # Catalog-only (mom-debug reaches it via `all`): the lone Ant Group endpoint collapses under
   # concurrent load — 0.8s solo but 16s (or hard errors) at just 4-way fan-in, measured
@@ -327,9 +364,13 @@ llms:
   # :nitro it answers in 1.3s TTFT (2026-09-06) — the same cure the k3 seat needed.
   qwn38f:   { model: openrouter/qwen/qwen3.8-flash:nitro, search: { extra_body: { plugins: [{ id: web }] } } } # 1M ctx at $0.15/$0.47
 
-  # hy4-preview is a PREVIEW slug promoted onto a panel by the owner's explicit call
-  # (2026-09-06) — if it 404s later, the GA slug is the first suspect. (mercury-2.5 already
-  # graduated: its preview pin was moved to the GA slug on 2026-09-29.)
+  # The November 2026 arrivals, catalog-only until they earn seats (all probed live 2026-11-23):
+  qwn4max: { model: openrouter/qwen/qwen4-max, search: { extra_body: { plugins: [{ id: web }] } } } # Qwen 4 flagship (2026-11-16, $1.42/$4.27, 1M ctx). qwn38max keeps the seats: it rides the ocg sub, this one would meter.
+  ink2s:   { model: openrouter/thinkingmachines/inkling-2-small, search: { extra_body: { plugins: [{ id: web }] } } } # Inkling 2 small tier (2026-11-09); no full-size 2 yet — ink keeps its philosophy seat
+  musee:   { model: openrouter/meta/muse-ember, search: { extra_body: { plugins: [{ id: web }] } } } # Meta's cheap-fast line (2026-11-09, $0.10/$0.50) — the Meta voice mom-mini lacked
+
+  # Preview slugs get promoted onto panels only by the owner's explicit call, and move to the GA
+  # slug when one ships (mercury-2.5 graduated 2026-09-29; hy4 graduated 2026-11-23).
 
   # One-off reuses of a base model for a different purpose (not an effort family) — `extends`
   # still fits these: no repeated model string, and each needs its OWN api/params shape.
@@ -341,7 +382,7 @@ llms:
       tools: [{ type: web_search_preview }]
       reasoning: { effort: medium }
   gem-dr: # deep-research: Google Search grounding + high reasoning (see the drmom ensemble)
-    extends: g31p
+    extends: g4n
     params:
       web_search_options: { search_context_size: high }
       reasoning_effort: high
@@ -544,14 +585,16 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: low
     members:
-      - { llm: oai61s, effort: [low, medium, high] }
-      - { llm: oai56t, effort: [low, medium, high] }
-      - { llm: g31p,   effort: ["off", low, high] }
+      - { llm: oai62s, effort: [low, medium, high] }
+      - { llm: oai61t, effort: [low, medium, high] }
+      # Hydrogen fires even at the default low tier, where 3.1-pro used to sit out — it is
+      # flash-priced, so the old pro-cost reason for the "off" cell is gone.
+      - { llm: g4h,    effort: [low, medium, high] }
       - { llm: cl55op,  effort: [low, medium, high] }
       - { llm: grok47, effort: [low, medium, high] }
       - qwn38max
       - glm53
-      - { llm: k3,     effort: [low, high, max] }
+      - { llm: k31p,   effort: [low, high, max] }
     # Synth effort tracks the requested tier (low at the default tier) — reviewed and kept as-is:
     # a `minimal`-effort synth was too weak to attentively weigh one dissenting real-search
     # candidate against several generic non-answers, even with the right prompt (see `4fdd974`).
@@ -569,19 +612,19 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: medium
     members:
-      - { llm: oai61s, effort: [low, medium, high] }
-      - { llm: oai56t, effort: [medium, high, high] }
-      - { llm: g31p,   effort: [low, high, high] }
+      - { llm: oai62s, effort: [low, medium, high] }
+      - { llm: oai61t, effort: [medium, high, high] }
+      - { llm: g4h,    effort: [low, high, high] }
       - { llm: g38f,   effort: [medium, high, high] }
       - { llm: cl55op,  effort: [low, medium, high] }
       # was two members (grok at low and at high) firing at once — one architecture giving two
       # "opinions" isn't opinion diversity, just a spent seat; merged into one tiered member.
       - { llm: grok47, effort: [low, medium, high] }
-      - { llm: k3,     effort: [low, high, max] }
+      - { llm: k31p,   effort: [low, high, max] }
       - glm53
       - qwn38max
     synthesizer:
-      llm: g31p
+      llm: g4h
       effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
@@ -593,9 +636,11 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: high
     members:
-      - { llm: oai61s, effort: [low, medium, high] }
-      - { llm: oai56t, effort: [low, medium, high] }
-      - { llm: g31p,   effort: ["off", low, high] }
+      - { llm: oai62s, effort: [low, medium, high] }
+      - { llm: oai61t, effort: [low, medium, high] }
+      # Neon takes 3.1-pro's cells like-for-like: hmom's pro-class Google seat, off at the low
+      # tier where the flash seat below already covers the lineage.
+      - { llm: g4n,    effort: ["off", low, high] }
       - { llm: g38f,   effort: [low, medium, high] }
       - { llm: cl55op,  effort: [low, medium, high] }
       - { llm: cl55st,  effort: [low, medium, high] }
@@ -604,15 +649,15 @@ ensembles:
       - { llm: ink,    effort: [low, medium, high] }
       - nem3u
       - qwn38max
-      - { llm: k3,     effort: ["off", low, high] }
+      - { llm: k31p,   effort: ["off", low, high] }
       - glm53
       - m3
       - longcat2
-      - hy4p
+      - hy4
       - mstl4
       - step37f
     synthesizer:
-      llm: g31p
+      llm: g4n
       effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
@@ -626,33 +671,32 @@ ensembles:
     effort_tiers: [high, xhigh, max]
     default_tier: max
     members:
-      - { llm: oai61s, effort: [medium, high, xhigh] }
+      # Reshaped against the AA Intelligence Index v5 (2026-11-23): fable 5.2 (65, #1) replaces
+      # 5.1; gpt-6.2-astra (62, #2) replaces gpt-6-astra and gpt-6.2-sol (57) replaces 6.1-sol;
+      # the Gemini seats are Neon (60-61, #3) AND Argon (50) — both, the owner's explicit call.
+      # Carbon (59-60) was weighed and left out: two seats per lab is the panel's ceiling, and
+      # its ~37 min/task profile fights the fan-out deadline. k31p (Vals 62.5%, the strongest
+      # open-weights entry) takes the Kimi seat. ink (AA 20-25 across its line) stays
+      # deliberately — owner's call: a genuinely different reasoning philosophy is worth a seat
+      # that scores poorly on a general index.
+      - { llm: oai62s, effort: [medium, high, xhigh] }
       # The two priciest flagships sit on the panel HERE, where emom describes the ideal roster.
       # A deployment that doesn't want them on every fan-out drops them in its own overlay with
       # `ensembles.emom.members_exclude` — an edit here changes the panel for every deployment.
-      - { llm: oai6a,  effort: [medium, high, xhigh] }   # same cells as its oai61s sibling
-      # Opus 5's ladder gained `xhigh`, so the calibration rule above now lands one rung higher at
-      # emom's lower tiers; the default (`max`) tier cell is unchanged.
+      - { llm: oai62a, effort: [medium, high, xhigh] }   # same cells as its oai62s sibling
       - { llm: cl55op,  effort: [high, xhigh, max] }
       - { llm: cl55st,  effort: [high, xhigh, max] }
-      - { llm: cl51f,  effort: [high, xhigh, max] }   # 5.1's ladder gained `xh`, same as Opus 5
+      - { llm: cl52f,  effort: [high, xhigh, max] }
+      - { llm: g4n,    effort: [medium, high, high] }  # ladder tops at `high` until litellm learns Gemini-4 xhigh
       - { llm: g4a,    effort: high }   # 'high' is g4a's own ceiling — nowhere higher to go
       - { llm: grok47, effort: [medium, high, xhigh] }  # ceiling rose to xhigh, so the top tier follows it
       # Muse Wonder (2026-10-12) is Meta's frontier line above Spark — it takes the flagship seat
       # here; Spark 1.3 keeps its hmom seat (48 on the AA index, but one lineage gets one seat).
       - { llm: musew,  effort: [high, xhigh, max] }
-      # Reshaped against the AA Intelligence Index v4.3.2 (2026-10-15): g38f (41) and nem3u (23)
-      # went back to being hmom-only — flash-tier scores don't belong on the elite panel — and
-      # glm53 (45) and mimo26 (46) joined; both ride subscriptions on the main deployment, so the
-      # panel got smarter AND cheaper. qwn38max (45) was considered and passed over — the owner's
-      # call: its inference reliability isn't elite-panel grade. ink (25) stays deliberately,
-      # also the owner's call: a genuinely different reasoning philosophy is worth a seat that
-      # scores poorly on a general index. Both newcomers sit bare: their effort params are
-      # verified via OpenRouter but unproven through the sub channels they ride in production.
       - { llm: ink,    effort: [medium, high, max] }
       - glm53
       - mimo26
-      - { llm: k3,     effort: [low, high, max] }
+      - { llm: k31p,   effort: [low, high, max] }
     synthesizer:
       llm: cl55st
       effort: high
@@ -666,10 +710,11 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: medium
     members:
+      # oai61s (not 6.2-sol) on purpose on the code panels — see the oai62s note up top.
       - { llm: oai61s,   effort: [low, medium, high] }
       - { llm: oai53cdx, effort: ["off", medium, high] }
-      - { llm: oai56t,   effort: [low, medium, high] }
-      - { llm: g31p,     effort: [low, high, high] }
+      - { llm: oai61t,   effort: [low, medium, high] }
+      - { llm: g4h,      effort: [low, high, high] }
       - { llm: cl55op,    effort: [low, medium, high] }
       - { llm: grok47,   effort: [medium, high, high] }
       - grokbuild
@@ -681,7 +726,7 @@ ensembles:
       - katair
       - nex25p
     synthesizer:
-      llm: g31p
+      llm: g4h
       effort: [low, medium, high]
       prompt: synth_default
       search_prompt: synth_search
@@ -703,10 +748,11 @@ ensembles:
     effort_tiers: [low, medium, high]
     default_tier: high
     members:
+      # oai61s (not 6.2-sol) on purpose on the code panels — see the oai62s note up top.
       - { llm: oai61s,   effort: [low, medium, high] }
       - { llm: oai53cdx, effort: ["off", medium, high] }
-      - { llm: oai56t,   effort: [low, medium, high] }
-      - { llm: g31p,     effort: ["off", low, high] }
+      - { llm: oai61t,   effort: [low, medium, high] }
+      - { llm: g4n,      effort: ["off", low, high] }  # the pro-class Google seat on the elite council
       - { llm: cl55op,    effort: [low, medium, high] }
       - { llm: grok47,   effort: [low, medium, high] }
       - grokbuild
@@ -737,7 +783,7 @@ ensembles:
     description: >-
       Mom Mini — a small step up from mom-cheap: light-effort models for routine tasks that
       don't warrant the full panel.
-    members: [oai6l, g38f-m, cl55hk-m, dsv41f, nem35l, mercury25, nova2l, glm53f, qwn38f, lfm25]
+    members: [oai6l, g38f-m, cl55hk-m, dsv41f, nem35l, mercury25, nova2l, glm53f, qwn38f, lfm25, musee]
     synthesizer:
       llm: g38f-m
       prompt: synth_default
@@ -750,7 +796,7 @@ ensembles:
     members:
       - { llm: g38f,   effort: [low, medium, high] }
       - { llm: g35fl,  effort: [low, medium, high] }
-      - { llm: oai56t, effort: [low, medium, high] }
+      - { llm: oai61t, effort: [low, medium, high] }
       - mimo26
       - hymt2
     synthesizer:
@@ -765,7 +811,7 @@ ensembles:
     members:
       - { llm: g38f,   effort: [low, medium, high] }
       - { llm: g35fl,  effort: [low, medium, high] }
-      - { llm: oai56t, effort: [low, medium, high] }
+      - { llm: oai61t, effort: [low, medium, high] }
       - hymt2
     synthesizer:
       llm: g38f
@@ -780,8 +826,8 @@ ensembles:
     default_tier: high
     members:
       - { llm: g38f,   effort: [low, medium, high] }
-      - { llm: g31p,   effort: ["off", low, high] }
-      - { llm: oai61s, effort: ["off", low, medium] }  # 6.1-sol has no `none` rung; off beats repeating the floor
+      - { llm: g4n,    effort: ["off", low, high] }
+      - { llm: oai62s, effort: ["off", low, medium] }  # the Sol line has no `none` rung; off beats repeating the floor
       - { llm: cl55st,  effort: ["off", low, medium] }
     synthesizer:
       llm: cl55st
@@ -796,7 +842,7 @@ ensembles:
     # slow and costly, not what a routine debug fan-out is for.
     members: { all: true, exclude: [oai-dr, gem-dr] }
     synthesizer:
-      llm: oai56t
+      llm: oai61t
       prompt: synth_default
       search_prompt: synth_search
     show_work: inline
@@ -806,6 +852,6 @@ ensembles:
       the synthesizer writes one cited report reconciling their findings.
     members: [plx-dr, oai-dr, gem-dr]
     synthesizer:
-      llm: g31p-h
+      llm: g4n-h
       prompt: synth_research
     show_work: inline
