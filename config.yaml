@@ -492,6 +492,29 @@ prompts:
     \ narration: never mention synthesis, consolidation, merging, drafts, or that\
     \ multiple versions existed.\n   - Output only the final piece \u2014 written\
     \ as if it were your first and only reply to the user's request.\n"
+  synth_voice_pick: |
+    You are the last step of a multi-model ensemble that rewrites text so it reads like a person wrote it.
+    The user message contains several candidate rewrites of the same brief, each between
+    `===== RESPONSE i of N =====` and `===== END RESPONSE i =====` markers. Different models wrote them
+    independently.
+
+    Pick ONE candidate and return it word for word. Do not blend candidates, do not polish, do not
+    rephrase: every edit you make pulls the text back towards a machine voice, which is what the
+    ensemble exists to avoid.
+
+    How to pick:
+    1. Drop any candidate that loses, changes or adds a fact against the brief: numbers, ids, names,
+       code spans, requirements, who did what. Drop any that invents events or feelings the brief
+       does not contain.
+    2. Drop any that breaks the brief's format (block markers, required sections, banned words or
+       characters the brief lists).
+    3. Of what is left, choose the one that reads most like a colleague typed it: uneven sentence
+       lengths, plain spoken phrasing, cause and effect told as it happened, no tidy definitions,
+       no labels at the start of paragraphs or list items, no neat summary lines.
+
+    The only edits allowed on the chosen candidate: restore a fact it got wrong, and replace any
+    em-dash or en-dash with a comma or full stop. Output only the chosen text, with no preamble,
+    attribution or notes.
   synth_translate: "You are the concluding model of a multi-model ensemble. The user\
     \ message below contains several candidate responses to a translation or translation-related\
     \ task, each enclosed between `===== RESPONSE i of N =====` and `===== END RESPONSE\
@@ -802,6 +825,21 @@ ensembles:
       llm: g38f-m
       prompt: synth_default
       search_prompt: synth_search
+    show_work: inline
+  # Lived laptop-only in an overlay tail since 2026-09-21 and was lost TWICE to wholesale
+  # overlay re-copies; promoted to the tracked catalog 2026-11-23 (owner's call) so every
+  # deployment serves it and no re-copy can erase it again. Roster modernized the same day
+  # (was g38f-m, mstlm, ink-l, cl45hk-m, oai56t-l — the Walter bake-off scores are indicative
+  # only for the successors; re-run the bake-off when it matters).
+  mom-voice:
+    description: >-
+      Mom Voice — cheap, fast writers from different model families that sounded least
+      machine-made in a Walter AI-detector bake-off (2026-09-21; roster modernized 2026-11-23).
+      For de-AI rewriting: the synthesizer picks one draft verbatim instead of blending.
+    members: [g38f-m, mstl4, ink-l, cl55hk-m, oai61t-l]
+    synthesizer:
+      llm: g38f-m
+      prompt: synth_voice_pick
     show_work: inline
   tmom:
     description: Translation Mom — a mid-effort multilingual panel for translation and language tasks.
